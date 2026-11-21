@@ -27,14 +27,25 @@
 //!
 //! The machine has no item slots and its GUI is Titanium's bars, so the numbers are exposed through
 //! `/industrialforegoing` commands instead of a screen — upstream registers no commands of its own.
+//!
+//! # Slice 2: the machine keeps its contents when it is broken
+//!
+//! Upstream's block item carries the block entity's saved compound, so a machine broken with FE and
+//! water in it is placed back full. The pin has the same route vanilla's chests use: [`Machine`]'s
+//! [`Hooks::block_drops`] writes the block entity's saved compound onto the dropped stack as the
+//! vanilla `minecraft:block_entity_data` component (tagged with the type id), placement merges that
+//! component into the new block entity, and [`MachineItem::on_block_placed_by`] clamps the numbers
+//! back to the three capacities. An empty machine's item stays plain.
 pub mod runtime;
 
 use std::array;
+use std::sync::OnceLock;
 
 use mod_api::{
-    self, BlockEntityPart, BlockEntityRef, BlockEntityTickEvent, BlockEntityTicksEvent, BlockPart,
-    BlockState, Command, CommandArgumentValue, CommandInvocation, Compound, Direction, FLUIDS,
-    Flow, FluidIdentity, Hooks, Host, HostTransaction, LevelHost, ModEnergyBuffer, ModFluidTanks,
+    self, BlockDropsEvent, BlockEntityPart, BlockEntityRef, BlockEntityTickEvent,
+    BlockEntityTicksEvent, BlockPart, BlockState, Command, CommandArgumentValue, CommandInvocation,
+    Compound, Direction, FLUIDS, Flow, FluidIdentity, Hooks, Host, HostTransaction, ItemKey,
+    ItemPart, LevelHost, ModEnergyBuffer, ModFluidTanks, OnBlockPlacedByEvent,
     RegisterCommandsEvent, Registrar, RegistrationContext, RunModCommandEvent, ServerHost,
     StateForPlacementEvent, Tag, Text,
 };
@@ -54,6 +65,10 @@ const WATER: &str = "minecraft:water";
 const READ_FACE: Direction = Direction::Up;
 /// The mod command's root word.
 const COMMAND: &str = "industrialforegoing";
+
+/// The machine's item, resolved once in `register`: `block_drops` runs with a read-only level host,
+/// which cannot name an item, so the drop is only given the machine when it is ours.
+static MACHINE_ITEM: OnceLock<ItemKey> = OnceLock::new();
 
 /// The six sides, in `Direction`'s order (down, up, north, south, west, east).
 const SIDES: [[i32; 3]; 6] = [
@@ -76,6 +91,11 @@ impl Hooks for Mod {
     /// drain-only tank, and the Part that ticks and rotates it.
     fn register(&self, r: &mut dyn Registrar, _cx: &RegistrationContext) {
         let block = r.block_key(BLOCK);
+        let item = r.item_key(BLOCK);
+        // `block_drops` has no game host, so the one item it may write to is resolved here.
+        let _ = MACHINE_ITEM.set(item);
+        // The item half of slice 2: a placed machine clamps what its item carried.
+        r.item_part(item, MachineItem);
         // The declaration is what the retired `block_entity` hook returned: the game makes one block
         // entity for each of the type's blocks, starting from an empty compound.
         let kind = r
@@ -109,6 +129,37 @@ impl Hooks for Mod {
         tanks.faces = array::from_fn(|_| all.clone());
         tanks.outputs = vec![0];
         r.block_fluids(&block, tanks);
+    }
+
+    /// `BlockDropsEvent`: a broken machine's own item carries the machine's FE, water and bar, so
+    /// placing it puts them back. The pin applies `minecraft:block_entity_data` to the new block
+    /// entity before the block is placed, which is how a vanilla chest keeps its contents; upstream
+    /// copies the block entity onto the drop the same way. An empty machine's item stays plain.
+    fn block_drops(&self, level: &dyn LevelHost, event: &mut BlockDropsEvent<'_>) -> Flow {
+        if level.state_block(event.state) != Some(BLOCK) {
+            return Flow::Continue;
+        }
+        // Explosions have already removed the block entity, so only a break that still holds it
+        // (a player's, a mob's) can carry the contents.
+        let Some(entity) = event.block_entity else {
+            return Flow::Continue;
+        };
+        let Some(saved) = level.block_entity_data(entity) else {
+            return Flow::Continue;
+        };
+        if !has_contents(&saved) {
+            return Flow::Continue;
+        }
+        let Some(item) = MACHINE_ITEM.get() else {
+            return Flow::Continue;
+        };
+        let patch = carried_patch(&saved);
+        for drop in event.drops.iter_mut() {
+            if drop.stack.item() == *item {
+                let _ = drop.stack.apply_components(&patch);
+            }
+        }
+        Flow::Continue
     }
 
     /// The harness commands (`RegisterCommandsEvent`). Upstream has none: they exist so a machine can
@@ -234,6 +285,35 @@ impl BlockEntityPart for Machine {
         if machine.progress != before.2 {
             write_int(&mut event.entity.nbt, KEY_PROGRESS, machine.progress);
         }
+    }
+}
+
+/// The machine's item (slice 2): the drop carries the contents, and placing it clamps them back to
+/// the capacities. The game asks a Part only for the item it is attached to.
+struct MachineItem;
+
+#[mod_api::horizon_part]
+impl ItemPart for MachineItem {
+    /// A placed machine takes the numbers its item carried — vanilla merged the item's
+    /// `minecraft:block_entity_data` into the new block entity before this runs — and out-of-range
+    /// values are clamped to the three capacities, as upstream's components clamp on load.
+    fn on_block_placed_by(&self, host: &mut dyn ServerHost, event: &mut OnBlockPlacedByEvent<'_>) {
+        let Some(player) = event.placer else {
+            return;
+        };
+        let Some(level) = player.level(&*host) else {
+            return;
+        };
+        let Some(entity) = host.block_entity(level, event.pos) else {
+            return;
+        };
+        let Some(saved) = entity.data(&*host) else {
+            return;
+        };
+        let Some(patch) = clamp_patch(&saved) else {
+            return;
+        };
+        let _ = entity.merge_data(host, patch);
     }
 }
 
@@ -434,6 +514,63 @@ fn read_tank(nbt: &Compound) -> i32 {
     }
 }
 
+// ---------------------------------------------------------------------------
+// The machine on its own item (slice 2)
+// ---------------------------------------------------------------------------
+
+/// The block entity type's registry id, which `minecraft:block_entity_data` tags its payload with
+/// (vanilla's `TypedEntityData` only loads data whose `id` names the block entity it is placed as).
+const BLOCK_ENTITY_TYPE_ID: &str = "industrialforegoing:water_condensator";
+/// The vanilla component that moves a block entity's saved data on its item
+/// (`BlockEntity.applyComponentsFromItemStack`).
+const BLOCK_ENTITY_DATA: &str = "minecraft:block_entity_data";
+
+/// Whether the machine holds anything worth carrying on its item: FE, water or a bar part way
+/// through. An empty machine's item stays plain, so nothing has to be clamped back on placing it.
+fn has_contents(saved: &Compound) -> bool {
+    let machine = Condensator::from_saved(
+        read_int(saved, KEY_ENERGY),
+        read_tank(saved),
+        read_progress(saved),
+    );
+    machine.energy > 0 || machine.water_mb > 0 || machine.progress != MAX_PROGRESS
+}
+
+/// The `minecraft:block_entity_data` payload a broken machine's item carries: the block entity's
+/// own saved compound, tagged with its type id.
+fn carried_patch(saved: &Compound) -> Compound {
+    let mut payload = saved.clone();
+    payload.insert("id".into(), Tag::String(BLOCK_ENTITY_TYPE_ID.into()));
+    let mut patch = Compound::new();
+    patch.insert(BLOCK_ENTITY_DATA.into(), Tag::Compound(payload));
+    patch
+}
+
+/// The corrections a placed machine needs when the item it came from carried values outside the
+/// three capacities (`/give` with a hand-written component, or a save from another version).
+/// `None` when the saved compound is already within range.
+fn clamp_patch(saved: &Compound) -> Option<Compound> {
+    let energy = read_int(saved, KEY_ENERGY);
+    let water = read_tank(saved);
+    let progress = read_progress(saved).unwrap_or(MAX_PROGRESS);
+    let machine = Condensator::from_saved(energy, water, Some(progress));
+    let mut patch = Compound::new();
+    let mut changed = false;
+    if machine.energy != energy {
+        write_int(&mut patch, KEY_ENERGY, machine.energy);
+        changed = true;
+    }
+    if machine.water_mb != water {
+        write_tank(&mut patch, machine.water_mb);
+        changed = true;
+    }
+    if machine.progress != progress {
+        write_int(&mut patch, KEY_PROGRESS, machine.progress);
+        changed = true;
+    }
+    changed.then_some(patch)
+}
+
 /// Write the tank back in the same shape (one tank).
 fn write_tank(nbt: &mut Compound, mb: i32) {
     let mut entry = Compound::new();
@@ -514,5 +651,75 @@ mod tests {
         let mut nbt = Compound::new();
         write_tank(&mut nbt, TANK_CAPACITY_MB + 5);
         assert_eq!(read_tank(&nbt), TANK_CAPACITY_MB);
+    }
+
+    /// The family rule of slice 2: a broken machine's item carries the machine, and placing it
+    /// puts those numbers back. The payload is vanilla's `minecraft:block_entity_data` because
+    /// the pin loads that component into the new block entity before the block is placed.
+    #[test]
+    fn the_machine_s_item_carries_its_saved_state() {
+        let mut nbt = Compound::new();
+        write_int(&mut nbt, KEY_ENERGY, 7_000);
+        write_tank(&mut nbt, 5_000);
+        write_int(&mut nbt, KEY_PROGRESS, 40);
+        assert!(
+            has_contents(&nbt),
+            "a machine holding FE, water and a part-done bar has something to carry"
+        );
+        let patch = carried_patch(&nbt);
+        let Some(Tag::Compound(payload)) = patch.get(&BLOCK_ENTITY_DATA.into()) else {
+            panic!("the patch has no {BLOCK_ENTITY_DATA}");
+        };
+        assert_eq!(
+            payload.get(&"id".into()),
+            Some(&Tag::String(BLOCK_ENTITY_TYPE_ID.into())),
+            "vanilla's TypedEntityData needs the block entity type id"
+        );
+        let machine = Condensator::from_saved(
+            read_int(payload, KEY_ENERGY),
+            read_tank(payload),
+            read_progress(payload),
+        );
+        assert_eq!(
+            (machine.energy, machine.water_mb, machine.progress),
+            (7_000, 5_000, 40),
+            "the machine's own saved numbers travel unchanged"
+        );
+    }
+
+    #[test]
+    fn an_empty_machine_has_nothing_to_carry() {
+        let mut nbt = Compound::new();
+        write_int(&mut nbt, KEY_ENERGY, 0);
+        write_tank(&mut nbt, 0);
+        write_int(&mut nbt, KEY_PROGRESS, MAX_PROGRESS);
+        assert!(!has_contents(&nbt), "an empty machine's item stays plain");
+    }
+
+    /// A `/give` (or an older save) can carry anything: placing it must clamp to the three
+    /// capacities, as upstream's `EnergyStorageComponent`/`FluidTank.setFluid` do on load.
+    #[test]
+    fn a_placed_machine_clamps_what_its_item_carried() {
+        let mut too_much = Compound::new();
+        write_int(&mut too_much, KEY_ENERGY, 50_000);
+        // A hand-written amount, not `write_tank`: that one clamps as it saves.
+        let mut entry = Compound::new();
+        entry.insert("Fluid".into(), Tag::String(WATER.into()));
+        entry.insert("Amount".into(), Tag::Int(999_999));
+        too_much.insert("fluids".into(), Tag::List(vec![Tag::Compound(entry)]));
+        write_int(&mut too_much, KEY_PROGRESS, 500);
+        let patch = clamp_patch(&too_much).expect("an out-of-range machine is corrected");
+        assert_eq!(read_int(&patch, KEY_ENERGY), CAPACITY_FE);
+        assert_eq!(read_tank(&patch), TANK_CAPACITY_MB);
+        assert_eq!(read_progress(&patch), Some(MAX_PROGRESS));
+
+        let mut fine = Compound::new();
+        write_int(&mut fine, KEY_ENERGY, 4_000);
+        write_tank(&mut fine, 1_000);
+        write_int(&mut fine, KEY_PROGRESS, 25);
+        assert!(
+            clamp_patch(&fine).is_none(),
+            "a machine within capacity is left exactly as it was"
+        );
     }
 }

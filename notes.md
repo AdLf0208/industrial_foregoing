@@ -1,4 +1,4 @@
-# Industrial Foregoing — port notes (slice 1: the Water Condensator)
+# Industrial Foregoing — port notes (slice 2: the Water Condensator)
 
 Ported from **Industrial Foregoing 1.21-3.6.39**
 (`industrialforegoing-1.21-3.6.39.jar`, SHA-1
@@ -8,23 +8,29 @@ Minecraft Java 1.21.1 / NeoForge. **MIT → licence rank 0**; local-only until
 publishing is approved (ARCHITECTURE.md §8).
 
 **Format: the SDK package (2026-11-18).** This port was migrated from the retired
-`.hnmod` container to the flat `.hmod` the mod-API merge (#16941) introduced: it now builds at
-nightly **`0b14f8acfd97fa2c750e42795249dcc981178ca4`** with mixins
-**`e59da9094f0c2fdda6c627fe9eff22dec6a906f0`**, and `src/runtime.rs` is the retired
-`runtime.rs` byte for byte (`7b377432…41b4d`). See
+`.hnmod` container to the flat `.hmod` the mod-API merge (#16941) introduced. Since slice 2 it
+builds at nightly **`0a875da91dbb0fdcb7ba8c42c11341aa229af51a`** with mixins
+**`e59da9094f0c2fdda6c627fe9eff22dec6a906f0`** (0.2.0 and 0.2.1 built at `0b14f8a`; the repin is
+additive for this port — no source change, the three breaking hooks are unused), and
+`src/runtime.rs` is the retired `runtime.rs` byte for byte (`7b377432…41b4d`). See
 [`## Migration to the SDK format`](#migration-to-the-sdk-format) for the recipe, the hook
 mapping and the traps; everything below it that names `mixins/`, `horizon-mixin.toml`, an
 injection or `support.rs` describes the **retired** port and is kept as history.
 
 Status: **ported-partial** — slice 1 (the Water Condensator: its block, FE
-buffer, water tank, the one condensation rule and its placement rotation) is verified in game at the
-SDK pin `0b14f8a` (2026-11-20): `PASS` + `EXIT:0`, a control leg at `EXIT:1` and a selftest at
-`EXIT:1`. **0.2.0 — the version merged in the registry — could not load at all**: it attached
-`Machine` as both the block's Part and the block entity type's Part, which the engine refuses
-("`industrialforegoing::Machine is attached to industrialforegoing:water_condensator twice`"), and it
-had no in-game run to catch that. 0.2.1 removes the redundant `block_part` call; see
-[The doubled Part](#the-doubled-part-021-2026-11-20). The gap list at the end is the
-rest of the mod.
+buffer, water tank, the one condensation rule and its placement rotation) is verified in game,
+and slice 2 (0.2.2, 2026-11-21) adds the machine's **contents surviving a break** and makes its
+**carried recipe actually craft**. The current pin is nightly
+**`0a875da91dbb0fdcb7ba8c42c11341aa229af51a`** + mixins
+**`e59da9094f0c2fdda6c627fe9eff22dec6a906f0`**. **0.2.0 — the version merged in the registry —
+could not load at all**: it attached `Machine` as both the block's Part and the block entity
+type's Part, which the engine refuses ("`industrialforegoing::Machine is attached to
+industrialforegoing:water_condensator twice`"), and it had no in-game run to catch that. 0.2.1
+removes the redundant `block_part` call (see [The doubled Part](#the-doubled-part-021-2026-11-20));
+0.2.2 carries that repair **and never shipped before**, so it is the first version of this mod
+that both loads and keeps its contents. See
+[Slice 2](#slice-2--contents-survive-the-break--the-recipe-crafts-022-2026-11-21). The gap list
+at the end is the rest of the mod.
 
 **Why this mod now:** it is the rank-0 `content`/`machines` core mod
 `precheck-mod.py industrialforegoing` offers (`DISPATCHABLE`, jar licence MIT,
@@ -400,6 +406,145 @@ with it.
 > `runtime.rs` and its 18 tests are unchanged, byte for byte, and the content is byte-identical
 > to 0.1.0's.
 
+## Slice 2 — contents survive the break + the recipe crafts (0.2.2, 2026-11-21)
+
+**The load repair ships here.** 0.2.1 fixed the doubled Part but its PR was closed, so the
+registry's live 0.2.0 still installs a mod the engine refuses. 0.2.2 carries the same one-line
+repair (no `block_part` call; `block_entity_part` alone installs both halves) and was proven at
+the campaign pin, not only at `0b14f8a`:
+
+| step | command | result |
+|---|---|---|
+| before (0.2.0 registration, rebuilt at `0a875da`) | launcher `native-build` of a copy with `r.block_part(block, Machine);` restored, then `ctl launch` | **refused at load**: `Horizon: Mod parts refused:` / `industrialforegoing::Machine is attached to industrialforegoing:water_condensator twice, by industrialforegoing and industrialforegoing`, `LAUNCH-EXIT:3` (`evidence/industrialforegoing/load-before-0a875da.log`) |
+| after (this package) | the same launch with 0.2.2 | `REFUSED-LINES:0`; `give … water_condensator` → `Gave 1 [Water Condensator]`; the block `setblock` reads back `industrialforegoing:water_condensator`; `Horizon: content from 1 mod(s)`; `EXIT:0` (`evidence/industrialforegoing/load-after-0a875da.log`) |
+| control | the same Nightly with no package | `Unknown item 'industrialforegoing:water_condensator'` → `EXIT:1` (`e2e-launcher-control.log`) |
+
+**The slice: gap 5 — "Breaking the machine loses its FE and water".** The gap was written when
+the pin had no route for a mod block's drop; the 2026-11-21 ruling in `ARCHITECTURE.md` §3 closes
+that (first proven by `rftoolsutility` 0.2.1): `Hooks::block_drops` writes the block entity's saved
+compound onto the dropped stack as vanilla `minecraft:block_entity_data` tagged with the type id,
+and placement merges it into the new block entity before the block is placed.
+
+- `Hooks::block_drops` answers only for this block, reads the removal-held saved compound
+  (`level.block_entity_data`), and leaves an **empty** machine's item plain (`has_contents`).
+- The payload is the machine's own compound (`energy`, `fluids`, `progress`) plus
+  `id = "industrialforegoing:water_condensator"`, which is what vanilla's `TypedEntityData`
+  requires.
+- `MachineItem` (`ItemPart::on_block_placed_by`) clamps what the item carried to the three
+  capacities (`clamp_patch`), so a hand-written `/give … minecraft:block_entity_data` cannot put
+  50,000 FE in a 10,000 FE buffer.
+- The numbers stay in `runtime.rs`; the new helpers in `src/lib.rs` only build/read the compound.
+
+**TDD, in order.** The three new glue tests were written first against `todo!()` bodies:
+`the_machine_s_item_carries_its_saved_state`, `an_empty_machine_has_nothing_to_carry`,
+`a_placed_machine_clamps_what_its_item_carried` — **23 passed, 3 failed**, each
+`panicked at src/lib.rs: not yet implemented` (`evidence/industrialforegoing/sdk-test-red.log`).
+Then the glue, then **26 passed, 0 failed** (`sdk-test.log`).
+
+**The carried recipe was dead data, and the game said so.** The package's recipe used the
+"one tag or a vanilla fallback" list shape for `#c:plastics`, `#c:gears/iron` and
+`#industrialforegoing:machine_frame/pity`. The 26.3 loader rejects that shape, and the log named
+the file and every offending ingredient:
+
+```
+[load-items/ERROR]: recipes: invalid ingredient (unresolved tag or malformed input): ["#c:plastics","minecraft:slime_ball"]
+[load-items/ERROR]: recipes: invalid ingredient (unresolved tag or malformed input): ["#industrialforegoing:machine_frame/pity","minecraft:iron_block"]
+[load-items/ERROR]: recipes: invalid ingredient (unresolved tag or malformed input): ["#c:gears/iron","minecraft:iron_block"]
+[horizon-advancements/ERROR]: data/industrialforegoing/advancement/recipes/misc/water_condensator.json: unknown load conditions [neoforge:item_exists]; file left out
+```
+
+So the machine was **uncraftable** and the recipe's advancement was dropped — the previous
+wave's "fallback list" repair did not survive `26.3`. Fixed under the upstream-defect rule:
+
+- `data/industrialforegoing/recipe/water_condensator.json`: the three list ingredients are the
+  vanilla fallback alone (`minecraft:slime_ball`, `minecraft:iron_block`, `minecraft:iron_block`).
+  The tags have no items in a standalone package, and a list that names them is invalid, so the
+  fallback is the only shape that both loads and crafts.
+- `data/industrialforegoing/advancement/recipes/misc/water_condensator.json`: the unknown
+  `neoforge:conditions` gate is dropped (the item exists whenever this package does) and the
+  `has_item` criterion names `minecraft:slime_ball` instead of the absent `#c:plastics`.
+
+A user notices: the Water Condensator is craftable from the recipe in a plain crafting table, and
+the recipe's advancement unlocks.
+
+**In game (the same `tools/e2e.sh`, phases K and L added).**
+
+```
+== K: the carried recipe crafts the machine from the tags' vanilla fallbacks ==
+  crosshair -> {"block": {"block": "minecraft:crafting_table", ...}, "kind": "block"}
+  interact -> {..., "ok": true, "screen": "inventory"}
+  the declared grid -> {"count": 1, "item": "industrialforegoing:water_condensator", "slot": 200}
+  glowstone instead of redstone -> null
+recipe PASS: the declared grid crafts one industrialforegoing:water_condensator and consumes every ingredient
+== L: a broken machine's item carries its FE and water, and placing it restores them ==
+  Water Condensator at [202, 101, 0]: 7000/10000 FE, water 5000/16000 mB, sources 0, progress 96/100, facing west, t=643
+  break: {"block":"minecraft:air","drops":{"industrialforegoing:water_condensator":1},"picked_up":{"industrialforegoing:water_condensator":1},"items_left_on_ground":0}
+  the broken machine came back with 7000/10000 FE and 5000/16000 mB
+PASS: … the carried recipe crafts one machine from its declared ingredients and consumes them, while a wrong grid stays empty; and a machine broken with 7,000 FE and 5,000 mB comes back with exactly those numbers on the item it dropped
+EXIT:0
+```
+
+**Fail-capable, three ways.** (1) The same scenario against the **previous package** (0.2.1 at
+this pin, identical content, no `block_drops`) fails exactly at the new assertion:
+`FAIL: the buffer the item carried is 0, expected 7000` → `EXIT:1`
+(`e2e-before-slice.log`). (2) `SELFTEST=1` flips phase B's 200 mB to 201 → `EXIT:1`
+(`e2e-launcher-selftest.log`). (3) `SELFTEST=contents` flips phase L's 5,000 mB to 5,001 →
+`FAIL: the restored tank is 5000, expected 5001` → `EXIT:1`
+(`e2e-launcher-selftest-contents.log`). Phase K carries its own control: the same grid with
+glowstone instead of redstone leaves the result empty.
+
+**Harness facts learned here** (recorded so the next slice does not pay them again): a screen or
+`click-slot` needs the **offscreen** renderer (the old headless leg left the yaw untouched, which
+is why the facing assertion passed without the offscreen renderer; the scenario now also waits a
+tick after `look-at-block`, because the rotation reaches the server a tick later); the drop has to
+be broken **in survival with a pickaxe** (a creative break drops nothing, and the iron-block
+template needs a tool); the item has to be stood on to be picked up; and water near the machine
+must be cleared in a shell before each attempt, because flow from an earlier leg keeps reaching
+the faces.
+
+**The package.**
+
+| | |
+|---|---|
+| version | `0.2.2` |
+| pin | `native-mod`, format `native-1/0a875da…/e59da90…`, for 26.3 |
+| size | **34,096 B**, 25 entries, no packed `Cargo.lock` |
+| SHA-256 | `2672a80085cb0a258239408750b625fbee497f760693e473d823c0b947404826` (two clean-lock builds `cmp`-identical) |
+| `check` | `industrialforegoing 0.2.2 (native-mod, …)`, exit 0 |
+| `fits` | `0a875da  made for`, `0b14f8a  fits`, both exit 0 |
+| runtime | `src/runtime.rs` packed = tree, `7b377432…41b4d` |
+
+### Coverage (families this package ships)
+
+| family | state |
+|---|---|
+| the block and its item | `tested` — phase A places it from the item and reads it back; the control game refuses the id |
+| placement rotation (`subfacing`) | `tested` — phase A: `facing west` for a placer west of it |
+| the condensation rule (sources, power, cooldowns) | `tested` — phases B–H (2/1/0/3/6 sources, powered/unpowered, tank clamp) |
+| the FE buffer (capability) | `tested` — phases B/H/J read and spend it; `/industrialforegoing energy` writes it |
+| the water tank (fluid capability) | `tested` — phase I drains 400 mB through `FLUIDS` |
+| placement of the drop's contents (`block_drops` + `block_entity_data`) | `tested` — phase L (before/after differential) |
+| the carried recipe | `tested` — phase K crafts it and consumes the ingredients; a wrong grid is empty |
+| the carried advancement | `not ported` (data) — repaired and loaded, but no criterion is exercised in game |
+| GUI screen / tooltip | `not ported` — gap 1 (no menu; the readout is the command) |
+| redstone control modes | `not ported` — gap 2 |
+| augments, comparator, config file | `not ported` — gaps 3, 7, 8 |
+| the other ~71 blocks and their recipes | `not ported` — gap 9 (they are other slices) |
+
+### The changelog for the 0.2.2 resubmission
+
+> Supersedes the closed 0.2.1 PR (which superseded #600). **The load repair ships here:** 0.2.0,
+> the version in the registry, attaches `industrialforegoing::Machine` to
+> `industrialforegoing:water_condensator` twice and the engine refuses the whole package at load;
+> this version attaches the Part once (`block_entity_part`), and the refusal and the working load
+> are both reproduced at the campaign pin `0a875da`. New: a machine broken with FE and water in it
+> drops an item carrying them as vanilla `minecraft:block_entity_data`, and placing it restores
+> them (clamped to the buffer and tank capacities), proven in game with a before/after
+> differential. Fixed: the carried recipe used a tag-or-item list shape the 26.3 loader rejects,
+> so the machine could not be crafted; the three ingredients are their vanilla fallbacks and the
+> recipe now crafts and consumes them in game, and the carried advancement's unknown
+> `neoforge:item_exists` condition is dropped. `runtime.rs` is unchanged, byte for byte.
+
 ## Skills
 
 Skills: superpowers/using-superpowers,brainstorming,writing-plans,test-driven-development,systematic-debugging,verification-before-completion; BeautifulRust/rust-best-practices,rust-port
@@ -411,7 +556,12 @@ exception `botanypots`, `powah`, `charginggadgets` and `mininggadgets` record).
 
 ## Verification
 
-### The SDK ladder (2026-11-18, current)
+**[`VALIDATION.md`](VALIDATION.md) is the ladder for the delivered 0.2.2 package** at the
+campaign pin `0a875da…` (tests, fmt, clippy, two `cmp`-identical builds, `check`, both `fits`
+runs, the 0.2.0 load refusal rebuilt at this pin, and the six in-game legs with their exit
+statuses). The tables below are the earlier ladders, kept as history.
+
+### The SDK ladder (2026-11-18, the 0.2.0 migration; historical)
 
 Pin **`0b14f8acfd97fa2c750e42795249dcc981178ca4`**, mixins
 **`e59da9094f0c2fdda6c627fe9eff22dec6a906f0`**, launcher 0.2.78, Rust 1.97.0 (the SDK
@@ -500,11 +650,12 @@ shows both ids unknown.
 
 ### Packaged artifacts
 
-The current package (2026-11-18, SDK format) — one file, code and content together:
+The current package (2026-11-21, SDK format) — one file, code and content together:
 
 | File | Size | SHA-256 | Entries |
 |---|---:|---|---:|
-| `industrialforegoing.hmod` (0.2.1) | 30,694 B | `4cc91337a2d92c023aad9d2bcfd9a83ef1c37c284bf1b33b8bbaeafebeaa1b55` | 25 |
+| `industrialforegoing.hmod` (0.2.2) | 34,096 B | `2672a80085cb0a258239408750b625fbee497f760693e473d823c0b947404826` | 25 |
+| `industrialforegoing.hmod` (0.2.1, never published) | 30,694 B | `4cc91337a2d92c023aad9d2bcfd9a83ef1c37c284bf1b33b8bbaeafebeaa1b55` | 25 |
 | `industrialforegoing.hmod` (0.2.0, superseded) | 28,979 B | `c10182f32584e6522b274855f6c8331793421237112d87acf804a4fb17752ed7` | 25 |
 
 It holds `horizon-mod.toml`, `Cargo.toml`, `src/lib.rs`, `src/runtime.rs`, `uses.json`,
@@ -540,16 +691,20 @@ The `.hnmod` carried the content mod as
    `workAmount` timing — against the pin's APIs. Everything else the library
    provides (tabs, config files, the container/screen framework, the augment
    system, `@Save` serialisation helpers) is a gap recorded here.
-5. **Breaking the machine loses its FE and water.** Upstream's block item keeps
-   the block entity's saved compound; the pin has no loot-function hook for a
-   mod block's drops, so the drop is the plain block item.
-6. **The recipe cannot be crafted in this slice.** It names
-   `industrialforegoing:machine_frame/pity`, `c:plastics` and `c:gears/iron`;
-   the frame and the plastic belong to other parts of the mod (and no `iron_gear`
-   item is ported), so the tags resolve empty and the shaped recipe never
-   matches. The e2e obtains the block with `/give`/`item replace`. The carried
-   recipe is kept because it is upstream's file and becomes live when those
-   parts are ported.
+5. ~~**Breaking the machine loses its FE and water.**~~ **Closed in 0.2.2 (slice 2).** The 2026-11-21
+   ruling gives a mod block's drop the vanilla route (`block_drops` + `minecraft:block_entity_data`),
+   which this port now uses: a broken machine's item carries its FE, water and bar, and placing it
+   restores them (clamped). Proven in game in phase L with a before/after differential.
+6. ~~**The recipe cannot be crafted in this slice.**~~ **Closed in 0.2.2.** The carried recipe's
+   tag-or-item **list** ingredients were invalid at 26.3 (the loader logged
+   `recipes: invalid ingredient …` for `#c:plastics`, `#c:gears/iron` and
+   `#industrialforegoing:machine_frame/pity` and dropped the whole recipe), so the machine could
+   not be crafted at all. The three ingredients are their vanilla fallbacks now
+   (`minecraft:slime_ball`, `minecraft:iron_block`, `minecraft:iron_block`); phase K crafts it in a
+   crafting table, asserts the output and the consumption, and a wrong grid stays empty. The
+   `neoforge:item_exists` gate the advancement carried (also unknown to 26.3, so the file was left
+   out) is dropped. When the frames/plastics are ported, the ingredients can name the tags again —
+   as **single** tags, not lists.
 7. **No comparator output and no block-entity update tag.** The power level and
    the tank are not exposed to comparators, and nothing is sent to clients
    (there is no client-side view to send it for).
@@ -569,11 +724,12 @@ The `.hnmod` carried the content mod as
 11. **Not carried:** the `industrialforegoing:water`/fluid registrations (the
     machine uses `minecraft:water`), the patchouli book, the `META-INF`
     services, and any JEI/Jade integration (upstream's is Titanium-side).
-12. **The in-game leg is green since 2026-11-20** — `PASS` + `EXIT:0` on a launcher-built game at
-    `0b14f8a`, control `EXIT:1`, selftest `EXIT:1`
-    (`evidence/industrialforegoing-e2e/`, `check-e2e-logs.py … --strict` 3/3). It took the 0.2.1 fix
-    to get there: 0.2.0 was refused at load, see
-    [The doubled Part](#the-doubled-part-021-2026-11-20).
+12. **The in-game leg is green** — 0.2.2: `PASS` + `EXIT:0` on a launcher-built game at the
+    campaign pin `0a875da` with phases A–L, control `EXIT:1`, `SELFTEST=1` `EXIT:1`,
+    `SELFTEST=contents` `EXIT:1`, and the previous package failing phase L at `EXIT:1`
+    (`evidence/industrialforegoing-e2e/`, `check-e2e-logs.py … --strict` green). The 0.2.1 run at
+    `0b14f8a` (2026-11-20) was green for slice 1 only; 0.2.0 had no run and was refused at load,
+    see [The doubled Part](#the-doubled-part-021-2026-11-20).
 13. **The commands are typed now.** `run_mod_command` gets a parsed
     `CommandInvocation` (`<pos:block_pos>` resolves `~`/relative coordinates too)
     instead of the raw line, so `/industrialforegoing info 202 101 0` behaves as
@@ -618,12 +774,26 @@ no Java was copied or translated and no jar was decompiled.
 The carried recipe references three ingredient **tags**: `#c:gears/iron`,
 `#c:plastics` and `industrialforegoing:machine_frame/pity`. Upstream they are
 supplied by Industrial Foregoing's own machine frames and by other mods; this
-slice carries neither, so as written the recipe can never match and the one
-machine it ships is uncraftable. Each ingredient is now a **list**: the original
-tag or a vanilla fallback (`minecraft:iron_block`, `minecraft:slime_ball`), so
-the machine is craftable standalone while any mod that provides the tags still
-counts. A user notices that the Water Condensator can be made without Mekanism,
-Thermal Expansion or Industrial Foregoing's own frames.
+package carries neither, so as written the recipe can never match and the one
+machine it ships is uncraftable.
+
+**2026-11-21 (slice 2), corrected repair.** The first repair made each ingredient
+a **list** — the tag or a vanilla fallback. That shape is invalid at 26.3: the
+loader logs `recipes: invalid ingredient (unresolved tag or malformed input)`
+for every list naming an absent tag and drops the whole recipe, so the machine
+stayed uncraftable and the error only appeared in the game log. Each ingredient
+is now the vanilla fallback **alone** (`minecraft:slime_ball`, `minecraft:iron_block`,
+`minecraft:iron_block`), the only shape that both loads and crafts in a standalone
+package; the recipe's advancement also loses the `neoforge:item_exists`
+condition 26.3 does not know (`unknown load conditions … file left out`) and its
+`has_item` criterion names `minecraft:slime_ball` instead of the absent
+`#c:plastics`. A user notices that the Water Condensator can be made in a plain
+crafting table and that its recipe advancement unlocks.
+
+Evidence: the game's own log lines are quoted in
+[Slice 2](#slice-2--contents-survive-the-break--the-recipe-crafts-022-2026-11-21);
+phase K of the e2e crafts the recipe and asserts output, count, consumption and
+an empty wrong grid.
 
 ### Verification after the repairs
 

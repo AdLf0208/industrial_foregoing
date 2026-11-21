@@ -3,10 +3,10 @@
   "category": "misc",
   "key": {
     "B": "minecraft:water_bucket",
-    "G": ["#c:gears/iron", "minecraft:iron_block"],
+    "G": "minecraft:iron_block",
     "L": "minecraft:piston",
-    "M": ["#industrialforegoing:machine_frame/pity", "minecraft:iron_block"],
-    "P": ["#c:plastics", "minecraft:slime_ball"],
+    "M": "minecraft:iron_block",
+    "P": "minecraft:slime_ball",
     "R": "minecraft:redstone"
   },
   "pattern": [

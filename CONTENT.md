@@ -26,8 +26,8 @@ Rerun the script to rebuild; it deletes `assets/` and `data/` first.
 | File | Upgrade |
 |---|---|
 | `data/industrialforegoing/loot_table/blocks/water_condensator.json` | the pool's `conditions` list → one `condition` object, and `{"condition": "minecraft:survives_explosion"}` → `{"type": "minecraft:survives_explosion"}` (26.3's singular typed condition) |
-| `data/industrialforegoing/recipe/water_condensator.json` | `{"tag": T}` → `"#T"`; the `neoforge:conditions` gate dropped (the item exists whenever this mod does) |
-| `data/industrialforegoing/advancement/recipes/misc/water_condensator.json` | carried; inert unless its 1.21.1 format matches 26.3 |
+| `data/industrialforegoing/recipe/water_condensator.json` | `{"tag": T}` → `"#T"`; the `neoforge:conditions` gate dropped (the item exists whenever this mod does). **2026-11-21:** the three list ingredients (`#c:plastics`, `#c:gears/iron`, `#industrialforegoing:machine_frame/pity` + fallback) → the vanilla fallback alone (`minecraft:slime_ball`, `minecraft:iron_block`), because 26.3 rejects a list naming an absent tag and drops the recipe |
+| `data/industrialforegoing/advancement/recipes/misc/water_condensator.json` | carried; **2026-11-21:** the unknown `neoforge:conditions` (`neoforge:item_exists`) dropped and the `has_item` criterion moved from `#c:plastics` to `minecraft:slime_ball`, since 26.3 left the file out |
 
 ## Written here (decisions, not upstream files)
 
@@ -45,10 +45,11 @@ Rerun the script to rebuild; it deletes `assets/` and `data/` first.
 - The **GUI texture** and the menu: the machine has no item slots and upstream's
   screen is Titanium's tank/energy/progress bars; slice 1 exposes the same
   numbers through `/industrialforegoing info` instead (gap 1 in `notes.md`).
-- The **`industrialforegoing:machine_frame/pity`** tag and the **`c:plastics`**
-  tag: their items (`machine_frame_pity`, `plastic`) belong to other parts of
-  the mod, so the carried recipe cannot match until those are ported — recorded
-  as gap 6.
+- The **`industrialforegoing:machine_frame/pity`** and **`c:plastics`**/**`c:gears/iron`** tags:
+  their items (`machine_frame_pity`, `plastic`, an iron gear) belong to other parts of the mod, so
+  the recipe names the vanilla fallbacks alone (a list that names an absent tag is an invalid
+  ingredient at 26.3 and drops the whole recipe). When those parts are ported the ingredients can
+  name their tags again, one tag per ingredient.
 - Every other blockstate/model/texture in the jar (72 blockstates, 153 block
   models, 146 block textures): other machines, frames, mycelial generators — the
   rest of the mod.

@@ -1,4 +1,4 @@
-# Industrial Foregoing — Horizon port (slice 1: the Water Condensator)
+# Industrial Foregoing — Horizon port (slice 2: the Water Condensator)
 
 A Horizon mod for **Industrial Foregoing 1.21-3.6.39**
 (`Buuz135/Industrial-Foregoing`, **MIT**): the Water Condensator, a machine
@@ -24,6 +24,8 @@ in `notes.md`; the content decisions are in `CONTENT.md`.
 | Rule | fewer than 2 water source blocks beside it: nothing; 2 or more and ≥ 1,000 FE: `sources × 100` mB for 1,000 FE; 2 or more and < 1,000 FE: `sources × 50` mB for free |
 | Bar | starts full (100), counts down a tick; after an attempt the next value is 10 (powered), 50 (unpowered) or 100 (idle), as Titanium's `workAmount` sets it |
 | Placement | `subfacing` (Titanium's `FOUR_WAY`), the face turning toward the placer |
+| Broken | the item carries the machine's FE, water and bar (vanilla `minecraft:block_entity_data`), and placing it restores them |
+| Recipe | craftable in a plain crafting table (the absent convention tags are the vanilla fallbacks) |
 
 ## Layout
 

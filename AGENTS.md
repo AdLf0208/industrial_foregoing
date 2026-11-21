@@ -38,6 +38,17 @@ sha256sum industrialforegoing.hmod                            # quote it in note
 ```
 
 A `Cargo.lock` is packed and changes the artifact: remove it immediately before the build and
-keep it gitignored. The in-game leg needs a game the launcher built with this package
-(`horizon-launcher native-build`), which is not installed here — do not claim an in-game result
-without one.
+keep it gitignored. The in-game leg is a **launcher build** at the campaign pin:
+
+```sh
+ports/tools/launcher-game.sh build industrialforegoing --port ports/industrialforegoing
+eval "$(ports/tools/launcher-game.sh env industrialforegoing)"   # GAME/CTL/CONTROL_GAME/RES
+ports/tools/build-slot.sh run --job W1-industrialforegoing --port ports/industrialforegoing \
+    --step e2e -- bash ports/industrialforegoing/tools/e2e.sh
+```
+
+`CONTROL_GAME` is the same Nightly without the package, so `GAME=$CONTROL_GAME` is the control
+leg (`EXIT:1`); `SELFTEST=1` and `SELFTEST=contents` are the fail-capable legs. The scenario needs
+the **offscreen** renderer (screens and `click-slot` need it), survival for a block break that
+drops something, and a pickaxe on the iron-block template. `BUILD_LOCAL=1` is required: the far
+box has no copy of this port.

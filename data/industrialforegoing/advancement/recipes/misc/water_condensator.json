@@ -1,17 +1,11 @@
 {
-  "neoforge:conditions": [
-    {
-      "type": "neoforge:item_exists",
-      "item": "industrialforegoing:water_condensator"
-    }
-  ],
   "parent": "minecraft:recipes/root",
   "criteria": {
     "has_item": {
       "conditions": {
         "items": [
           {
-            "items": "#c:plastics"
+            "items": "minecraft:slime_ball"
           }
         ]
       },
