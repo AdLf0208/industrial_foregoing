@@ -20,18 +20,20 @@ injection or `support.rs` describes the **retired** port and is kept as history.
 Status: **ported-partial** — slice 1 (the Water Condensator: its block, FE
 buffer, water tank, the one condensation rule and its placement rotation) is verified in game,
 slice 2 (0.2.2, 2026-11-21) adds the machine's **contents surviving a break** and makes its
-**carried recipe actually craft**, and slice 3 (0.2.3, 2026-11-21) adds the **`titanium:augments`
-component and the speed/efficiency arithmetic** the parent's machines read. The current pin is
-nightly **`0a875da91dbb0fdcb7ba8c42c11341aa229af51a`** + mixins
+**carried recipe actually craft**, slice 3 (0.2.3, 2026-11-21) adds the **`titanium:augments`
+component and the speed/efficiency arithmetic** the parent's machines read, and slice 4 (0.2.4,
+2026-11-21) ships the **`ModuleCore` item and block set** — the four machine frames, the three gears,
+plastic and the 16 laser lenses, with the tags the pack's add-ons bind to and the condensator's recipe
+naming them again. The current pin is nightly **`0a875da91dbb0fdcb7ba8c42c11341aa229af51a`** + mixins
 **`e59da9094f0c2fdda6c627fe9eff22dec6a906f0`**. **0.2.0 — the version merged in the registry —
 could not load at all**: it attached `Machine` as both the block's Part and the block entity
 type's Part, which the engine refuses ("`industrialforegoing::Machine is attached to
 industrialforegoing:water_condensator twice`"), and it had no in-game run to catch that. 0.2.1
 removes the redundant `block_part` call (see [The doubled Part](#the-doubled-part-021-2026-11-20));
 0.2.2 carries that repair **and never shipped before**; 0.2.3 is the same machine plus its
-augment slots. See [Slice 2](#slice-2--contents-survive-the-break--the-recipe-crafts-022-2026-11-21)
-and [Slice 3](#slice-3--the-augment-family-023-2026-11-21). The gap list at the end is the rest of
-the mod.
+augment slots; 0.2.4 adds the Core set beside it. See [Slice 2](#slice-2--contents-survive-the-break--the-recipe-crafts-022-2026-11-21),
+[Slice 3](#slice-3--the-augment-family-023-2026-11-21) and [Slice 4](#slice-4--the-modulecore-item-and-block-set-024-2026-11-21).
+The gap list at the end is the rest of the mod.
 
 **Why this mod now:** it is the rank-0 `content`/`machines` core mod
 `precheck-mod.py industrialforegoing` offers (`DISPATCHABLE`, jar licence MIT,
@@ -678,21 +680,194 @@ manifest over the port's `horizon-mod.toml`.
 > rule of slices 1–2 changed: the base-rate path is the same call with no augment seated, and the
 > 26 slice-1/2 tests pass unchanged.
 
+## Slice 4 — the `ModuleCore` item and block set (0.2.4, 2026-11-21)
+
+**The slice: gap 9** ("One machine only. The jar's other 71 blockstates … are outside the slice")
+together with gap 6's own closing sentence ("When the frames/plastics are ported, the ingredients can
+name the tags again — as **single** tags, not lists"). It is the surface **two stopped add-ons** name,
+measured, not assumed (HANDOVER §9g): `mifa` is `blocked(industrialforegoing:dissolution_chamber)` and
+resolved `c:gears/diamond`, `c:gears/gold` and `c:gears/iron` as **empty** tags plus
+`industrialforegoing:{iron,gold,diamond}_gear` as **missing** items
+(`evidence/mifa/parent-references.log`), and `industrialforegoingsouls` is
+`blocked(missing-parent-item: industrialforegoing:blue_laser_lens)` and needs `#c:plastics`,
+`#c:gears/diamond` and `industrialforegoing:machine_frame/advanced`
+(`evidence/industrialforegoingsouls/BLOCKED-parent-surface.md`). This slice unblocks the **items**;
+the chamber is the next one.
+
+### What upstream registers (jar `industrialforegoing-1.21-3.6.39.jar`; source read at `ce2852db`)
+
+| id | upstream | what the port ships |
+|---|---|---|
+| `machine_frame_pity/simple/advanced/supreme` | `ModuleCore.PITY`…`SUPREME`, `new MachineFrameBlock(Properties.ofFullCopy(IRON_BLOCK))` + a `MachineFrameItem` with a custom rarity; the blockstate's one variant is keyed `""` (no state property); loot `droppingSelf` | the block and its item, the iron-block template, the jar's blockstate/block model/item model and three textures each, the four `industrialforegoing:machine_frame/<tier>` **block and item** tags, one loot table each and the four entries in `minecraft:mineable/pickaxe` |
+| `iron_gear` / `gold_gear` / `diamond_gear` | `ModuleCore.*_GEAR`, `RecipelessCustomItem("…", TAB_CORE)`; recipes are shaped 4-ingot rings | the items, the `c:gears` umbrella and `c:gears/{iron,gold,diamond}` tags with their items, the three recipes |
+| `plastic` | `ModuleCore.PLASTIC`; its recipe is **`smelting dryrubber`** (the latex chain, out of this slice) | the item and the `c:plastics` tag. **No recipe**: its source is a machine this slice does not take, and a recipe naming an absent item is dropped whole |
+| `<colour>_laser_lens` × 16 | `ModuleCore.LASER_LENS[DyeColor] = new LaserLensItem(colour)` — `Properties().stacksTo(1)`, name composed at runtime as "%s Laser Lens"; recipe `RecolorRecipe(any lens + that colour's dye)` | the 16 items (`max_stack_size` 1), their textures, models and resolved names, the port's `industrialforegoing:laser_lens` tag (the recipe's "any lens"), `c:dyes/<colour>` with the vanilla dye each, and all 16 recolour recipes |
+
+**Artefact correction — there are 16 lenses, not 32.** The brief says "the 16 laser lenses plus their
+16 inverted variants". `ModuleCore` registers **16** items, one per `DyeColor`, and the jar's
+`models/item/laser_lens_inverted[0-15].json` + `textures/item/laser_lens[0-15]_inverted.png` are
+**orphans**: `grep -rl laser_lens_inverted` over the jar's `assets/` and `data/` hits only the 18 lang
+files — no item, blockstate, model or line of code names them (the lang key
+`item.industrialforegoing.laser_lens_inverted` is unused). The port ships the 16 real items and does
+**not** invent 16 ids for orphan art; the alternative would be 16 items upstream has no way to obtain
+or use.
+
+**Rarities.** Titanium's four frame rarities are **custom enum extensions** (`CustomRarity`: green,
+aqua, light-purple, gold) with no 26.3 expression. The port maps the four tiers onto vanilla's four
+rarity slots **in order** — pity `common`, simple `uncommon`, advanced `rare`, supreme `epic` — so the
+tier order is visible and the colours differ (a user sees white/yellow/aqua/light-purple rather than
+green/aqua/purple/gold). Recorded under "Deviations".
+
+### Upstream defects fixed
+
+1. **The recolour recipes name an ingredient as a list of 16 alternatives**
+   (`[{"item":"…white_laser_lens"}, …]`, `laser_lens_<colour>_recolor.json`). 26.3 rejects that shape
+   whole — the class measured on this port's own condensator recipe in slice 2
+   (`invalid ingredient (unresolved tag or malformed input)`, HANDOVER §9d.11) — so all 16 recipes would
+   have been dropped and no lens could ever change colour. The port declares
+   `data/industrialforegoing/tags/item/laser_lens.json` with exactly those 16 items and the recipes name
+   `#industrialforegoing:laser_lens`; a user notices that every recolour crafts, from any lens.
+2. **`DyeColor.getTag()` is `c:dyes/<colour>`, and 26.3's base data ships no `c:` item tags at all**
+   (`data/c/` is absent from the prepared resources; measured, HANDOVER §9g). The port declares the
+   convention tags its carried recipes and this slice's frame recipe name — `c:dyes/<colour>` (one
+   vanilla dye), `c:ingots/iron`, `c:storage_blocks/redstone`, `c:gears`, `c:gears/*`, `c:plastics` —
+   with their vanilla or shipped values, so every recipe resolves standalone and a pack's own values
+   merge in (tags merge across packs, `load_tag_lists`).
+3. **The condensator's three stand-ins go back to the tags** (slice 2's repair, as gap 6 promised):
+   `#c:plastics`, `#c:gears/iron`, `#industrialforegoing:machine_frame/pity` — single tags, never a
+   list. A user notices the machine now costs an iron gear, two plastic and a pity frame instead of
+   slime balls and iron blocks.
+
+### TDD, in order
+
+The slice's rules are the **shape of the package**, so the failing tests came first as
+`#[cfg(test)] mod content` in `src/lib.rs` (seven tests: the 24 ids declared, each with a 26.3
+definition and a model whose texture exists, each with an English name, the tags naming the items, the
+condensator naming the three tags, every carried recipe's ingredients resolving, every frame's loot
+table and pickaxe entry). They were written before `tools/assemble_content.py` could produce any of it:
+
+```
+---- content::the_condensator_recipe_names_the_three_tags_again stdout ----
+the condensator recipe no longer names #c:plastics
+---- content::every_module_core_id_of_this_slice_is_declared_once stdout ----
+machine_frame_pity is a block upstream registers and this package does not declare
+---- content::the_tags_name_the_shipped_items stdout ----
+…/data/c/tags/item/gears/iron.json: No such file or directory (os error 2)
+---- content::every_carried_recipe_names_an_ingredient_that_exists stdout ----
+the slice carries 21 recipes (pity frame, 3 gears, the condensator, 16 recolours), found 1
+test result: FAILED. 39 passed; 7 failed; 0 ignored; 0 measured; 0 filtered out
+```
+
+Then the generator, then **46 passed, 0 failed** (`sdk-test-red-slice4.log`, `sdk-test.log`).
+`tools/verify_content.py` is the JSON-level pass over the same rules and reads the **delivered
+`.hmod`** as well as the tree; its `--selftest` drops the `c:plastics` tag, drops a declaration and
+restores slice 2's stand-ins, and all three are caught (`sdk-content-slice4.log`).
+
+Two test iterations were honest corrections of my own assumptions, not of the artefacts: the jar's
+`c:gears` lists the three **items** (not the three sub-tags), and `#minecraft:logs` is the base data's
+tag, so the recipe check only demands a package tag outside `minecraft:`.
+
+### In game (phases K, R, S, U; `evidence/industrialforegoing-e2e/e2e-launcher.log`)
+
+```
+== K: the carried recipes craft (the condensator from the tags, the frame, the gears) ==
+the condensator from the tags (#c:plastics, #c:gears/iron, machine_frame/pity) -> {"count": 1, "item": "industrialforegoing:water_condensator", "slot": 200}
+the control: slice 2's vanilla stand-ins leave the result empty -> null
+the pity machine frame (WIW/IRI/WIW) -> {"count": 1, "item": "industrialforegoing:machine_frame_pity", "slot": 200}
+the iron gear -> {"count": 1, "item": "industrialforegoing:iron_gear", "slot": 200}
+the gold gear -> {"count": 1, "item": "industrialforegoing:gold_gear", "slot": 200}
+the diamond gear -> {"count": 1, "item": "industrialforegoing:diamond_gear", "slot": 200}
+crafted 5 shaped recipes, and the stand-in grid stayed empty
+== R: every ModuleCore id of this slice registers and reads back ==
+  the 24 Core ids read back: 24 items
+  the four frames place and read back by id
+  an unregistered item and block id are refused
+== S: a machine frame breaks and drops itself ==
+  break: {"block":"minecraft:air","drops":{"industrialforegoing:machine_frame_pity":1},"picked_up":{"industrialforegoing:machine_frame_pity":1},"items_left_on_ground":0}
+== U: the 16 lens recolours craft from the lens tag and c:dyes, counts before and after ==
+  white: industrialforegoing:black_laser_lens 1->0, minecraft:white_dye 1->0, industrialforegoing:white_laser_lens 0->1
+  orange: industrialforegoing:white_laser_lens 1->0, minecraft:orange_dye 1->0, industrialforegoing:orange_laser_lens 0->1
+  … (all 16 colours, each: the lens consumed, the dye consumed, the colour's lens gained)
+crafted all 16 lens recolours and read the player's counts before and after each
+```
+
+The condensator's grid is `PBP/LML/GRG` with a real iron gear, plastic and a pity frame; after taking
+the result every ingredient is gone and the grid holds nothing but the **empty bucket the water bucket
+leaves behind** (vanilla's `craftRemainder` — the honest exception to "all nine cells empty", asserted
+as exactly that). The control puts slice 2's stand-ins (`slime_ball`, `iron_block` ×3) into the same
+grid and the result slot stays empty, which is the counterfactual the old package would have failed.
+
+**Fail-capable, four ways**: the control leg (same Nightly, no package) stops at the first `give`
+(`FAIL: the machine item did not register`) → `EXIT:1`; `SELFTEST=1` flips phase B
+(`FAIL: the water is 200, expected 201`) → `EXIT:1`; `SELFTEST=contents` flips phase L; and the new
+**`SELFTEST=core`** flips phase U's red-lens count (`FAIL: the red lens count after the craft is 1,
+expected 2`) → `EXIT:1`. All four logs are in `evidence/industrialforegoing-e2e/` and
+`check-e2e-logs.py industrialforegoing-e2e --strict` is 4/4.
+
+**Harness facts this slice added**: `ctl open-inventory` opens the **creative** screen in creative
+mode, which has no 2×2 grid — the recolour leg switches to survival first (the 2×2 is
+`open-inventory`'s grid 100-103, result 200, and works in survival); a water bucket's
+`craftRemainder` leaves an empty bucket in the grid, so a "the grid is empty" assertion must expect
+it; and two ingredients of the same item in different cells must be **one** `give` and a right-click
+per cell, because a single-cell ingredient given as a stack is placed whole.
+
+**A dialect flag, not a defect.** `ports/tools/check_261_dialect.py` reports the four frames' loot
+tables (and the condensator's) for `"bonus_rolls": 0.0` and `"rolls": 1.0` — the two shapes HANDOVER
+§9d.13 marks as **unverified** ("no game has shown them to change behaviour; a flag is not a
+defect"). They are the jar's own pool fields, the condensator has shipped them since 0.2.2, and this
+slice's phase S proves the drop: `drops{"industrialforegoing:machine_frame_pity": 1}`.
+
+### Coverage (families this slice adds)
+
+| family | coverage |
+|---|---|
+| the four machine frames (block + item) | `tested` — phase R places each and reads it back by id; phase S breaks one in survival and reads `drops{machine_frame_pity: 1}` |
+| the frames' loot tables | `tested` — phase S's drop is the loot table; a frame outside `mineable/pickaxe` would drop nothing |
+| the three gears and plastic | `tested` — phase R gives and reads each back; phases K/… craft the gears; the condensator consumes both gears (tag) and plastic |
+| the 16 lenses | `tested` — phase R gives and reads each back; phase U crafts all 16 recolours |
+| `industrialforegoing:machine_frame/{pity,simple,advanced,supreme}` (block + item) | `tested` — the pity tag is the condensator's `M` ingredient (phase K); the other three are carried for the add-ons and asserted by `verify_content.py` (values resolve) |
+| `c:gears`, `c:gears/{iron,gold,diamond}`, `c:plastics` | `tested` — phases K and U craft through `#c:gears/iron` and `#c:plastics`; the umbrella `c:gears` has no recipe consumer (asserted as data only) |
+| `c:dyes/<colour>` (16) | `tested` — phase U crafts all 16 recolours through them |
+| `c:ingots/iron`, `c:storage_blocks/redstone` | `tested` — phase K crafts the pity frame through both |
+| `industrialforegoing:laser_lens` (the port's "any lens" tag) | `tested` — phase U feeds a **black** lens to the white recolour, so the tag is what matched |
+| the `core` creative tab | `not asserted in game` (a tab is a client screen; the ids are asserted registered and named) |
+| the 21 carried recipe advancements | `carried, not exercised` — the load check asserts the game logged no refused recipe/advancement file; no command exposes a criterion |
+| the simple/advanced/supreme frames' recipes, the lenses' own recipes | `blocked(industrialforegoing:dissolution_chamber)` — the next slice; those three frames are `give`-only and the lenses are craftable from each other |
+| `plastic`'s own recipe | `not ported` — `smelting dryrubber`, and dryrubber is the latex chain (a later slice) |
+
+### The changelog for the 0.2.4 update
+
+> Supersedes the closed 0.2.3 PR of this entry. **New: the `ModuleCore` item and block set.** The four
+> machine frames (iron-block template, their own state-free blockstate, models, textures, loot tables
+> and pickaxe entries), the iron/gold/diamond gears, plastic and the 16 coloured laser lenses are
+> registered, named and given their real tags — `industrialforegoing:machine_frame/<tier>` (block and
+> item), `c:gears`, `c:gears/*`, `c:plastics` — and this package now also declares the convention tags
+> its recipes name (`c:dyes/<colour>`, `c:ingots/iron`, `c:storage_blocks/redstone`) because 26.3's base
+> data ships none. The Water Condensator's carried recipe names `#c:plastics`, `#c:gears/iron` and
+> `#industrialforegoing:machine_frame/pity` again instead of slice 2's stand-ins. Proven in game: 24 ids
+> read back, the four frames placed and one broken for its drop, the condensator crafted **from the
+> tags** with every ingredient consumed (and the stand-in grid empty), the pity frame and the three
+> gears crafted, and all 16 lens recolours crafted with the player's counts read before and after. Fixed
+> upstream defects: the recolour recipes' 16-alternative ingredient list (26.3 drops such a recipe
+> whole) became the `industrialforegoing:laser_lens` tag. `runtime.rs` is unchanged, byte for byte; the
+> dissolution chamber, the latex/plastic machines and the frames' own recipes are the next slice.
+
 ## Skills
 
-Skills: superpowers/using-superpowers,brainstorming,writing-plans,test-driven-development,systematic-debugging,verification-before-completion; BeautifulRust/rust-best-practices
+Skills: superpowers/using-superpowers,writing-plans,test-driven-development,verification-before-completion; BeautifulRust/rust-best-practices (slice 4: the set actually loaded for this slice; `brainstorming` was not needed — the brief chose the slice — and the e2e iterations were debugged from the logs rather than through `systematic-debugging`)
 
-`cargo fmt`, `cargo clippy --all-targets -- -D warnings` and `cargo test` were
-run before hand-back. `#[allow(private_interfaces, reason = "…")]` marks the
-injected module's own private `Game`/`ModBlockEntity` parameters (the same
-exception `botanypots`, `powah`, `charginggadgets` and `mininggadgets` record).
+`cargo fmt --package industrialforegoing --check`, `cargo clippy --all-targets -- -D warnings` and
+`cargo test` were run before hand-back (slice 4: `FMT-CLEAN`, 0 warnings, 46 passed).
+`#[allow(private_interfaces, reason = "…")]` marks the injected module's own private
+`Game`/`ModBlockEntity` parameters (the same exception `botanypots`, `powah`, `charginggadgets` and
+`mininggadgets` record).
 
 ## Verification
 
-**[`VALIDATION.md`](VALIDATION.md) is the ladder for the delivered 0.2.3 package** at the
-campaign pin `0a875da…` (tests, fmt, clippy, two `cmp`-identical builds, `check`, both `fits`
-runs, and the in-game legs — green, control and both selftests — with their exit statuses). The
-tables below are the earlier ladders, kept as history.
+**[`VALIDATION.md`](VALIDATION.md) is the ladder for the delivered 0.2.4 package** at the
+campaign pin `0a875da…` (the red test run, fmt, clippy, 46 tests, two `cmp`-identical builds, `check`,
+both `fits` runs, the content verifier with its selftest, and the in-game legs — green, control and
+both selftests — with their exit statuses). The tables below are the earlier ladders, kept as history.
 
 ### The SDK ladder (2026-11-18, the 0.2.0 migration; historical)
 
@@ -787,14 +962,18 @@ The current package (2026-11-21, SDK format) — one file, code and content toge
 
 | File | Size | SHA-256 | Entries |
 |---|---:|---|---:|
+| `industrialforegoing.hmod` (0.2.4) | 153,549 B | `dd43090d0f7a96b01f82d842cf42cd2f59f45e9d2763c524d65187c320b9508f` | 230 |
 | `industrialforegoing.hmod` (0.2.3) | 59,334 B | `819f00fc54dd6a2623406681494a3842f57331207d60e620b2f597ef66559e7c` | 41 |
 | `industrialforegoing.hmod` (0.2.2) | 34,096 B | `2672a80085cb0a258239408750b625fbee497f760693e473d823c0b947404826` | 25 |
 | `industrialforegoing.hmod` (0.2.1, never published) | 30,694 B | `4cc91337a2d92c023aad9d2bcfd9a83ef1c37c284bf1b33b8bbaeafebeaa1b55` | 25 |
 | `industrialforegoing.hmod` (0.2.0, superseded) | 28,979 B | `c10182f32584e6522b274855f6c8331793421237112d87acf804a4fb17752ed7` | 25 |
 
-0.2.3 holds `horizon-mod.toml`, `Cargo.toml`, `src/lib.rs`, `src/runtime.rs`, `uses.json`,
-`LICENSE`, `LICENSE-NOTICE.md`, `README.md` and the **33** carried content files (the block's 17,
-plus the four addon items' definitions, models and textures and their four lang strings).
+0.2.4 holds `horizon-mod.toml`, `Cargo.toml`, `src/lib.rs`, `src/runtime.rs`, `uses.json`,
+`LICENSE`, `LICENSE-NOTICE.md`, `README.md` and the **222** carried content files: the condensator's
+17 and the four addon items' 9 from slices 1–3, plus slice 4's four frames (blockstate, block model,
+item model, three textures, item definition, block declaration, loot table = 9 each), the 20 plain
+items (texture, model, 26.3 definition, declaration = 4 each), 21 recipes, 21 advancements, the
+`c:`/`industrialforegoing:` tags and the `core` creative tab.
 
 The retired pair, kept in `../_shared/evidence/industrialforegoing/retired-hnmod-0.1.0/`:
 
@@ -833,26 +1012,29 @@ The `.hnmod` carried the content mod as
    ruling gives a mod block's drop the vanilla route (`block_drops` + `minecraft:block_entity_data`),
    which this port now uses: a broken machine's item carries its FE, water and bar, and placing it
    restores them (clamped). Proven in game in phase L with a before/after differential.
-6. ~~**The recipe cannot be crafted in this slice.**~~ **Closed in 0.2.2.** The carried recipe's
-   tag-or-item **list** ingredients were invalid at 26.3 (the loader logged
-   `recipes: invalid ingredient …` for `#c:plastics`, `#c:gears/iron` and
-   `#industrialforegoing:machine_frame/pity` and dropped the whole recipe), so the machine could
-   not be crafted at all. The three ingredients are their vanilla fallbacks now
-   (`minecraft:slime_ball`, `minecraft:iron_block`, `minecraft:iron_block`); phase K crafts it in a
-   crafting table, asserts the output and the consumption, and a wrong grid stays empty. The
-   `neoforge:item_exists` gate the advancement carried (also unknown to 26.3, so the file was left
-   out) is dropped. When the frames/plastics are ported, the ingredients can name the tags again —
-   as **single** tags, not lists.
+6. ~~**The recipe cannot be crafted in this slice.**~~ **Closed in 0.2.2, and the tags are back in
+   0.2.4.** The carried recipe's tag-or-item **list** ingredients were invalid at 26.3 (the loader
+   logged `recipes: invalid ingredient …` for `#c:plastics`, `#c:gears/iron` and
+   `#industrialforegoing:machine_frame/pity` and dropped the whole recipe), so 0.2.2 used the vanilla
+   fallbacks (`minecraft:slime_ball`, `minecraft:iron_block` ×2). Slice 4 ships the items and tags
+   those names refer to, so the recipe is the jar's again — `#c:plastics`, `#c:gears/iron`,
+   `#industrialforegoing:machine_frame/pity`, each a **single tag** — and phase K crafts it from
+   them, with a grid of the old stand-ins staying empty. The `neoforge:item_exists` gate the
+   advancement carried (unknown to 26.3, so the file was left out) stays dropped.
 7. **No comparator output and no block-entity update tag.** The power level and
    the tank are not exposed to comparators, and nothing is sent to clients
    (there is no client-side view to send it for).
 8. **No config file.** The three values are the upstream defaults
    (`maxProgress` 100, `powerPerOperation` 1000, `maxStoredPower` 10000,
    `maxWaterTankSize` 16000); `config/` is not created.
-9. **One machine only.** The jar's other 71 blockstates (frames, mycelial
-   generators, the latex/plastic chain, conveyors, black-hole units, the laser
-   drills, …) are outside the slice; `industrialforegoingsouls` and `mifa`
-   (the pack's add-ons) stay untouched.
+9. ~~**One machine only.**~~ **Partly closed in 0.2.4 (slice 4).** The `ModuleCore` items and blocks
+   ship now — the four machine frames, the iron/gold/diamond gears, plastic and the 16 coloured laser
+   lenses — with the tags the pack's add-ons bind to. Still outside the slice: the jar's other
+   blockstates and their machines (mycelial generators, the latex/plastic chain and its
+   `fluid_extractor`/`latex_processing_unit`, the **dissolution chamber**, conveyors, black-hole units,
+   the laser drills, …), the ranges addons, `dryrubber`/`fertilizer`/`pink_slime`/`straw`, and the
+   patchouli book. `industrialforegoingsouls` is still `blocked(missing-parent-recipe-type:
+   industrialforegoing:laser_drill_ore)` and `mifa` still `blocked(industrialforegoing:dissolution_chamber)`.
 10. **The block declaration's `sounds` names a vanilla *block***, not a sound
     group id: `"sounds": "minecraft:iron"` was rejected at load
     (`industrialforegoing:water_condensator: sounds minecraft:iron is not a
@@ -888,6 +1070,19 @@ The `.hnmod` carried the content mod as
     are the parent's own items with their `titanium:augments` defaults, but their recipes are
     dissolution-chamber recipes — that machine is a later slice — so nothing crafts them yet and
     they are not in a creative tab.
+16. **The machine frames' rarities are vanilla slots, not Titanium's custom ones** (slice 4).
+    `CustomRarity` registers four enum extensions (green/aqua/light-purple/gold); 26.3's declaration
+    schema has `common`/`uncommon`/`rare`/`epic` only, so the four tiers map onto those **in order**
+    (pity common, simple uncommon, advanced rare, supreme epic) and the item colours differ. Cosmetic
+    only; recorded in [Slice 4](#slice-4--the-modulecore-item-and-block-set-024-2026-11-21).
+17. **Three machine frames and 16 lenses are `give`-only or craft-from-each-other** (slice 4).
+    `machine_frame_simple/advanced/supreme` and every lens' own recipe are **dissolution-chamber**
+    recipes (`recipe/dissolution_chamber/*.json`), so they are not carried: the three frames are
+    `give`-only until the chamber lands, and the lenses are obtainable by recolouring each other (a
+    white lens is itself only obtainable from the chamber in a full pack). `plastic` is
+    `give`-only too: its recipe is `smelting dryrubber`, and `dryrubber` is the latex chain.
+18. **`c:gears` (the umbrella tag) has no consumer in this package.** It is carried whole (a pack's
+    add-on may ask for "any gear"); its three sub-tags are each exercised by a craft.
 
 ## Provenance (upstream analysis)
 
@@ -903,9 +1098,7 @@ deleted after the findings were written. Files read and behaviour extracted:
 no Java was copied or translated and no jar was decompiled.
 
 Slice 3 re-read two upstream trees (shallow clones in `/tmp/opencode/`, deleted after the findings
-were recorded above and in the slice section):
-
-- **Industrial Foregoing `ce2852db`** (`1.21`): `item/addon/AddonItem.java` (the `useOn` seat),
+were recorded above and in the slice section):- **Industrial Foregoing `ce2852db`** (`1.21`): `item/addon/AddonItem.java` (the `useOn` seat),
   `item/addon/SpeedAddonItem.java` / `EfficiencyAddonItem.java` (`1 + tier`, `1 - tier * 0.1`,
   `Properties().stacksTo(16)`), `block/tile/IndustrialWorkingTile.java` (the bar's
   `progressIncrease`, `maxProgress = floor(100 * efficiency)` after a work and
@@ -921,6 +1114,16 @@ were recorded above and in the slice section):
 Clean-room: the rewrite is this port's own Rust against the pin's APIs; the Java was read for
 behaviour only, and where the pin cannot express something (no item handler on a menu-less machine)
 the deviation is recorded above instead of faked.
+
+Slice 4 re-read the same repository at `ce2852db` for the `ModuleCore` set (`module/ModuleCore.java`:
+the four `registerBlockWithItem` frames, `registerGeneric` gears/plastic and the `for (DyeColor value
+: DyeColor.values())` lens loop; `block/MachineFrameBlock.java` for `ofFullCopy(IRON_BLOCK)` and
+`droppingSelf`; `item/LaserLensItem.java` for `stacksTo(1)` and the composed name;
+`utils/CustomRarity.java` for the four custom rarities; `recipe/provider/IndustrialRecipeProvider.java`
+for the recolour recipes' 16-item alternative list). The jar's own JSON (blockstates, models,
+textures, loot tables, recipes, advancements, tags) was the authority for every carried file; where
+the jar and code disagreed the jar won (there is no inverted lens item). The clone was deleted after
+the findings; no Java was copied or translated.
 
 ## Review repairs (PR #600)
 

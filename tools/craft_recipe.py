@@ -1,25 +1,29 @@
 #!/usr/bin/env python3
-"""Craft the Water Condensator from its carried recipe, then show a wrong grid stays empty.
+"""Craft every shaped recipe this slice carries, in one crafting table.
 
-Called by `tools/e2e.sh` with the open game's control socket and the crafting table's
-position. The carried recipe is shaped:
+Called by `tools/e2e.sh` with the open game's control socket and a placed
+crafting table's position. Each case puts its declared grid into the table,
+asserts the exact result id and count, takes it, and asserts the inventory
+holds the result and none of the ingredients; a control case puts slice 2's
+vanilla stand-ins into the condensator's grid and asserts the result slot stays
+empty, which is the counterfactual this slice turns over.
 
-    P B P
-    L M L
-    G R G
+The carried recipes, from the jar:
 
-with `P` = `#c:plastics` or `minecraft:slime_ball`, `B` = `minecraft:water_bucket`,
-`L` = `minecraft:piston`, `M` = `#industrialforegoing:machine_frame/pity` or
-`minecraft:iron_block`, `G` = `#c:gears/iron` or `minecraft:iron_block` and
-`R` = `minecraft:redstone` — the tags upstream relies on are not in this package, so
-the vanilla fallbacks are what makes the machine craftable standalone (the "Upstream
-defects fixed" entry in `notes.md`).
+    water_condensator  PBP/LML/GRG  P=#c:plastics  B=water_bucket  L=piston
+                                    M=#industrialforegoing:machine_frame/pity
+                                    G=#c:gears/iron  R=redstone
+    machine_frame_pity WIW/IRI/WIW  W=#minecraft:logs  I=#c:ingots/iron
+                                    R=#c:storage_blocks/redstone
+    iron/gold/diamond_gear  " P "/"P P"/" P "   P = the ingot
 
-The harness's crafting table menu numbers its grid 100-108 row-major and its result slot
-200 (`horizon-ctl`'s `open-inventory` documents the same layout for the player's 2x2).
-The check asserts the exact result id and count, that taking it reaches the inventory,
-that every ingredient was consumed, and that a wrong grid (redstone replaced by glowstone)
-leaves the result slot empty. Exits 1 with the observed slot on the first mismatch.
+The tags are what makes these craft: the port declares the convention tags
+(`c:gears/*`, `c:plastics`, `c:ingots/iron`, `c:storage_blocks/redstone`) with
+their items, and `industrialforegoing:machine_frame/*` is the jar's own.
+
+The harness's crafting table menu numbers its grid 100-108 row-major and its
+result slot 200 (`horizon-ctl`'s `open-inventory` documents the same layout for
+the player's 2x2).
 """
 import json
 import subprocess
@@ -28,13 +32,77 @@ import sys
 GRID = [str(slot) for slot in range(100, 109)]
 RESULT = "200"
 MACHINE = "industrialforegoing:water_condensator"
-# (item, count, cells row-major in the pattern above)
-INGREDIENTS = [
-    ("minecraft:slime_ball", 2, ["100", "102"]),
-    ("minecraft:water_bucket", 1, ["101"]),
-    ("minecraft:piston", 2, ["103", "105"]),
-    ("minecraft:iron_block", 3, ["104", "106", "108"]),
-    ("minecraft:redstone", 1, ["107"]),
+FRAME = "industrialforegoing:machine_frame_pity"
+
+
+def condenser_grid(fill: dict[str, str]) -> list[tuple[str, int, list[str]]]:
+    """`PBP/LML/GRG`, with the three tag ingredients taken from `fill`.
+
+    Two cells can name the same item (the control puts iron blocks in the frame
+    cell and both gear cells): they are merged into one ingredient, so the
+    harness gives one stack and right-clicks a copy into each cell.
+    """
+    cells = [
+        (fill["P"], ["100", "102"]),
+        ("minecraft:water_bucket", ["101"]),
+        ("minecraft:piston", ["103", "105"]),
+        (fill["M"], ["104"]),
+        (fill["G"], ["106", "108"]),
+        ("minecraft:redstone", ["107"]),
+    ]
+    merged: dict[str, list[str]] = {}
+    for item, where in cells:
+        merged.setdefault(item, []).extend(where)
+    return [(item, len(where), where) for item, where in merged.items()]
+
+
+# (label, expected result id or None for the control, ingredients)
+CASES = [
+    (
+        "the condensator from the tags (#c:plastics, #c:gears/iron, machine_frame/pity)",
+        MACHINE,
+        condenser_grid(
+            {
+                "P": "industrialforegoing:plastic",
+                "M": FRAME,
+                "G": "industrialforegoing:iron_gear",
+            }
+        ),
+    ),
+    (
+        "the control: slice 2's vanilla stand-ins leave the result empty",
+        None,
+        condenser_grid(
+            {
+                "P": "minecraft:slime_ball",
+                "M": "minecraft:iron_block",
+                "G": "minecraft:iron_block",
+            }
+        ),
+    ),    (
+        "the pity machine frame (WIW/IRI/WIW)",
+        FRAME,
+        [
+            ("minecraft:oak_log", 4, ["100", "102", "106", "108"]),
+            ("minecraft:iron_ingot", 4, ["101", "103", "105", "107"]),
+            ("minecraft:redstone_block", 1, ["104"]),
+        ],
+    ),
+    (
+        "the iron gear",
+        "industrialforegoing:iron_gear",
+        [("minecraft:iron_ingot", 4, ["101", "103", "105", "107"])],
+    ),
+    (
+        "the gold gear",
+        "industrialforegoing:gold_gear",
+        [("minecraft:gold_ingot", 4, ["101", "103", "105", "107"])],
+    ),
+    (
+        "the diamond gear",
+        "industrialforegoing:diamond_gear",
+        [("minecraft:diamond", 4, ["101", "103", "105", "107"])],
+    ),
 ]
 
 
@@ -70,7 +138,11 @@ def main():
         for slot in slots():
             if slot.get("item") == item and slot["slot"] < 100:
                 return slot["slot"]
-        raise SystemExit(f"missing ingredient {item} in the inventory")
+        occupied = [(s["slot"], s.get("item"), s.get("count")) for s in slots() if s.get("item")]
+        got = run("inventory")["counts"]
+        raise SystemExit(
+            f"missing ingredient {item} in the inventory: screen {occupied}, counts {got}"
+        )
 
     def open_table():
         run("look-at-block", x, y, z)
@@ -98,12 +170,14 @@ def main():
         run("click-slot", RESULT)
         wait(6)
 
-    def place(item, whole, targets):
-        """Put `item` into `targets`; `whole` left-clicks a stack into one cell."""
+    def place(item, count, cells):
+        """Put `item` into `cells`: one per cell, or the whole stack when it is
+        a single item (a bucket, a frame, a redstone block)."""
+        targets = cells
         source = find(item)
         run("click-slot", str(source))
         wait(1)
-        if whole:
+        if len(targets) == 1 and count == 1:
             run("click-slot", targets[0])
             wait(1)
         else:
@@ -113,59 +187,54 @@ def main():
         run("click-slot", str(source))
         wait(2)
 
-    def setup(extra):
+    def setup(ingredients):
         try:
             run("close")
         except SystemExit:
             pass
         wait(3)
         run("command", "clear @s")
-        for item, count in extra:
+        for item, count, _ in ingredients:
             run("give", item, str(count))
         wait(6)
         open_table()
 
     failures = []
-
-    setup([(item, count) for item, count, _ in INGREDIENTS])
-    for item, _, cells in INGREDIENTS:
-        place(item, whole=len(cells) == 1 and item == "minecraft:water_bucket", targets=cells)
-    got = result()
-    print("the declared grid ->", json.dumps(got))
-    if not got or got.get("item") != MACHINE or got.get("count") != 1:
-        dump("the declared grid")
-        failures.append(f"the declared recipe did not craft one {MACHINE}: {got}")
-    else:
+    for label, expected, ingredients in CASES:
+        setup(ingredients)
+        for item, count, cells in ingredients:
+            place(item, count, cells)
+        got = result()
+        print(f"{label} -> {json.dumps(got)}")
+        if expected is None:
+            if got is not None:
+                dump(label)
+                failures.append(f"{label}: a grid of stand-ins crafted {got['item']}")
+            continue
+        if not got or got.get("item") != expected or got.get("count") != 1:
+            dump(label)
+            failures.append(f"{label}: expected one {expected}, got {got}")
+            continue
         take_result()
         counts = run("inventory")["counts"]
-        if not counts.get(MACHINE):
-            failures.append("the crafted machine did not reach the inventory")
-        for item, _, _ in INGREDIENTS:
+        if counts.get(expected, 0) != 1:
+            failures.append(f"{label}: the crafted {expected} did not reach the inventory ({counts.get(expected)})")
+        for item, _, _ in ingredients:
             if counts.get(item, 0) != 0:
-                failures.append(f"{item} was not consumed ({counts.get(item)} left)")
-
-    # The control: the same grid with the redstone swapped for glowstone must match nothing.
-    setup(
-        [
-            ("minecraft:slime_ball", 2),
-            ("minecraft:water_bucket", 1),
-            ("minecraft:piston", 2),
-            ("minecraft:iron_block", 3),
-            ("minecraft:glowstone_dust", 1),
-        ]
-    )
-    for item, cells in (
-        ("minecraft:slime_ball", ["100", "102"]),
-        ("minecraft:water_bucket", ["101"]),
-        ("minecraft:piston", ["103", "105"]),
-        ("minecraft:iron_block", ["104", "106", "108"]),
-        ("minecraft:glowstone_dust", ["107"]),
-    ):
-        place(item, whole=item == "minecraft:water_bucket", targets=cells)
-    got = result()
-    print("glowstone instead of redstone ->", json.dumps(got))
-    if got is not None:
-        failures.append(f"a wrong grid crafted {got['item']}")
+                failures.append(f"{label}: {item} was not consumed ({counts.get(item)} left)")
+        # Every grid cell is empty again, except a crafting remainder: a water
+        # bucket leaves the empty bucket behind (`Item.Properties.craftRemainder`).
+        remainder = (
+            "minecraft:bucket"
+            if any(item == "minecraft:water_bucket" for item, _, _ in ingredients)
+            else None
+        )
+        left = [s for s in slots() if s["slot"] in range(100, 109) and s.get("item")]
+        unexpected = [s for s in left if s["item"] != remainder]
+        if unexpected:
+            failures.append(f"{label}: the grid still holds {unexpected}")
+        if remainder and not any(s["item"] == remainder for s in left):
+            failures.append(f"{label}: the water bucket left no {remainder} behind")
 
     try:
         run("close")
@@ -176,7 +245,7 @@ def main():
         for failure in failures:
             print(f"FAIL: {failure}", file=sys.stderr)
         raise SystemExit(1)
-    print(f"recipe PASS: the declared grid crafts one {MACHINE} and consumes every ingredient")
+    print(f"crafted {len([c for c in CASES if c[1]])} shaped recipes, and the stand-in grid stayed empty")
 
 
 if __name__ == "__main__":

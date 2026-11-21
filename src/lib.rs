@@ -1055,3 +1055,389 @@ mod tests {
         );
     }
 }
+
+/// The slice-4 census: the `ModuleCore` items and blocks this package ships, checked as **files**.
+///
+/// The slice is data, so its rules are the shape of the package: every id upstream's `ModuleCore`
+/// registers for this set is declared once, has a model whose texture exists and a name, carries the
+/// tag the pack's add-ons bind to, and is named by a recipe whose every ingredient resolves to
+/// something this package (or vanilla) actually has. A recipe that names an absent tag is exactly the
+/// defect 26.3 answers by dropping the whole recipe (slice 2's `#c:plastics` list), so that rule is
+/// pinned here rather than discovered in a world.
+#[cfg(test)]
+mod content {
+    use std::path::PathBuf;
+
+    /// The 16 dye colours, in `DyeColor`'s order — the order of the jar's `laser_lens<0-15>`
+    /// textures and of `ModuleCore.LASER_LENS`.
+    const COLOURS: [&str; 16] = [
+        "white",
+        "orange",
+        "magenta",
+        "light_blue",
+        "yellow",
+        "lime",
+        "pink",
+        "gray",
+        "light_gray",
+        "cyan",
+        "purple",
+        "blue",
+        "brown",
+        "green",
+        "red",
+        "black",
+    ];
+
+    /// The four `MachineFrameBlock`s (`ModuleCore.PITY` … `SUPREME`).
+    const FRAMES: [&str; 4] = [
+        "machine_frame_pity",
+        "machine_frame_simple",
+        "machine_frame_advanced",
+        "machine_frame_supreme",
+    ];
+
+    /// The plain items `ModuleCore` registers for this set: the three gears and the plastic.
+    const PLAIN_ITEMS: [&str; 4] = ["iron_gear", "gold_gear", "diamond_gear", "plastic"];
+
+    /// The port root, which is also the package root.
+    fn root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    }
+
+    /// A file of the package, by its path inside it.
+    fn read(path: &str) -> String {
+        let full = root().join(path);
+        std::fs::read_to_string(&full).unwrap_or_else(|error| panic!("{}: {error}", full.display()))
+    }
+
+    /// Whether the package holds `path`.
+    fn has(path: &str) -> bool {
+        root().join(path).is_file()
+    }
+
+    /// The `industrialforegoing:<path>` of an id, as the files are named.
+    fn path_of(id: &str) -> &str {
+        id.strip_prefix("industrialforegoing:").unwrap_or(id)
+    }
+
+    /// Every `"…"` string of a JSON file, in order; enough to walk a carried recipe's ids without a
+    /// JSON parser in the crate (the SDK's `serde_json` is not this crate's dependency).
+    fn strings(json: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut chars = json.chars();
+        while let Some(c) = chars.next() {
+            if c != '"' {
+                continue;
+            }
+            let mut current = String::new();
+            while let Some(c) = chars.next() {
+                match c {
+                    '\\' => {
+                        if let Some(escaped) = chars.next() {
+                            current.push(escaped);
+                        }
+                    }
+                    '"' => break,
+                    other => current.push(other),
+                }
+            }
+            out.push(current);
+        }
+        out
+    }
+
+    /// The recipe files the package carries (`data/industrialforegoing/recipe/**`).
+    fn recipes() -> Vec<PathBuf> {
+        fn walk(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    walk(&path, out);
+                } else if path.extension().is_some_and(|ext| ext == "json") {
+                    out.push(path);
+                }
+            }
+        }
+        let mut out = Vec::new();
+        walk(&root().join("data/industrialforegoing/recipe"), &mut out);
+        out.sort();
+        out
+    }
+
+    /// Every id the package declares as an item or a block item.
+    fn declared_ids() -> Vec<String> {
+        let mut out = Vec::new();
+        for kind in ["item", "block"] {
+            let dir = root().join(format!("data/industrialforegoing/horizon/{kind}"));
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+                    continue;
+                };
+                out.push(format!("industrialforegoing:{stem}"));
+            }
+        }
+        out.sort();
+        out
+    }
+
+    #[test]
+    fn every_module_core_id_of_this_slice_is_declared_once() {
+        for frame in FRAMES {
+            assert!(
+                has(&format!(
+                    "data/industrialforegoing/horizon/block/{frame}.json"
+                )),
+                "{frame} is a block upstream registers and this package does not declare"
+            );
+        }
+        for item in PLAIN_ITEMS {
+            assert!(
+                has(&format!(
+                    "data/industrialforegoing/horizon/item/{item}.json"
+                )),
+                "{item} is an item upstream registers and this package does not declare"
+            );
+        }
+        for colour in COLOURS {
+            let lens = format!("{colour}_laser_lens");
+            assert!(
+                has(&format!(
+                    "data/industrialforegoing/horizon/item/{lens}.json"
+                )),
+                "{lens} is one of the 16 LaserLensItems upstream registers"
+            );
+        }
+        let ids = declared_ids();
+        let mut expected: Vec<String> = FRAMES
+            .iter()
+            .map(|id| format!("industrialforegoing:{id}"))
+            .collect();
+        expected.extend(PLAIN_ITEMS.map(|id| format!("industrialforegoing:{id}")));
+        expected.extend(COLOURS.map(|colour| format!("industrialforegoing:{colour}_laser_lens")));
+        // The earlier slices' ids stay declared beside this slice's.
+        expected.extend(
+            [
+                "water_condensator",
+                "speed_addon_tier_1",
+                "speed_addon_tier_2",
+                "efficiency_addon_tier_1",
+                "efficiency_addon_tier_2",
+            ]
+            .map(|id| format!("industrialforegoing:{id}")),
+        );
+        expected.sort();
+        assert_eq!(
+            ids, expected,
+            "the package declares the four frames, the three gears, plastic, the 16 lenses and \
+             the earlier slices' ids, and nothing else"
+        );
+    }
+
+    #[test]
+    fn every_declared_item_has_a_model_and_a_26_3_definition() {
+        for id in declared_ids() {
+            let path = path_of(&id).to_owned();
+            assert!(
+                has(&format!("assets/industrialforegoing/items/{path}.json")),
+                "{id} has no 26.3 item definition (assets/industrialforegoing/items/{path}.json)"
+            );
+            let model = format!("assets/industrialforegoing/models/item/{path}.json");
+            let text = read(&model);
+            for layer in strings(&text)
+                .iter()
+                .filter(|s| s.starts_with("industrialforegoing:item/"))
+            {
+                let texture = layer.trim_start_matches("industrialforegoing:item/");
+                assert!(
+                    has(&format!(
+                        "assets/industrialforegoing/textures/item/{texture}.png"
+                    )),
+                    "{model} names the texture {layer}, which this package does not carry"
+                );
+            }
+        }
+        for frame in FRAMES {
+            assert!(
+                has(&format!(
+                    "assets/industrialforegoing/blockstates/{frame}.json"
+                )),
+                "{frame} has no blockstate"
+            );
+            let model = format!("assets/industrialforegoing/models/block/{frame}.json");
+            let text = read(&model);
+            for texture in strings(&text)
+                .iter()
+                .filter(|s| s.starts_with("industrialforegoing:block/"))
+            {
+                let file = texture.trim_start_matches("industrialforegoing:block/");
+                assert!(
+                    has(&format!(
+                        "assets/industrialforegoing/textures/block/{file}.png"
+                    )),
+                    "{model} names the texture {texture}, which this package does not carry"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_declared_id_has_a_name() {
+        let lang = read("assets/industrialforegoing/lang/en_us.json");
+        let names = strings(&lang);
+        for frame in FRAMES {
+            let key = format!("block.industrialforegoing.{frame}");
+            assert!(
+                names.contains(&key),
+                "{key} has no English name, so the game shows the raw key"
+            );
+        }
+        let mut items: Vec<String> = PLAIN_ITEMS.iter().map(|item| (*item).to_owned()).collect();
+        items.extend(COLOURS.map(|colour| format!("{colour}_laser_lens")));
+        for item in items {
+            let key = format!("item.industrialforegoing.{item}");
+            assert!(
+                names.contains(&key),
+                "{key} has no English name, so the game shows the raw key"
+            );
+        }
+    }
+
+    #[test]
+    fn the_tags_name_the_shipped_items() {
+        // The tags the pack's add-ons bind to: `mifa` reads `c:gears/*`, `industrialforegoingsouls`
+        // reads `c:plastics`, `c:gears/diamond` and `machine_frame/advanced` (HANDOVER §9g).
+        for (tag, value) in [
+            (
+                "data/c/tags/item/gears/iron.json",
+                "industrialforegoing:iron_gear",
+            ),
+            (
+                "data/c/tags/item/gears/gold.json",
+                "industrialforegoing:gold_gear",
+            ),
+            (
+                "data/c/tags/item/gears/diamond.json",
+                "industrialforegoing:diamond_gear",
+            ),
+            (
+                "data/c/tags/item/plastics.json",
+                "industrialforegoing:plastic",
+            ),
+        ] {
+            let text = read(tag);
+            assert!(
+                text.contains(value),
+                "{tag} does not name {value}, so the tag is empty at load"
+            );
+        }
+        for tier in ["pity", "simple", "advanced", "supreme"] {
+            for kind in ["block", "item"] {
+                let tag = format!("data/industrialforegoing/tags/{kind}/machine_frame/{tier}.json");
+                let value = format!("industrialforegoing:machine_frame_{tier}");
+                assert!(read(&tag).contains(&value), "{tag} does not name {value}");
+            }
+        }
+        // The umbrella `c:gears` names the three gears themselves (the jar's file lists the items,
+        // not the sub-tags), which is how a pack asks for "any gear".
+        let gears = read("data/c/tags/item/gears.json");
+        for gear in ["iron_gear", "gold_gear", "diamond_gear"] {
+            assert!(
+                gears.contains(&format!("industrialforegoing:{gear}")),
+                "c:gears does not name industrialforegoing:{gear}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_condensator_recipe_names_the_three_tags_again() {
+        // Slice 2 replaced these tags with vanilla stand-ins because the items did not exist; this
+        // slice ships them, so the recipe is the jar's again — one tag per ingredient (a list naming
+        // a tag is the shape 26.3 drops).
+        let recipe = read("data/industrialforegoing/recipe/water_condensator.json");
+        for tag in [
+            "#c:plastics",
+            "#c:gears/iron",
+            "#industrialforegoing:machine_frame/pity",
+        ] {
+            assert!(
+                recipe.contains(tag),
+                "the condensator recipe no longer names {tag}"
+            );
+        }
+        for stand_in in ["minecraft:slime_ball", "minecraft:iron_block"] {
+            assert!(
+                !recipe.contains(stand_in),
+                "the condensator recipe still uses the stand-in {stand_in}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_carried_recipe_names_an_ingredient_that_exists() {
+        let declared = declared_ids();
+        let all = recipes();
+        assert!(
+            all.len() >= 20,
+            "the slice carries 21 recipes (pity frame, 3 gears, the condensator, 16 recolours), found {}",
+            all.len()
+        );
+        for recipe in all {
+            let text = std::fs::read_to_string(&recipe)
+                .unwrap_or_else(|error| panic!("{}: {error}", recipe.display()));
+            for id in strings(&text) {
+                if let Some(tag) = id.strip_prefix('#') {
+                    let (namespace, path) = tag.split_once(':').unwrap_or_else(|| {
+                        panic!("{}: {tag} is not a namespaced tag", recipe.display())
+                    });
+                    // `minecraft:`'s tags are the base data's; every other namespace's are either
+                    // this package's or the convention ones, and 26.3 ships no `c:` item tag at all.
+                    if namespace == "minecraft" {
+                        continue;
+                    }
+                    let file = format!("data/{namespace}/tags/item/{path}.json");
+                    assert!(
+                        has(&file),
+                        "{} names the tag {tag}, which this package does not declare ({file})",
+                        recipe.display()
+                    );
+                    assert!(
+                        !strings(&read(&file)).is_empty(),
+                        "{file} is empty, so {tag} resolves to nothing"
+                    );
+                } else if id.starts_with("industrialforegoing:") {
+                    assert!(
+                        declared.contains(&id),
+                        "{} names {id}, which this package does not declare",
+                        recipe.display()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_frame_drops_itself_and_is_pickaxe_mineable() {
+        for frame in FRAMES {
+            let loot = format!("data/industrialforegoing/loot_table/blocks/{frame}.json");
+            assert!(
+                read(&loot).contains(&format!("industrialforegoing:{frame}")),
+                "{loot} does not drop {frame}"
+            );
+        }
+        let pickaxe = read("data/minecraft/tags/block/mineable/pickaxe.json");
+        for frame in FRAMES {
+            assert!(
+                pickaxe.contains(&format!("industrialforegoing:{frame}")),
+                "a block with requires_tool and no mineable/pickaxe entry drops nothing: {frame}"
+            );
+        }
+    }
+}

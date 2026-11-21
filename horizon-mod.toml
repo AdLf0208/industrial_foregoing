@@ -1,13 +1,16 @@
 id = "industrialforegoing"
 name = "Industrial Foregoing"
-version = "0.2.3"
+version = "0.2.4"
 description = """A port of Industrial Foregoing for Horizon: the Water Condensator, a machine that condenses water out
 of the water source blocks beside it, for Forge Energy. Its 10,000 FE buffer feeds a 16,000 mB drain-only
 water tank through a bar that counts down each tick: two or more sources beside it give 100 mB a source for
 1,000 FE, and the same sources give 50 mB a source for free when the buffer holds less. Two
 `titanium:augments` slots take the parent's speed and efficiency addons: a speed addon makes the bar fall
-faster and an efficiency one shortens it. The rest of the mod (machine frames, the latex and plastic chain,
-the generators, conveyors and laser drills) is not ported yet."""
+faster and an efficiency one shortens it. The Core item set ships with it: the four machine frames, the
+iron, gold and diamond gears, plastic and the 16 coloured laser lenses, with the tags the pack's add-ons
+bind to (`c:gears/*`, `c:plastics`, `industrialforegoing:machine_frame/*`), so the condensator's own recipe
+names them again. The rest of the mod (the dissolution chamber, the latex and plastic chain, the
+generators, conveyors and laser drills) is not ported yet."""
 authors = ["Buuz135", "AdLf0208"]
 # A native mod: Rust in src/, compiled by the launcher against the game build [native] pins, beside the
 # content this one also carries (assets/industrialforegoing, data/industrialforegoing). The id is the

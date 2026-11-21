@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# In-game check for Industrial Foregoing (slices 1-3): the Water Condensator
+# In-game check for Industrial Foregoing (slices 1-4): the Water Condensator
 # condenses water from the FE in its buffer, one 100 mB per water source block
-# beside it (half, for free, without power), and nothing below two sources; its
-# carried recipe crafts in a plain crafting table; a machine broken with FE and
-# water in it drops an item that puts them back; and its two `titanium:augments`
-# slots take a speed and an efficiency addon whose arithmetic the bar reads.
+# beside it (half, for free, without power), and nothing below two sources; the
+# Core item set (four machine frames, three gears, plastic, 16 lenses) registers
+# and reads back, a frame drops itself, and the carried recipes craft — the
+# condensator from the tags, the pity frame, the three gears and the 16 lens
+# recolours; a machine broken with FE and water in it drops an item that puts
+# them back; and its two `titanium:augments` slots take a speed and an
+# efficiency addon whose arithmetic the bar reads.
 #
 # Every mod command is typed with `ctl chat "/cmd"` because `ctl command` runs
 # the console path and bypasses the native `perform_command` hook.
@@ -37,7 +40,8 @@
 # SELFTEST=augments leaves leg B alone and flips leg O's four-a-tick fall
 # instead — the augment family's own counterfactual. SELFTEST=contents does the
 # same for leg L: it asserts 5,001 mB come back from the broken machine's item,
-# so the run must fail at that assertion — the contents family's.
+# so the run must fail at that assertion — the contents family's. SELFTEST=core
+# is the Core item set's: leg U asserts the red lens arrived twice.
 set -Eeuo pipefail
 export LC_ALL=C
 [ -z "${IF_DEBUG:-}" ] || set -x
@@ -235,6 +239,10 @@ place_held() { # place_held X Y Z
 echo "== launch (The End arena, the one package carries content and code) =="
 launch
 arena
+# The game refuses a carried recipe or advancement file it cannot read, and says
+# so in its own log; neither may happen for this package's data.
+LOAD_ERRORS=$(ctl logs --lines 400 | grep -c -E "\[load-items/ERROR\]|\[horizon-recipes/ERROR\]|\[horizon-advancements/ERROR\]" || true)
+expect "the recipe/advancement load errors in the game's log" "${LOAD_ERRORS:-0}" 0
 ctl command "item replace entity @s hotbar.0 with industrialforegoing:water_condensator 1" >/dev/null
 ctl wait 4 >/dev/null
 ctl inventory | jq -e '[.hotbar[], .main[] | select(.item == "industrialforegoing:water_condensator")] | length >= 1' >/dev/null \
@@ -332,7 +340,7 @@ info "$SX" 101 0
 [ "$ENERGY" -le 4000 ] || fail "$ENERGY FE left after 40 unattended ticks, expected at most 4000"
 echo "  unattended: $WATER mB and $ENERGY FE left after 40 more ticks"
 
-echo "== K: the carried recipe crafts the machine from the tags' vanilla fallbacks =="
+echo "== K: the carried recipes craft (the condensator from the tags, the frame, the gears) =="
 # Its own platform, away from the machine and its water: a table beside the running
 # machine would sit in the crosshair of its own block column.
 ctl command "execute in minecraft:the_end run fill 208 100 6 214 100 12 minecraft:stone" >/dev/null
@@ -343,7 +351,107 @@ ctl wait 12 >/dev/null
 [ "$(block_name 211 101 10)" = "minecraft:crafting_table" ] \
     || fail "the crafting table did not place: '$(block_name 211 101 10)'"
 python3 "$PORT/tools/craft_recipe.py" "$SOCK" "$CTL" 211 101 10 \
-    || fail "the machine's carried recipe did not craft"
+    || fail "the carried shaped recipes did not craft"
+
+echo "== R: every ModuleCore id of this slice registers and reads back =="
+ctl command "gamemode creative @s" >/dev/null
+ctl command "clear @s" >/dev/null
+ctl wait 4 >/dev/null
+# The 24 ids the slice declares: the four frames, the three gears, plastic and
+# the 16 coloured lenses. Each is given and read back out of the inventory, so a
+# declaration the game refused shows up here rather than as an absent item.
+NEW_IDS="
+industrialforegoing:machine_frame_pity
+industrialforegoing:machine_frame_simple
+industrialforegoing:machine_frame_advanced
+industrialforegoing:machine_frame_supreme
+industrialforegoing:iron_gear
+industrialforegoing:gold_gear
+industrialforegoing:diamond_gear
+industrialforegoing:plastic
+industrialforegoing:white_laser_lens
+industrialforegoing:orange_laser_lens
+industrialforegoing:magenta_laser_lens
+industrialforegoing:light_blue_laser_lens
+industrialforegoing:yellow_laser_lens
+industrialforegoing:lime_laser_lens
+industrialforegoing:pink_laser_lens
+industrialforegoing:gray_laser_lens
+industrialforegoing:light_gray_laser_lens
+industrialforegoing:cyan_laser_lens
+industrialforegoing:purple_laser_lens
+industrialforegoing:blue_laser_lens
+industrialforegoing:brown_laser_lens
+industrialforegoing:green_laser_lens
+industrialforegoing:red_laser_lens
+industrialforegoing:black_laser_lens
+"
+for id in $NEW_IDS; do
+    ctl give "$id" 1 >/dev/null || fail "the game refused $id"
+done
+ctl wait 8 >/dev/null
+COUNTS=$(ctl inventory | jq -c '.counts')
+for id in $NEW_IDS; do
+    [ "$(echo "$COUNTS" | jq -r --arg id "$id" '.[$id] // 0')" = 1 ] \
+        || fail "$id did not read back out of the inventory: $(echo "$COUNTS" | jq -c --arg id "$id" '{($id): .[$id]}')"
+done
+echo "  the 24 Core ids read back: $(echo "$NEW_IDS" | wc -w) items"
+
+# The four frames are blocks too: placed, read back by id, then cleared.
+ctl command "execute in minecraft:the_end run fill 192 101 -4 196 101 0 minecraft:air" >/dev/null
+i=0
+for frame in machine_frame_pity machine_frame_simple machine_frame_advanced machine_frame_supreme; do
+    ctl command "execute in minecraft:the_end run setblock $((192 + i)) 101 -2 industrialforegoing:$frame" >/dev/null
+    i=$((i + 1))
+done
+ctl wait 6 >/dev/null
+i=0
+for frame in machine_frame_pity machine_frame_simple machine_frame_advanced machine_frame_supreme; do
+    [ "$(block_name $((192 + i)) 101 -2)" = "industrialforegoing:$frame" ] \
+        || fail "the placed $frame reads '$(block_name $((192 + i)) 101 -2)'"
+    i=$((i + 1))
+done
+echo "  the four frames place and read back by id"
+
+# An id this package does not register is refused, and the reply says so: a
+# `ctl command` exits 0 on a refusal, so the text is what is asserted.
+REFUSED=$(ctl give industrialforegoing:not_a_real_item 1 2>&1 || true)
+case "$REFUSED" in
+    *"unknown item industrialforegoing:not_a_real_item"*) ;;
+    *) fail "an unregistered item id was not refused with the game's own message: $REFUSED" ;;
+esac
+REFUSED=$(ctl setblock 192 101 -6 industrialforegoing:not_a_real_block 2>&1 || true)
+case "$REFUSED" in
+    *'"ok":true'*) fail "an unregistered block id was accepted: $REFUSED" ;;
+esac
+[ "$(block_name 192 101 -6)" = "minecraft:air" ] \
+    || fail "an unregistered block id changed the world: $(block_name 192 101 -6)"
+echo "  an unregistered item and block id are refused"
+
+echo "== S: a machine frame breaks and drops itself =="
+# The frame is `Properties.ofFullCopy(IRON_BLOCK)` with `droppingSelf`: in
+# survival, with a pickaxe, it must leave its own item — a loot table that does
+# not resolve drops nothing (the createaddition lesson).
+ctl command "gamemode survival @s" >/dev/null
+ctl command "clear @s" >/dev/null
+ctl command "item replace entity @s hotbar.0 with minecraft:iron_pickaxe 1" >/dev/null
+ctl wait 6 >/dev/null
+ctl select 1 >/dev/null
+ctl command "execute in minecraft:the_end run tp @s 191.5 101 -2.5" >/dev/null
+ctl wait 8 >/dev/null
+FRAME_BREAK=$(ctl break 192 101 -2) || fail "breaking the machine frame failed"
+echo "  break: $(echo "$FRAME_BREAK" | jq -c '{block, drops, picked_up, items_left_on_ground}')"
+[ "$(echo "$FRAME_BREAK" | jq -r '.drops["industrialforegoing:machine_frame_pity"] // 0')" -ge 1 ] \
+    || fail "a broken machine frame dropped nothing: $(echo "$FRAME_BREAK" | jq -c '.drops')"
+
+echo "== U: the 16 lens recolours craft from the lens tag and c:dyes, counts before and after =="
+# Survival: the inventory key opens the creative screen in creative mode, which
+# has no 2x2 crafting grid.
+ctl command "gamemode survival @s" >/dev/null
+ctl wait 4 >/dev/null
+python3 "$PORT/tools/recolor.py" "$SOCK" "$CTL" \
+    $([ "$SELFTEST" = core ] && echo 2) \
+    || fail "the lens recolours did not craft"
 
 echo "== L: a broken machine's item carries its FE and water, and placing it restores them =="
 # No sources, so the restored machine cannot run while it is being read.
@@ -539,4 +647,4 @@ expect "the scaled bar the item carried" "$PROGRESS_MAX" 80
 echo "  the broken machine came back with speed $SPEED and efficiency $EFFICIENCY"
 
 
-echo "PASS: a placed machine is empty with no sources and faces its placer; two sources condense 200 mB for exactly 1,000 FE and one condenses nothing; without 1,000 FE two sources give half for free; three and six sources give 300 and 600 mB; a nearly full tank stops at 16,000 mB while still spending the FE; the declared tank drains 400 mB of water through the fluid handler; and left alone the machine keeps condensing on its own 10-tick bar; the carried recipe crafts one machine from its declared ingredients and consumes them, while a wrong grid stays empty; a machine broken with 7,000 FE and 5,000 mB comes back with exactly those numbers on the item it dropped; a seated speed augment of 4 makes the bar fall four a tick where an empty slot falls one, a second speed augment is refused and stays in the hand, an efficiency augment of 0.8 shortens the bar to 80 with an 8-tick cooldown at the same 1,000 FE, and both augments travel on the machine's item"
+echo "PASS: a placed machine is empty with no sources and faces its placer; two sources condense 200 mB for exactly 1,000 FE and one condenses nothing; without 1,000 FE two sources give half for free; three and six sources give 300 and 600 mB; a nearly full tank stops at 16,000 mB while still spending the FE; the declared tank drains 400 mB of water through the fluid handler; and left alone the machine keeps condensing on its own 10-tick bar; the 24 Core ids of this slice register and read back, the four frames place and read back, an unregistered item and block id are refused, and a frame broken in survival drops itself; the condensator crafts from the tags (#c:plastics, #c:gears/iron, machine_frame/pity) with the grid empty afterwards while slice 2's stand-ins stay empty, the pity frame and the three gears craft, and all 16 lens recolours craft from the lens tag and c:dyes with the player's counts before and after; a machine broken with 7,000 FE and 5,000 mB comes back with exactly those numbers on the item it dropped; a seated speed augment of 4 makes the bar fall four a tick where an empty slot falls one, a second speed augment is refused and stays in the hand, an efficiency augment of 0.8 shortens the bar to 80 with an 8-tick cooldown at the same 1,000 FE, and both augments travel on the machine's item"

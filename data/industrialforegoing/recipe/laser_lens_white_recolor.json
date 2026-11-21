@@ -1,0 +1,12 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "category": "misc",
+  "ingredients": [
+    "#industrialforegoing:laser_lens",
+    "#c:dyes/white"
+  ],
+  "result": {
+    "count": 1,
+    "id": "industrialforegoing:white_laser_lens"
+  }
+}

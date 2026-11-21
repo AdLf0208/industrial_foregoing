@@ -1,11 +1,11 @@
-# Package receipt — industrialforegoing 0.2.3
+# Package receipt — industrialforegoing 0.2.4
 
 | field | value |
 |---|---|
-| version | `0.2.3` |
+| version | `0.2.4` |
 | file | `industrialforegoing.hmod` |
-| bytes | 59,334 |
-| sha256 | `819f00fc54dd6a2623406681494a3842f57331207d60e620b2f597ef66559e7c` |
+| bytes | 153,888 |
+| sha256 | `567432307d9365e3f70dd2702b720b2ec879cfa1fa81d6b4f6f9affac223947f` |
 | source | this tag — the tree here is the source that produced the archive |
 | game | 26.3 |
 | horizon | `0a875da91dbb0fdcb7ba8c42c11341aa229af51a` |

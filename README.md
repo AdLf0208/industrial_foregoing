@@ -1,9 +1,12 @@
-# Industrial Foregoing — Horizon port (slice 2: the Water Condensator)
+# Industrial Foregoing — Horizon port (the Water Condensator and its Core set)
 
 A Horizon mod for **Industrial Foregoing 1.21-3.6.39**
 (`Buuz135/Industrial-Foregoing`, **MIT**): the Water Condensator, a machine
 with a 10,000 FE buffer and a 16,000 mB tank that condenses water out of the
-air when at least two of its six sides are water source blocks.
+air when at least two of its six sides are water source blocks, beside the
+`ModuleCore` item and block set — the four machine frames, the iron, gold and
+diamond gears, plastic and the 16 coloured laser lenses, with the tags the
+pack's add-ons bind to.
 
 **LOCAL-ONLY** until the maintainer approves publishing (ARCHITECTURE.md §8).
 MIT is licence rank 0 (permissive); approval is still required.
@@ -25,7 +28,9 @@ in `notes.md`; the content decisions are in `CONTENT.md`.
 | Bar | starts full (100), counts down a tick; after an attempt the next value is 10 (powered), 50 (unpowered) or 100 (idle), as Titanium's `workAmount` sets it |
 | Placement | `subfacing` (Titanium's `FOUR_WAY`), the face turning toward the placer |
 | Broken | the item carries the machine's FE, water and bar (vanilla `minecraft:block_entity_data`), and placing it restores them |
-| Recipe | craftable in a plain crafting table (the absent convention tags are the vanilla fallbacks) |
+| Recipe | craftable in a plain crafting table from `#c:plastics`, `#c:gears/iron` and `#industrialforegoing:machine_frame/pity` |
+| Core set | four machine frames (placed, pickaxe-mined, they drop themselves), three gears, plastic and 16 recolourable lenses, with `industrialforegoing:machine_frame/*`, `c:gears`, `c:gears/*` and `c:plastics` |
+| Lenses | any lens plus the colour's dye (`#c:dyes/<colour>`) makes that colour's lens |
 
 ## Layout
 
@@ -34,8 +39,8 @@ horizon-mod.toml                   the only manifest and the only identity (api 
 Cargo.toml                         one crate; its only dependency is horizon-mod-api from .horizon/sdk/
 src/lib.rs                         the one #[mod_api::horizon_mod] impl Hooks, the Machine Part,
                                    the block entity type, the energy/fluid declarations, the commands
-src/runtime.rs                     pure: the bar, the attempt, the buffer (18 tests), byte-identical
-                                   to the retired .hnmod port's runtime.rs
+src/runtime.rs                     pure: the bar, the attempt, the buffer, the augments (26 tests),
+                                   byte-identical to the retired .hnmod port's runtime.rs
 assets/industrialforegoing/        the carried blockstate, models, textures, item definition, lang
 data/industrialforegoing/          the block/tab declarations, loot table, recipe, advancement;
 data/minecraft/tags/block/         the pickaxe tag
@@ -44,6 +49,9 @@ CONTENT.md                         what is carried and what is written
 FINDINGS.md                        jar inventory, upstream behaviour, slice boundary
 notes.md                           the record: the SDK migration, deviations, gaps, verification
 tools/assemble_content.py          the jar → assets/data carry pipeline
+tools/verify_content.py            the cross-reference of the carried content (--selftest, --package)
+tools/craft_recipe.py              crafts every shaped recipe in game (the tags, the frame, the gears)
+tools/recolor.py                   crafts the 16 lens recolours in the player's 2x2, counts before/after
 tools/e2e.sh                       the in-game scenario (needs a launcher-built game; see notes.md)
 ```
 

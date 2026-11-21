@@ -10,9 +10,10 @@ ATM10 jar `ports/_shared/licence-cache/industrialforegoing-1.21-3.6.39.jar`
 [`../_shared/carry-work/industrialforegoing/SOURCE.md`](../_shared/carry-work/industrialforegoing/SOURCE.md)).
 Rerun the script to rebuild; it deletes `assets/` and `data/` first. Since 0.2.3 it writes to the
 port root (`CONTENT = ROOT`) and no longer writes a content-only manifest, and it carries slice 2's
-recipe/advancement repair **in the script** (`upgrade_recipe`'s `fallbacks`,
-`upgrade_advancement`) — a rerun used to re-introduce the absent tags and the
-`neoforge:item_exists` condition, which stopped the machine crafting.
+recipe/advancement repair **in the script** (`upgrade_recipe`, `upgrade_advancement`) — a rerun used
+to re-introduce the absent tags and the `neoforge:item_exists` condition, which stopped the machine
+crafting. Since 0.2.4 it also carries the `ModuleCore` item set (slice 4): the four frames, the
+three gears, plastic and the 16 lenses, their tags, their recipes and the `core` creative tab.
 
 ## Carried byte-for-byte from the jar
 
@@ -25,40 +26,54 @@ recipe/advancement repair **in the script** (`upgrade_recipe`'s `fallbacks`,
 | `assets/industrialforegoing/textures/block/water_condensator_{side,top}.png` | the two machine textures |
 | `assets/industrialforegoing/textures/block/base/{side,top,bottom}.png` | the base block's three textures |
 | `assets/industrialforegoing/textures/item/{speed,efficiency}_addon_{1,2}.png` | slice 3: the four addon items' textures |
+| `assets/industrialforegoing/blockstates/machine_frame_{pity,simple,advanced,supreme}.json` | slice 4: one state-free variant each, the jar's own |
+| `assets/industrialforegoing/models/block/machine_frame_*.json` | slice 4: parent `block/orientable` over `block/base/<tier>/{top,side,bottom}` |
+| `assets/industrialforegoing/models/item/machine_frame_*.json` | slice 4: parent = the block model |
+| `assets/industrialforegoing/textures/block/base/{pity,simple,advanced,supreme}/{top,side,bottom}.png` | slice 4: the four frames' twelve textures |
+| `assets/industrialforegoing/textures/item/{iron,gold,diamond}_gear.png`, `plastic.png`, `laser_lens{0-15}.png` | slice 4: the 20 plain items' textures |
+| `data/c/tags/item/gears.json`, `gears/{iron,gold,diamond}.json`, `plastics.json` | slice 4: the jar's own convention tags, with their items (the tags `mifa` and `industrialforegoingsouls` read) |
+| `data/industrialforegoing/tags/{block,item}/machine_frame/{pity,simple,advanced,supreme}.json` | slice 4: the jar's own frame tags |
 
 ## Carried with the 26.3 upgrade
 
 | File | Upgrade |
 |---|---|
-| `data/industrialforegoing/loot_table/blocks/water_condensator.json` | the pool's `conditions` list → one `condition` object, and `{"condition": "minecraft:survives_explosion"}` → `{"type": "minecraft:survives_explosion"}` (26.3's singular typed condition) |
-| `data/industrialforegoing/recipe/water_condensator.json` | `{"tag": T}` → `"#T"`; the `neoforge:conditions` gate dropped (the item exists whenever this mod does). **2026-11-21:** the three list ingredients (`#c:plastics`, `#c:gears/iron`, `#industrialforegoing:machine_frame/pity` + fallback) → the vanilla fallback alone (`minecraft:slime_ball`, `minecraft:iron_block`), because 26.3 rejects a list naming an absent tag and drops the recipe |
-| `data/industrialforegoing/advancement/recipes/misc/water_condensator.json` | carried; **2026-11-21:** the unknown `neoforge:conditions` (`neoforge:item_exists`) dropped and the `has_item` criterion moved from `#c:plastics` to `minecraft:slime_ball`, since 26.3 left the file out |
+| `data/industrialforegoing/loot_table/blocks/{water_condensator,machine_frame_*}.json` | the pool's `conditions` list → one `condition` object, and `{"condition": "minecraft:survives_explosion"}` → `{"type": "minecraft:survives_explosion"}` (26.3's singular typed condition) |
+| `data/industrialforegoing/recipe/water_condensator.json` | `{"tag": T}` → `"#T"`; the `neoforge:conditions` gate dropped. **2026-11-21 (0.2.4):** the three tags are the jar's again (`#c:plastics`, `#c:gears/iron`, `#industrialforegoing:machine_frame/pity`) — slice 2's stand-ins are gone, because this package now ships the items and tags they name |
+| `data/industrialforegoing/recipe/machine_frame_pity.json`, `{iron,gold,diamond}_gear.json` | the same upgrade; the pity frame's recipe names `#c:ingots/iron`, `#c:storage_blocks/redstone` and `#minecraft:logs` |
+| `data/industrialforegoing/recipe/laser_lens_*_recolor.json` (16) | the first ingredient's **list of 16 alternatives** → `#industrialforegoing:laser_lens` (26.3 rejects a list ingredient whole); the dye is `#c:dyes/<colour>` |
+| `data/industrialforegoing/advancement/recipes/misc/*.json` (21) | carried; the unknown `neoforge:conditions` (`neoforge:item_exists`) dropped. The condensator's `has_item` criterion is the jar's `#c:plastics` again, now that the tag exists |
 
 ## Written here (decisions, not upstream files)
 
 | File | What and why |
 |---|---|
 | `horizon-mod.toml` (port root) | the one manifest: id `industrialforegoing`, API 0.2, `side = both`, `registries`, and the `[native]` pins (the content-only manifest of the `.hnmod` era is retired) |
-| `assets/industrialforegoing/items/water_condensator.json` | 26.3's item model definition pointing at `industrialforegoing:item/water_condensator` |
-| `assets/industrialforegoing/lang/en_us.json` | the three strings this slice uses, read from the jar: the block name, the item group, the `power_optional` tooltip |
-| `data/industrialforegoing/horizon/block/water_condensator.json` | template **`minecraft:iron_block`** (upstream's `Properties.ofFullCopy(IRON_BLOCK)`: hardness 5.0, blast resistance 6.0, correct tool for drops, the `minecraft:iron_block` sound group — the declaration names a vanilla *block*, not a sound id), plus the declared `subfacing` enum (4 values, default `north`) that Titanium's `RotationType.FOUR_WAY` and the carried blockstate select on |
-| `data/industrialforegoing/horizon/creative_tab/resource_production.json` | upstream's own item group (`itemGroup.industrialforegoing_resource_production`), icon and the one entry |
-| `data/minecraft/tags/block/mineable/pickaxe.json` | the machine is pickaxe-mineable (the jar's own 85-entry list names unported ids; this writes the slice's one entry) |
-| `data/industrialforegoing/horizon/item/{speed,efficiency}_addon_tier_{1,2}.json` | slice 3: the parent's four addon items — template `minecraft:stick`, `max_stack_size` 16 (`Properties().stacksTo(16)`) and their `titanium:augments` default (`Speed` 2.0/3.0, `Efficiency` 0.9/0.8), the values `SpeedAddonItem`/`EfficiencyAddonItem` set |
-| `assets/industrialforegoing/items/{speed,efficiency}_addon_tier_{1,2}.json` | slice 3: the 26.3 item model definitions for those four |
-| `assets/industrialforegoing/models/item/{speed,efficiency}_addon_tier_{1,2}.json` | slice 3: the jar's own addon models, whose `builtin/generated` parent 26.3 spells `minecraft:item/generated`; layer0 is the jar's texture |
+| `assets/industrialforegoing/items/*.json` | 26.3's item model definitions: the condensator's, the four addons', the four frames' and the 20 plain items' |
+| `assets/industrialforegoing/models/item/{iron,gold,diamond}_gear,plastic,laser_lens{0-15}_<colour>.json` | the jar's models re-parented to `minecraft:item/generated` (26.3's spelling of `builtin/generated`), keeping the jar's `item/item.json` display transforms |
+| `assets/industrialforegoing/lang/en_us.json` | the names: the block, the item group, the tooltip, the four addons, the four frames (from the jar) and the 20 items — the lenses' names are `LaserLensItem.getName`'s "%s Laser Lens" composed with the colour's vanilla name, resolved here |
+| `data/industrialforegoing/horizon/block/water_condensator.json` | template **`minecraft:iron_block`** (upstream's `Properties.ofFullCopy(IRON_BLOCK)`), plus the declared `subfacing` enum (4 values, default `north`) that Titanium's `RotationType.FOUR_WAY` and the carried blockstate select on |
+| `data/industrialforegoing/horizon/block/machine_frame_*.json` | the four frames: the same iron-block template and properties, no state property, and the item's rarity in vanilla's slot for the tier (`CustomRarity`'s custom rarities are not expressible) |
+| `data/industrialforegoing/horizon/item/*.json` | the 20 plain items: template `minecraft:paper` (no use, no tool stats, no fuel), `max_stack_size` 1 for the lenses (`LaserLensItem`'s `stacksTo(1)`), and the four addons' `titanium:augments` defaults |
+| `data/industrialforegoing/horizon/creative_tab/{resource_production,core}.json` | upstream's own item groups; `core` is `TAB_CORE` (`itemGroup.industrialforegoing_core`), icon the pity frame, the 24 items in registration order |
+| `data/industrialforegoing/tags/item/laser_lens.json` | slice 4: the "any lens" the recolour recipes name (their jar form is a 16-item list 26.3 rejects) |
+| `data/c/tags/item/{ingots/iron,storage_blocks/redstone,dyes/<colour>}.json` | slice 4: the convention values of the tags the carried recipes name — 26.3's base data ships **no** `c:` item tags, so `#c:dyes/red` would resolve to nothing |
+| `data/minecraft/tags/block/mineable/pickaxe.json` | the machine and the four frames are pickaxe-mineable (the jar's own 85-entry list names unported ids; this writes the slice's five entries) |
+| `data/industrialforegoing/horizon/item/{speed,efficiency}_addon_tier_{1,2}.json` | slice 3: the parent's four addon items — template `minecraft:stick`, `max_stack_size` 16 and their `titanium:augments` default (`Speed` 2.0/3.0, `Efficiency` 0.9/0.8) |
 
 ## Deliberately not carried
 
 - The **GUI texture** and the menu: the machine has no item slots and upstream's
   screen is Titanium's tank/energy/progress bars; slice 1 exposes the same
   numbers through `/industrialforegoing info` instead (gap 1 in `notes.md`).
-- The **`industrialforegoing:machine_frame/pity`** and **`c:plastics`**/**`c:gears/iron`** tags:
-  their items (`machine_frame_pity`, `plastic`, an iron gear) belong to other parts of the mod, so
-  the recipe names the vanilla fallbacks alone (a list that names an absent tag is an invalid
-  ingredient at 26.3 and drops the whole recipe). When those parts are ported the ingredients can
-  name their tags again, one tag per ingredient.
-- Every other blockstate/model/texture in the jar (72 blockstates, 153 block
-  models, 146 block textures): other machines, frames, mycelial generators — the
-  rest of the mod.
-- `pack.mcmeta` and the jar's `META-INF`: not content.
+- **`plastic`'s own recipe** (`smelting dryrubber`): `dryrubber` is the latex chain, which this slice
+  does not carry, and a recipe naming an absent item is dropped whole. Plastic is `give`-only.
+- **The three higher frames' recipes and every lens' own recipe** (`recipe/dissolution_chamber/*.json`):
+  the dissolution chamber is a later slice; those frames are `give`-only and the lenses recolour from
+  each other.
+- **The 16 `laser_lens_inverted` models and textures**: orphan resources — no item, blockstate, model
+  or code names them (only lang files mention the key), so carrying them would be art with no item.
+- The `industrialforegoing:loot_table` for unported blocks, `pack.mcmeta` and the jar's `META-INF`:
+  not content.
+- Every other blockstate/model/texture in the jar (the latex/plastic machines, mycelial generators,
+  conveyors, laser drills): the rest of the mod.
