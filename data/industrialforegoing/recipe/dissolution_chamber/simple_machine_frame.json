@@ -1,0 +1,22 @@
+{
+  "type": "industrialforegoing:dissolution_chamber",
+  "input": [
+    "#c:plastics",
+    "#industrialforegoing:machine_frame/pity",
+    "#c:plastics",
+    "minecraft:nether_brick",
+    "minecraft:nether_brick",
+    "#c:ingots/iron",
+    "#c:gears/gold",
+    "#c:ingots/iron"
+  ],
+  "inputFluid": {
+    "amount": 250,
+    "fluid": "industrialforegoing:latex"
+  },
+  "output": {
+    "count": 1,
+    "id": "industrialforegoing:machine_frame_simple"
+  },
+  "processingTime": 300
+}

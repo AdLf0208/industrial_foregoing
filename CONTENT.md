@@ -34,6 +34,26 @@ three gears, plastic and the 16 lenses, their tags, their recipes and the `core`
 | `data/c/tags/item/gears.json`, `gears/{iron,gold,diamond}.json`, `plastics.json` | slice 4: the jar's own convention tags, with their items (the tags `mifa` and `industrialforegoingsouls` read) |
 | `data/industrialforegoing/tags/{block,item}/machine_frame/{pity,simple,advanced,supreme}.json` | slice 4: the jar's own frame tags |
 
+## Slice 5 — the dissolution chamber (`tools/assemble_content.py`, `CHAMBER_*`)
+
+| File | Note |
+|---|---|
+| `assets/industrialforegoing/blockstates/dissolution_chamber.json` | the jar's own four `subfacing` variants |
+| `assets/industrialforegoing/models/block/dissolution_chamber.json`, `models/item/dissolution_chamber.json` | the jar's own: `base_block` with `north` = the front texture; the item model is the block model |
+| `assets/industrialforegoing/textures/block/dissolution_chamber_front.png` | the jar's front; the three `base/` textures were already carried |
+| `assets/industrialforegoing/items/dissolution_chamber.json` | 26.3's item definition |
+| `data/industrialforegoing/horizon/block/dissolution_chamber.json` | the same iron-block template and `subfacing` property as the condensator (`DissolutionChamberBlock` is `ofFullCopy(IRON_BLOCK)` + `FOUR_WAY`) |
+| `data/industrialforegoing/loot_table/blocks/dissolution_chamber.json` | carried, 26.3-upgraded |
+| `data/industrialforegoing/recipe/dissolution_chamber.json` | the shaped recipe (`PCP/BMB/GDG`), `neoforge:conditions` dropped |
+| `data/industrialforegoing/recipe/dissolution_chamber/*.json` (23) | the machine's own type: the simple/advanced/supreme frames, the 16 lenses, the four addons. Every `input` cell is re-spelled to 26.3's **string** form (`"id"`, `"#tag"`) because `native_recipe_ingredient` reads strings and lists, never `{"item"|"tag"}` objects; `inputFluid`/`processingTime`/`output` (`components` included) are the codec's own fields and are kept exactly |
+| `data/industrialforegoing/advancement/recipes/misc/dissolution_chamber.json` | carried, conditions dropped |
+| `data/c/tags/item/{ingots/gold,gems/diamond,chests/wooden,glass_panes}.json` | written here: 26.3 ships no `c:` item tags, and the chamber's recipes and its own shaped recipe name them |
+| the `core` tab, the `minecraft:mineable/pickaxe` tag | the chamber added (upstream registers it in `TAB_CORE`, line 152 of `ModuleCore`) |
+
+**Not carried:** the jar's other 26 chamber recipes. Each names an output this package does not ship
+(`range_addon_*`, `infinity_*`, `mechanical_dirt`, `mycelial_reactor`, `pink_slime_ball/ingot`,
+`processing_addon_tier_*`), except `xp_bottles`, whose input fluid is literally called `None`.
+
 ## Carried with the 26.3 upgrade
 
 | File | Upgrade |
@@ -68,9 +88,8 @@ three gears, plastic and the 16 lenses, their tags, their recipes and the `core`
   numbers through `/industrialforegoing info` instead (gap 1 in `notes.md`).
 - **`plastic`'s own recipe** (`smelting dryrubber`): `dryrubber` is the latex chain, which this slice
   does not carry, and a recipe naming an absent item is dropped whole. Plastic is `give`-only.
-- **The three higher frames' recipes and every lens' own recipe** (`recipe/dissolution_chamber/*.json`):
-  the dissolution chamber is a later slice; those frames are `give`-only and the lenses recolour from
-  each other.
+- ~~**The three higher frames' recipes and every lens' own recipe**~~ **carried in 0.2.5 (slice 5)** by
+  the dissolution chamber.
 - **The 16 `laser_lens_inverted` models and textures**: orphan resources — no item, blockstate, model
   or code names them (only lang files mention the key), so carrying them would be art with no item.
 - The `industrialforegoing:loot_table` for unported blocks, `pack.mcmeta` and the jar's `META-INF`:

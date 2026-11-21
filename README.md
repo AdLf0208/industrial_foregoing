@@ -1,19 +1,22 @@
-# Industrial Foregoing — Horizon port (the Water Condensator and its Core set)
+# Industrial Foregoing — Horizon port (the Water Condensator, the Dissolution Chamber and the Core set)
 
 A Horizon mod for **Industrial Foregoing 1.21-3.6.39**
 (`Buuz135/Industrial-Foregoing`, **MIT**): the Water Condensator, a machine
 with a 10,000 FE buffer and a 16,000 mB tank that condenses water out of the
-air when at least two of its six sides are water source blocks, beside the
-`ModuleCore` item and block set — the four machine frames, the iron, gold and
-diamond gears, plastic and the 16 coloured laser lenses, with the tags the
-pack's add-ons bind to.
+air when at least two of its six sides are water source blocks; the
+**Dissolution Chamber**, which runs its own recipe type (23 carried recipes:
+the three higher machine frames, the 16 lenses and the four addon items) from
+eight input slots, three output slots, two tanks of the mod's own fluids and a
+10,000 FE buffer at 90 FE a tick; and the `ModuleCore` item and block set — the
+four machine frames, the iron, gold and diamond gears, plastic and the 16
+coloured laser lenses, with the tags the pack's add-ons bind to.
 
 **LOCAL-ONLY** until the maintainer approves publishing (ARCHITECTURE.md §8).
 MIT is licence rank 0 (permissive); approval is still required.
 
 Industrial Foregoing is a framework-sized tech mod (~60 machines on the
-Titanium library, plus add-ons); slice 1 is deliberately **one machine family
-with its FE buffer**, not a framework. Provenance and hashes are in
+Titanium library, plus add-ons); this port ships **one machine family with its
+FE buffer** and the second machine its own add-ons depend on, not a framework. Provenance and hashes are in
 `ports/_shared/carry-work/industrialforegoing/SOURCE.md`; the behaviour reading
 and the slice boundary are in `FINDINGS.md`; the ladder, deviations and gaps are
 in `notes.md`; the content decisions are in `CONTENT.md`.
@@ -31,6 +34,10 @@ in `notes.md`; the content decisions are in `CONTENT.md`.
 | Recipe | craftable in a plain crafting table from `#c:plastics`, `#c:gears/iron` and `#industrialforegoing:machine_frame/pity` |
 | Core set | four machine frames (placed, pickaxe-mined, they drop themselves), three gears, plastic and 16 recolourable lenses, with `industrialforegoing:machine_frame/*`, `c:gears`, `c:gears/*` and `c:plastics` |
 | Lenses | any lens plus the colour's dye (`#c:dyes/<colour>`) makes that colour's lens |
+| Chamber buffer | 10,000 FE (`DissolutionChamberConfig.maxStoredPower`), 90 FE a tick (`powerPerTick`) |
+| Chamber tanks | 8,000 mB in, 16,000 mB out, `industrialforegoing:latex`/`:pink_slime`/`:ether_gas` — declared fluid keys; `/industrialforegoing fluid` fills the tank (the pin's fluid insert takes only water and lava) |
+| Chamber recipe | its own type, `industrialforegoing:dissolution_chamber`: 0–8 item ingredients, an input fluid, a `processingTime`, an item output — matched only when the input slots hold **exactly** the recipe's item set |
+| Chamber products | `machine_frame_simple/advanced/supreme`, the 16 lenses, `speed_addon_tier_1/2`, `efficiency_addon_tier_1/2` |
 
 ## Layout
 
@@ -41,6 +48,10 @@ src/lib.rs                         the one #[mod_api::horizon_mod] impl Hooks, t
                                    the block entity type, the energy/fluid declarations, the commands
 src/runtime.rs                     pure: the bar, the attempt, the buffer, the augments (26 tests),
                                    byte-identical to the retired .hnmod port's runtime.rs
+src/chamber.rs                     pure: the dissolution chamber's rules (20 tests) — tanks,
+                                   the exact-set matcher, the bar, 90 FE a tick, the augments
+src/dissolution.rs                 the chamber's game side: its declarations, the recipe table
+                                   read through recipes_of_type, the tick, the readout
 assets/industrialforegoing/        the carried blockstate, models, textures, item definition, lang
 data/industrialforegoing/          the block/tab declarations, loot table, recipe, advancement;
 data/minecraft/tags/block/         the pickaxe tag
@@ -52,17 +63,19 @@ tools/assemble_content.py          the jar → assets/data carry pipeline
 tools/verify_content.py            the cross-reference of the carried content (--selftest, --package)
 tools/craft_recipe.py              crafts every shaped recipe in game (the tags, the frame, the gears)
 tools/recolor.py                   crafts the 16 lens recolours in the player's 2x2, counts before/after
+tools/parse_chamber.py             parses a chamber `info` line into shell variables
 tools/e2e.sh                       the in-game scenario (needs a launcher-built game; see notes.md)
 ```
 
 ## Commands (harness controls)
 
 ```
-/industrialforegoing info <x> <y> <z>                 FE, water, sources, bar
+/industrialforegoing info <x> <y> <z>                 FE, tanks, bar, recipe (both machines)
 /industrialforegoing energy <x> <y> <z> <amount>      set the buffer
 /industrialforegoing water <x> <y> <z> <amount>       set the tank
-/industrialforegoing progress <x> <y> <z> <ticks>     set the bar
+/industrialforegoing progress <x> <y> <z> <ticks>     set the bar (either machine)
 /industrialforegoing drain <x> <y> <z> <amount>       drain through the tank capability
+/industrialforegoing fluid <x> <y> <z> <fluid> <amt>  set the chamber's input tank (latex, pink_slime, …)
 ```
 
 Upstream ships no commands; these exist so the harness can read and set a

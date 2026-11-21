@@ -852,22 +852,182 @@ slice's phase S proves the drop: `drops{"industrialforegoing:machine_frame_pity"
 > whole) became the `industrialforegoing:laser_lens` tag. `runtime.rs` is unchanged, byte for byte; the
 > dissolution chamber, the latex/plastic machines and the frames' own recipes are the next slice.
 
+
+## Slice 5 — the dissolution chamber and its own recipe type (0.2.5, 2026-11-21)
+
+**Chosen from the port's own gap list and from the campaign's blocker record.** Gap 9's closing
+sentence ("Still outside the slice: … the **dissolution chamber**") and gap 17 ("Three machine frames
+and 16 lenses are `give`-only … their recipes are dissolution-chamber recipes"), plus
+[`HANDOVER.md`](../_shared/HANDOVER.md) §9g, where `mifa` is parked on
+`blocked(industrialforegoing:dissolution_chamber)` and its 22 recipes name the parent's
+`industrialforegoing:dissolution_chamber` type 21×. Tier **machines** (ledger): a block entity with an
+item container, two fluid tanks, an FE buffer, a tick and commands — no renderer, no dimension work. The
+three higher frames, all 16 lenses and the four addon items this package already ships had **no source**
+in this port without it; after this slice 23 of the jar's chamber recipes are carried and crafted.
+
+### Upstream (jar `industrialforegoing-1.21-3.6.39.jar`; source `Buuz135/Industrial-Foregoing`
+### `ce2852db`; Titanium `e53e869` — read for behaviour, clones deleted)
+
+| upstream | behaviour | what the port carries |
+|---|---|---|
+| `DissolutionChamberBlock` | `Properties.ofFullCopy(IRON_BLOCK)`, `RotationType.FOUR_WAY`, `IndustrialBlockItem` in `TAB_CORE` | block + item, `subfacing` (four values), iron-block template, `core` tab, pickaxe tag, loot |
+| `DissolutionChamberTile` | 8 input slots (`stacksTo(1)`, input only), 3 output slots (output only), an 8,000 mB input tank and a 16,000 mB output tank, a 10,000 FE buffer, 90 FE a tick | a declared `ModContainer` (11 slots, inputs 0–7, outputs 8–10), two declared tanks, the buffer, the tick |
+| `DissolutionChamberRecipe` (`MapCodec`) | `input` (0–8 `Ingredient`s), `inputFluid` (`SizedFluidIngredient`: fluid + mB), `processingTime`, `output` (`ItemStack.CODEC`), optional `outputFluid`; `matches` needs **exactly** the recipe's item set and the tank's fluid | decoded from the package's own files (`src/dissolution.rs`), matched in `src/chamber.rs` |
+| `IndustrialProcessingTile` + Titanium `ProgressBarComponent` | the bar rises one a tick (the speed augment's value from the second tick, because Titanium sets `progressIncrease` in `onTickWork` *after* `setProgress`), 90 FE is taken a tick, at `maxProgress` the bar resets and `onFinish` runs; `maxProgress` is the recipe's `processingTime` scaled by `floor(processingTime × efficiency)` at `onStart`; a bar that cannot work resets to 0 and takes nothing | the same arithmetic in `src/chamber.rs`, reusing `runtime::Augments` |
+
+Config (`DissolutionChamberConfig`): `maxProgress` 100 (fallback only — the chamber's bar length is the
+recipe's), `powerPerTick` **90** (its own comment says 60; the value is 90 and is what the game uses),
+`maxStoredPower` 10,000, input tank 8,000 mB, output tank 16,000 mB.
+
+### The recipe type — measured, and where the brief's symbols point
+
+The brief names `mod_api::CraftingRecipeKind` + `Registrar::register_crafting_recipe_serializer` and
+says `pocketstorage` proved them. They exist and work, but they register a **3×3 crafting-grid** kind
+(`register_crafting_recipe_serializer` calls `add_recipe_serializer(name, "minecraft:crafting", …)`):
+a chamber recipe placed in a crafting table, not a machine's own type. The pin's machine route is API
+36's pair, and it is the one the game accepts:
+
+- `Registrar::register_recipe_type("industrialforegoing:dissolution_chamber")` **and**
+  `Registrar::register_raw_recipe_serializer("dissolution_chamber", …)` (the read-only
+  `RecipeSerializer` whose value is the file's JSON, published through `Host::recipes_of_type`).
+- **Without the serializer the game refuses the file and crashes.** Measured on the first build in
+  game, verbatim: `recipe data/industrialforegoing/recipe/dissolution_chamber/advanced_machine_frame.json,
+  unregistered recipe serializer industrialforegoing:dissolution_chamber` → `Horizon crashed: …`. The
+  first probe's log is in this report; the fix is the serializer above.
+- With it, the machine's table reads back complete: `/industrialforegoing info` prints `recipes 23/23`
+  (23 files carried, 23 decoded), and a grid of the jar's lens ingredients matches
+  `industrialforegoing:dissolution_chamber/white_laser_lens`.
+
+### The fluid gap — measured, and the route the brief named
+
+`native_fluid_insert` refuses anything but `minecraft:water`/`minecraft:lava`
+(`game/machines/native_fluids.rs`), and it is the only fill path the pin gives a mod block's tank. The
+port therefore:
+
+1. **declares** the three fluids its recipes name as fluid keys — `industrialforegoing:latex`,
+   `:pink_slime`, `:ether_gas` (`Registrar::declare_fluid`) — so a tank can hold one and the readout
+   resolves it;
+2. **writes the entity's own `fluids` compound** (the pin's tank shape: one `{Fluid, Amount}` per
+   tank) through `merge_data`, as `/data merge block` does, from `/industrialforegoing fluid <pos>
+   <fluid> <amount>`;
+3. proves it through the **declared capability**: `/industrialforegoing info` reports the input tank
+   as the capability sees it (`capability industrialforegoing:latex 2000 mB`), not from its own
+   counter. Phase Y asserts that string; with the fluid not declared or not in the compound it reads
+   `empty`.
+
+### TDD, in order
+
+1. **Red** (`src/chamber.rs`, the rules as tests; `sdk-test-red-slice5.log`): `test result: FAILED. 60
+   passed; 15 failed` — e.g. `chamber::tests::the_exact_item_set_matches … assertion failed:
+   recipe_for(&recipes, &held, &latex()).is_some()` and `…the_hundred_tick_recipe…: assertion
+   `left == right` failed: tick 1 of a 100-tick recipe still works`. (The first red, before any body
+   existed, was `49 passed; 17 failed`; the log is the same set of tests with the three bodies put
+   back at their pre-implementation state.)
+2. **The rules** (`src/chamber.rs`, a second pure module — `runtime.rs` stays byte-identical, which
+   `verify-sdk-package.py` checks): `Tank`, `Ingredient`, `ChamberRecipe`, `Machine` (energy, bar, two
+   tanks, the bar's step), `recipe_index`/`recipe_for` (the exact-multiset match), `bar_length`
+   (`floor(ticks × efficiency)`), `tick` (the bar's rise, 90 FE a tick, the reset, the completion with
+   its product and fluids). 20 tests, incl. the 100-tick/9,000 FE run, the 111-tick buffer limit, the
+   speed augment's one-tick-late start and a 0.8 efficiency bar of 240.
+3. **The glue** (`src/dissolution.rs`): the declarations, the recipe table (decoded once per table
+   identity — the file's own allocation — so a `/reload` rebuilds it and a tick does not cross into
+   the game), the tick, the container/energy/fluid declarations, the block's contents on its item,
+   and the readout/setters.
+4. **In game**, phases X–AE (below), `PASS` + `EXIT:0`.
+
+### In game (phases X–AE; `evidence/industrialforegoing-e2e/e2e-launcher.log`)
+
+| phase | what it asserts | the value it read |
+|---|---|---|
+| X | the chamber places from its item, faces its placer, and the machine reads its own recipe table | `subfacing=west`; `recipes 23/23`; fresh: `0 FE`, `input empty 0/8000`, `recipe none` |
+| Y | a **mod fluid** in the declared tank, reported back by the capability | `input industrialforegoing:latex 2000/8000 mB`, `capability industrialforegoing:latex 2000 mB` |
+| Z | the white lens recipe, a full 100-tick operation | 100 ticks (the game's own `t`), `10000 → 1000 FE` (100 × 90), `2000 → 1750 mB` (250 drained), `white_laser_lens ×1`, every input slot consumed |
+| AA | **the fluid gate**: the same grid with an empty tank | `recipe none`, `progress 0`, `0 FE` spent, no product; 250 mB of latex later it runs and spends 9,000 FE |
+| AB | the output into a hopper and a barrel | the barrel holds the lenses, the chamber's output slots are empty |
+| AC | the simple frame's whole 300-tick recipe | the rate `90 FE a tick` measured between two reads, the bar climbing without resetting, `machine_frame_simple ×1`, `1000 → 750 mB` |
+| AD | **the `mifa` point**: `#c:plastics` + the crafted `#c:gears/diamond` + `machine_frame/advanced` | `machine_frame_advanced ×1` from a grid naming those three, `1000 → 500 mB` of pink slime |
+| AE | a broken chamber's item carries its buffer and fluid | broken at 4,000 FE / 1,500 mB, placed back at 4,000 FE / 1,500 mB |
+
+`SELFTEST=chamber` flips Z's product count to 2 (`FAIL: the product is
+industrialforegoing:white_laser_lens x1, expected … x2`, `EXIT:1`); the control leg (same Nightly,
+no package) still fails at its first assertion (`unknown item industrialforegoing:water_condensator`).
+The three legs of the earlier slices (`SELFTEST=1`, `SELFTEST=core`) were re-run on 0.2.5 and still
+fail at their own assertions.
+
+### Coverage (families this slice adds)
+
+| family | coverage |
+|---|---|
+| `industrialforegoing:dissolution_chamber` (block + item) | `tested` — phase X places it from its item, reads the state (`subfacing=west`) and the loot drops it in the e2e's break of AE |
+| its block state, model, item definition, name, `core` tab entry | `tested` by name/model/state where the game exposes them (X, AE); the tab is data (asserted by `verify_content.py`) |
+| its own recipe type (`industrialforegoing:dissolution_chamber`) | `tested` — `recipes 23/23` (data loaded) and two recipes matched and run (Z, AC, AD) |
+| the 8 input slots, 3 output slots, and their automation | `tested` — items enter through the container (`/item replace block … container.N`, a server-side insert) and leave into a hopper (AB); the output slots also drop with the machine (AE's break) |
+| the 8,000 mB input tank / 16,000 mB output tank as capabilities | `tested` — Y reads the fluid back through the declared capability; the output tank has no carried recipe that fills it (see gaps) |
+| the 10,000 FE buffer, 90 FE a tick | `tested` — Z's 100 × 90 = 9,000 FE and AC's measured rate |
+| the recipe `input`/`inputFluid`/`processingTime`/`output`/`outputFluid` fields | `tested` for the first four (Z, AC, AD); `outputFluid` is decoded but no carried recipe has one (asserted as data) |
+| the speed and efficiency augments on the chamber | `ported, not exercised in game` — the base tile's two augment slots are seated through the same `use_item_on` path the condensator's phases M–Q prove; the chamber's own e2e asserts the empty slots (`augments speed 1 efficiency 1.00`) and the arithmetic is unit-tested (20 tests), but no phase seats one in this machine |
+| the jar's other 26 chamber recipes (range/infinity addons, `mechanical_dirt`, `mycelial_reactor`, `pink_slime_*`, `processing_addon_*` tier 3+, `xp_bottles`) | `not carried` — each names an **output** this package does not ship (or, `xp_bottles`, a fluid literally called `None`) |
+| the four addon items' own recipes (tiers 1 and 2) | `carried` — their ingredients all resolve; asserted by `verify_content.py` and crafted-by-type (Z) rather than one by one in game |
+| a GUI screen, the lockable input bundle, redstone control | `not ported` — `machines` tier without a menu, as slice 1 (gaps 1–2) |
+
+### Deviations and gaps this slice adds
+
+19. **The fluids have no source in this package.** `industrialforegoing:latex`, `:pink_slime` and
+    `:ether_gas` are declared fluid keys, and a tank holds them by writing its own `fluids` compound;
+    nothing in the port produces them (the latex/plastic machines are a later slice), and
+    `native_fluid_insert` refuses a mod fluid, so `/industrialforegoing fluid` is the only fill path.
+    A pack with the latex chain ported writes the same compound. Recorded, not faked.
+20. **The input slots have no per-slot limit.** `DissolutionChamberTile` builds its input inventory
+    with `setSlotLimit(1)`; the pin's `ModContainer` declares slots, faces and policies, not a slot
+    limit, so a hopper can pile a stack in one slot. A pile still matches an ingredient **once**
+    (the matcher counts occupied slots, as upstream's `matches` counts `handlerItems`), so a pile
+    blocks the recipe exactly as upstream's would — but upstream never accepts the pile.
+21. **The output tank is inert with the carried recipes.** No recipe this package carries has an
+    `outputFluid` (the jar's only one is `pink_slime_ball`, whose input item this slice does not
+    ship); the tank, its declaration and the completion's fill path are exercised by the unit tests,
+    not in game.
+22. **The chamber's augments are seated but not exercised in the e2e.** The seating path is the
+    condensator's (`use_item_on` → `level_tick_post`), and the arithmetic is unit-tested; no phase of
+    X–AE sits an addon in the chamber, so its in-game augment behaviour is untested (the condensator's
+    phases M–Q cover the component and the queue).
+
+### The changelog for the 0.2.5 update
+
+> Supersedes the closed 0.2.4 PR of this entry. **New: the Dissolution Chamber** — the machine the
+> parent's own add-ons and every higher machine frame depend on. It carries its **own recipe type**
+> (`industrialforegoing:dissolution_chamber`, declared with its read-only serializer) and 23 of the
+> jar's recipes: the simple, advanced and supreme machine frames (previously `give`-only), the 16
+> coloured laser lenses (previously craftable only from each other) and the four speed/efficiency
+> addon items (previously `give`-only). Eight input slots, three output slots, an 8,000 mB input tank
+> and a 16,000 mB output tank of this mod's own fluids (`industrialforegoing:latex`, `:pink_slime`,
+> `:ether_gas` — declared fluid keys; the tank is filled by `/industrialforegoing fluid`, because the
+> pin's fluid insert takes only water and lava), a 10,000 FE buffer at 90 FE a tick, and the base
+> tile's two augment slots. Proven in game: the machine places and faces its placer, its table reads
+> 23/23, a white lens costs exactly 100 ticks and 9,000 FE and 250 mB of latex, an empty tank runs
+> nothing and 250 mB starts it, a hopper empties the output into a barrel, the simple frame runs its
+> 300 ticks at exactly 90 FE a tick, the advanced frame is made from `#c:plastics`, the crafted
+> `#c:gears/diamond` gear and the simple frame, and a broken chamber carries its FE and latex back on
+> its item. `src/runtime.rs` is unchanged, byte for byte; a second pure module (`src/chamber.rs`)
+> holds the chamber's rules. The latex/plastic machines, the remaining chamber recipes (their products
+> are not in this package) and the GUI are the following slices.
+
 ## Skills
 
-Skills: superpowers/using-superpowers,writing-plans,test-driven-development,verification-before-completion; BeautifulRust/rust-best-practices (slice 4: the set actually loaded for this slice; `brainstorming` was not needed — the brief chose the slice — and the e2e iterations were debugged from the logs rather than through `systematic-debugging`)
+Skills: superpowers/using-superpowers,brainstorming,writing-plans,test-driven-development,systematic-debugging,verification-before-completion; BeautifulRust/rust-best-practices (slice 5: the set actually loaded for this slice — `brainstorming` to weigh the slice against the gap list, `systematic-debugging` for the in-game gates: the recipe-serializer crash, the client-side `ctl container` writes that never reached the server's block entity, and the bar resets a too-long window caused)
 
 `cargo fmt --package industrialforegoing --check`, `cargo clippy --all-targets -- -D warnings` and
-`cargo test` were run before hand-back (slice 4: `FMT-CLEAN`, 0 warnings, 46 passed).
+`cargo test` were run before hand-back (slice 5: `FMT-CLEAN`, 0 warnings, 75 passed).
 `#[allow(private_interfaces, reason = "…")]` marks the injected module's own private
 `Game`/`ModBlockEntity` parameters (the same exception `botanypots`, `powah`, `charginggadgets` and
 `mininggadgets` record).
 
 ## Verification
 
-**[`VALIDATION.md`](VALIDATION.md) is the ladder for the delivered 0.2.4 package** at the
-campaign pin `0a875da…` (the red test run, fmt, clippy, 46 tests, two `cmp`-identical builds, `check`,
+**[`VALIDATION.md`](VALIDATION.md) is the ladder for the delivered 0.2.5 package** at the
+campaign pin `0a875da…` (the red test run, fmt, clippy, 75 tests, two `cmp`-identical builds, `check`,
 both `fits` runs, the content verifier with its selftest, and the in-game legs — green, control and
-both selftests — with their exit statuses). The tables below are the earlier ladders, kept as history.
+all three selftests — with their exit statuses). The tables below are the earlier ladders, kept as
+history.
 
 ### The SDK ladder (2026-11-18, the 0.2.0 migration; historical)
 
@@ -1075,12 +1235,11 @@ The `.hnmod` carried the content mod as
     schema has `common`/`uncommon`/`rare`/`epic` only, so the four tiers map onto those **in order**
     (pity common, simple uncommon, advanced rare, supreme epic) and the item colours differ. Cosmetic
     only; recorded in [Slice 4](#slice-4--the-modulecore-item-and-block-set-024-2026-11-21).
-17. **Three machine frames and 16 lenses are `give`-only or craft-from-each-other** (slice 4).
-    `machine_frame_simple/advanced/supreme` and every lens' own recipe are **dissolution-chamber**
-    recipes (`recipe/dissolution_chamber/*.json`), so they are not carried: the three frames are
-    `give`-only until the chamber lands, and the lenses are obtainable by recolouring each other (a
-    white lens is itself only obtainable from the chamber in a full pack). `plastic` is
-    `give`-only too: its recipe is `smelting dryrubber`, and `dryrubber` is the latex chain.
+17. ~~**Three machine frames and 16 lenses are `give`-only or craft-from-each-other**~~ **Closed in
+    0.2.5 (slice 5).** `machine_frame_simple/advanced/supreme` and every lens are made by the
+    dissolution chamber from the jar's own recipes, and the four addon items too (their chamber
+    recipes were `give`-only in slice 3). `plastic` is still `give`-only: its recipe is
+    `smelting dryrubber`, and `dryrubber` is the latex chain.
 18. **`c:gears` (the umbrella tag) has no consumer in this package.** It is carried whole (a pack's
     add-on may ask for "any gear"); its three sub-tags are each exercised by a craft.
 
@@ -1114,6 +1273,16 @@ were recorded above and in the slice section):- **Industrial Foregoing `ce2852db
 Clean-room: the rewrite is this port's own Rust against the pin's APIs; the Java was read for
 behaviour only, and where the pin cannot express something (no item handler on a menu-less machine)
 the deviation is recorded above instead of faked.
+
+Slice 5 re-read the same repository at `ce2852db` (`block/core/DissolutionChamberBlock.java`,
+`block/core/tile/DissolutionChamberTile.java`, `recipe/DissolutionChamberRecipe.java`,
+`config/machine/core/DissolutionChamberConfig.java`, `block/tile/IndustrialProcessingTile.java`,
+`module/ModuleCore.java`'s `DISSOLUTION_CHAMBER`/`DISSOLUTION_SERIALIZER`/`DISSOLUTION_TYPE`) and
+Titanium at `e53e869` (`component/progress/ProgressBarComponent.java`'s `tickBar`,
+`component/progress/MultiProgressBarHandler.update`), plus `mifa`'s own jar for the recipe families its
+add-on names. The jar's own JSON (blockstate, model, front texture, loot, 49 chamber recipe files) was
+the authority for every carried file; 23 of the 49 are carried (the rest name outputs this package does
+not ship). Both clones were deleted after the findings; no Java was copied or translated.
 
 Slice 4 re-read the same repository at `ce2852db` for the `ModuleCore` set (`module/ModuleCore.java`:
 the four `registerBlockWithItem` frames, `registerGeneric` gears/plastic and the `for (DyeColor value

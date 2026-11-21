@@ -1,0 +1,21 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "key": {
+    "B": "minecraft:bucket",
+    "C": "#c:chests/wooden",
+    "D": "#c:gears/diamond",
+    "G": "#c:ingots/gold",
+    "M": "#industrialforegoing:machine_frame/pity",
+    "P": "#c:plastics"
+  },
+  "pattern": [
+    "PCP",
+    "BMB",
+    "GDG"
+  ],
+  "result": {
+    "count": 1,
+    "id": "industrialforegoing:dissolution_chamber"
+  }
+}

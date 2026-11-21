@@ -5,7 +5,9 @@ The jar is the ATM10 file
 (`ports/_shared/licence-cache/industrialforegoing-1.21-3.6.39.jar`, SHA-1
 `a653f5c2…77fd` = the pack record), kept as the licence and provenance
 evidence. The blockstates, models, textures, loot tables, recipes and
-advancements come out of the jar, re-spelled only where 26.3 differs:
+advancements come out of the jar, re-spelled only where 26.3 differs (and, for a recipe of the
+port's own machine type, every `input` cell re-spelled to 26.3's string form — the game's
+`native_recipe_ingredient` reads strings and lists, not `{"item"|"tag"}` objects):
 
 * `{"tag": T}` / `{"item": I}` ingredients -> `"#T"` / `"I"`;
 * a **list** of alternative ingredients (the lens recolours' "any lens") ->
@@ -58,6 +60,21 @@ CARRIED_ASSETS = [
     "assets/industrialforegoing/textures/item/efficiency_addon_1.png",
     "assets/industrialforegoing/textures/item/efficiency_addon_2.png",
 ]
+
+# Slice 5: the dissolution chamber's own assets. Its block model is the jar's
+# `block/base_block` with `north` overridden to the front texture, so the three base
+# textures above are its sides too.
+CHAMBER_ASSETS = [
+    "assets/industrialforegoing/blockstates/dissolution_chamber.json",
+    "assets/industrialforegoing/models/block/dissolution_chamber.json",
+    "assets/industrialforegoing/models/item/dissolution_chamber.json",
+    "assets/industrialforegoing/textures/block/dissolution_chamber_front.png",
+]
+
+# The chamber's own recipe type: the files under `recipe/dissolution_chamber/` whose
+# output this package ships and whose ingredients resolve (see `notes.md`, slice 5). Set
+# in `main` from `COLOURS`, once it is defined.
+CHAMBER_RECIPES = []
 
 # The four `MachineFrameBlock`s (`ModuleCore.PITY`..`SUPREME`): the jar's own
 # blockstate is state-free, its block model is `block/orientable` over the
@@ -277,7 +294,8 @@ TAB = {
 CORE_TAB = {
     "title": "itemGroup.industrialforegoing_core",
     "icon": f"{MOD}:machine_frame_pity",
-    "items": [f"{MOD}:{frame}" for frame, _, _ in FRAMES]
+    "items": [f"{MOD}:dissolution_chamber"]
+    + [f"{MOD}:{frame}" for frame, _, _ in FRAMES]
     + [f"{MOD}:{colour}_laser_lens" for colour, _ in COLOURS]
     + [f"{MOD}:{item}" for item in PLAIN_ITEMS],
 }
@@ -354,16 +372,41 @@ def carried_data(archive: zipfile.ZipFile, name: str, upgraded: bool) -> bytes:
     return (json.dumps(data, indent=2) + "\n").encode()
 
 
+def chamber_recipe(raw: bytes) -> bytes:
+    """One `industrialforegoing:dissolution_chamber` recipe, 26.3's shape.
+
+    `neoforge:conditions` goes (unknown here), and every `input` cell becomes a **string** —
+    `{"item": I}` -> `"I"`, `{"tag": T}` -> `"#T"` — because the game's
+    `native_recipe_ingredient` reads an item, a `#tag` or a list of them, never an object.
+    `inputFluid`, `processingTime`, `output` and `outputFluid` are the codec's own fields and
+    are kept exactly as the jar writes them.
+    """
+    recipe = json.loads(raw)
+    recipe.pop("neoforge:conditions", None)
+    recipe["input"] = [upgrade_ingredient(cell) for cell in recipe.get("input", [])]
+    return (json.dumps(recipe, indent=2) + "\n").encode()
+
+
 def main() -> None:
     raw = JAR.read_bytes()
     digest = hashlib.sha1(raw).hexdigest()
     if digest != JAR_SHA1:
         raise SystemExit(f"jar SHA-1 {digest} is not the pack record {JAR_SHA1}")
     archive = zipfile.ZipFile(JAR)
+    chamber_recipes = (
+        ["simple_machine_frame", "advanced_machine_frame", "supreme_machine_frame"]
+        + [f"{colour}_laser_lens" for colour, _ in COLOURS]
+        + [
+            "speed_addon_tier_1",
+            "speed_addon_tier_2",
+            "efficiency_addon_tier_1",
+            "efficiency_addon_tier_2",
+        ]
+    )
     for folder in ("assets", "data"):
         shutil.rmtree(CONTENT / folder, ignore_errors=True)
 
-    for name in CARRIED_ASSETS:
+    for name in CARRIED_ASSETS + CHAMBER_ASSETS:
         write(CONTENT / name, archive.read(name))
     for name in CARRIED_TAGS:
         write(CONTENT / name, archive.read(name))
@@ -381,6 +424,9 @@ def main() -> None:
     # The frames' own block names, and the 24 items' keys. `LaserLensItem.getName`
     # composes `item.industrialforegoing.laser_lens` with the colour's vanilla
     # name ("Red"), so each lens gets its own resolved string here.
+    strings["block.industrialforegoing.dissolution_chamber"] = lang[
+        "block.industrialforegoing.dissolution_chamber"
+    ]
     for frame, _, _ in FRAMES:
         strings[f"block.industrialforegoing.{frame}"] = lang[f"block.industrialforegoing.{frame}"]
     for item in PLAIN_ITEMS:
@@ -433,6 +479,20 @@ def main() -> None:
         write(CONTENT / f"assets/{MOD}/items/{item}.json", item_definition(item))
         write(CONTENT / f"data/{MOD}/horizon/item/{item}.json", plain_item(lens=True))
 
+    # Slice 5: the dissolution chamber — its declaration (the same iron-block template and
+    # `subfacing` property as the condensator), 26.3's item definition, its loot and the
+    # advancement of its shaped recipe, then its own machine recipes.
+    write(CONTENT / f"data/{MOD}/horizon/block/dissolution_chamber.json", BLOCK)
+    write(CONTENT / f"assets/{MOD}/items/dissolution_chamber.json", item_definition("dissolution_chamber"))
+    for name in (
+        "data/industrialforegoing/loot_table/blocks/dissolution_chamber.json",
+        "data/industrialforegoing/recipe/dissolution_chamber.json",
+        "data/industrialforegoing/advancement/recipes/misc/dissolution_chamber.json",
+    ):
+        write(CONTENT / name, carried_data(archive, name, upgraded=True))
+    for name in chamber_recipes:
+        path = f"data/{MOD}/recipe/dissolution_chamber/{name}.json"
+        write(CONTENT / path, chamber_recipe(archive.read(path)))
     write(CONTENT / f"data/{MOD}/horizon/block/water_condensator.json", BLOCK)
     write(CONTENT / f"data/{MOD}/horizon/creative_tab/resource_production.json", TAB)
     write(CONTENT / f"data/{MOD}/horizon/creative_tab/core.json", CORE_TAB)
@@ -445,6 +505,18 @@ def main() -> None:
         {"values": [f"{MOD}:{colour}_laser_lens" for colour, _ in COLOURS]},
     )
     write(CONTENT / "data/c/tags/item/ingots/iron.json", {"values": ["minecraft:iron_ingot"]})
+    write(CONTENT / "data/c/tags/item/ingots/gold.json", {"values": ["minecraft:gold_ingot"]})
+    write(CONTENT / "data/c/tags/item/gems/diamond.json", {"values": ["minecraft:diamond"]})
+    write(
+        CONTENT / "data/c/tags/item/chests/wooden.json",
+        {"values": ["minecraft:chest", "minecraft:trapped_chest"]},
+    )
+    # The chamber's lenses name `#c:glass_panes`: every pane vanilla has, plain and stained.
+    write(
+        CONTENT / "data/c/tags/item/glass_panes.json",
+        {"values": ["minecraft:glass_pane"]
+         + [f"minecraft:{colour}_stained_glass_pane" for colour, _ in COLOURS]},
+    )
     write(
         CONTENT / "data/c/tags/item/storage_blocks/redstone.json",
         {"values": ["minecraft:redstone_block"]},
@@ -457,7 +529,10 @@ def main() -> None:
 
     write(
         CONTENT / "data/minecraft/tags/block/mineable/pickaxe.json",
-        {"values": [f"{MOD}:water_condensator"] + [f"{MOD}:{frame}" for frame, _, _ in FRAMES]},
+        {
+            "values": [f"{MOD}:water_condensator", f"{MOD}:dissolution_chamber"]
+            + [f"{MOD}:{frame}" for frame, _, _ in FRAMES]
+        },
     )
 
     files = sorted(

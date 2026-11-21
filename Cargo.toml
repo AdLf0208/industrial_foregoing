@@ -7,10 +7,10 @@
 #
 # Cargo's name and version are not the mod's identity: horizon-mod.toml is.
 name = "industrialforegoing"
-version = "0.2.4"
+version = "0.2.5"
 edition = "2024"
 license = "MIT"
-description = "Industrial Foregoing for Horizon: the Water Condensator and its Core item set"
+description = "Industrial Foregoing for Horizon: the Water Condensator, the Dissolution Chamber and the Core item set"
 publish = false
 
 [dependencies]

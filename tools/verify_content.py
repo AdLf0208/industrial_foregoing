@@ -51,6 +51,8 @@ COLOURS = [
     "black",
 ]
 PLAIN_ITEMS = ["iron_gear", "gold_gear", "diamond_gear", "plastic"]
+# Slice 5: the dissolution chamber and the file of its own recipe type.
+CHAMBER = "dissolution_chamber"
 
 
 class Files:
@@ -145,7 +147,8 @@ def check(files: Files) -> list[str]:
 
     # The slice's ids are declared, named and modelled.
     expected = (
-        [f"{MOD}:{frame}" for frame in FRAMES]
+        [f"{MOD}:{CHAMBER}"]
+        + [f"{MOD}:{frame}" for frame in FRAMES]
         + [f"{MOD}:{item}" for item in PLAIN_ITEMS]
         + [f"{MOD}:{colour}_laser_lens" for colour in COLOURS]
     )
@@ -165,6 +168,18 @@ def check(files: Files) -> list[str]:
         key = f"{kind}.{item_id.split(':', 1)[0]}.{item_id.split(':', 1)[1]}"
         if not lang.get(key):
             failures.append(f"{key} has no English name")
+
+    # The chamber: declared, named, modelled, with a blockstate and a loot table that drops it.
+    if f"{MOD}:{CHAMBER}" not in blocks:
+        failures.append(f"the dissolution chamber is not declared as a block")
+    for name in (
+        f"assets/{MOD}/blockstates/{CHAMBER}.json",
+        f"data/{MOD}/loot_table/blocks/{CHAMBER}.json",
+    ):
+        if not files.has(name):
+            failures.append(f"the dissolution chamber has no {name}")
+        elif name.endswith("loot.json") and f"{MOD}:{CHAMBER}" not in json.dumps(files.json(name)):
+            failures.append(f"{name} does not drop the chamber")
 
     for frame in FRAMES:
         loot = f"data/{MOD}/loot_table/blocks/{frame}.json"
@@ -190,6 +205,32 @@ def check(files: Files) -> list[str]:
             resolves(value, f"{name} ingredient")
         if "ingredient" in recipe:
             resolves(recipe["ingredient"], f"{name} ingredient")
+
+    # The chamber's own recipe type: `input` cells are 26.3 strings, its `output` is a
+    # shipped id, and its `inputFluid` names a fluid the brand declares.
+    brand_fluids = {"industrialforegoing:latex", "industrialforegoing:pink_slime",
+                    "industrialforegoing:ether_gas"}
+    chamber_recipes = region(files, f"data/{MOD}/recipe/dissolution_chamber/")
+    if len(chamber_recipes) < 23:
+        failures.append(f"{len(chamber_recipes)} chamber recipes carried, expected at least 23")
+    for name in chamber_recipes:
+        recipe = files.json(name)
+        if recipe.get("type") != f"{MOD}:{CHAMBER}":
+            failures.append(f"{name} is not a {MOD}:{CHAMBER} recipe")
+        output = recipe.get("output", {}).get("id")
+        if output and output not in declared:
+            failures.append(f"{name} results in {output}, which the package does not declare")
+        for cell in recipe.get("input", []):
+            if not isinstance(cell, str):
+                failures.append(f"{name} has a non-string input cell {cell!r}")
+            resolves(cell, f"{name} input")
+        fluid = recipe.get("inputFluid", {}).get("fluid")
+        if fluid not in brand_fluids:
+            failures.append(f"{name} needs the fluid {fluid}, which the port does not declare")
+        for key in ("outputFluid",):
+            out = recipe.get(key)
+            if out and out.get("id", out.get("fluid")) not in brand_fluids:
+                failures.append(f"{name} {key} names an undeclared fluid")
 
     # Every tag value resolves, including the ones this port writes for the
     # convention tags 26.3's base data does not ship.
@@ -232,6 +273,8 @@ def selftest() -> int:
     cases = [
         ("a missing convention tag", "data/c/tags/item/plastics.json", {}),
         ("a missing declaration", f"data/{MOD}/horizon/item/iron_gear.json", {}),
+        ("the chamber's glass-pane tag", "data/c/tags/item/glass_panes.json", {}),
+        ("the chamber's declaration", f"data/{MOD}/horizon/block/{CHAMBER}.json", {}),
     ]
     failures = 0
     for label, drop, edit in cases:

@@ -51,13 +51,16 @@ PORT=$CLONE/ports/industrialforegoing
 CTL=${CTL:-}
 GAME=${GAME:-}
 RES=${RES:-${HORIZON_RES:-/home/adlf/Desktop/horizon/.local/horizon-client/26.3}}
-SOCK=${SOCK:-/tmp/opencode/industrialforegoing-e2e.sock}
+SOCK=${SOCK:-${E2E_TMP:-/tmp/opencode}/industrialforegoing-e2e.sock}
 SELFTEST=${SELFTEST:-0}
 KEEP=${KEEP:-0}
 WORLD=IndustrialForegoingE2E
 # Where the machine stands: the End's void, far from the central island.
 X0=200
 SX=$((X0 + 2))
+# The dissolution chamber (slice 5): its own platform east of the condensator's.
+CX=220
+CHAMBER_ID=industrialforegoing:dissolution_chamber
 FE_CAP=10000
 WATER_CAP=16000
 
@@ -75,7 +78,9 @@ WATER_CAP=16000
 [ -x "$GAME" ] || { echo "missing horizon-client: $GAME" >&2; exit 1; }
 [ -d "$RES/assets" ] || { echo "missing prepared resources: $RES" >&2; exit 1; }
 
-SCRATCH=$(mktemp -d /tmp/opencode/industrialforegoing-home.XXXXXX)
+# `E2E_TMP` is where a run keeps its world: `/tmp` is a 7.5 GB tmpfs, so the launcher
+# exports a scratch root on the data disk and this honours it.
+SCRATCH=$(mktemp -d "${E2E_TMP:-/tmp/opencode}"/industrialforegoing-home.XXXXXX)
 export HORIZON_HOME=$SCRATCH/game
 export HORIZON_LAUNCHER_HOME=$SCRATCH/launcher
 export XDG_DATA_HOME=$SCRATCH/data
@@ -236,8 +241,143 @@ place_held() { # place_held X Y Z
         || fail "the held machine did not place at $x,$y,$z (got '$(block_name "$x" "$y" "$z")')"
 }
 
+
+# ---------------------------------------------------------------------------
+# The dissolution chamber (slice 5)
+# ---------------------------------------------------------------------------
+
+# Its own platform east of the condensator's arena: stone at y=100, air above,
+# and the barrel under the floor for the hopper leg.
+chamber_arena() {
+    ctl command "execute in minecraft:the_end run tp @s $((CX + 2)).5 104 0.5" >/dev/null
+    local loaded=false
+    for _ in $(seq 1 120); do
+        ctl wait 5 >/dev/null
+        if [ "$(ctl block "$CX" 100 0 | jq -r '.loaded // false')" = true ]; then
+            loaded=true
+            break
+        fi
+    done
+    [ "$loaded" = true ] || fail "the chamber arena chunk never loaded"
+    ctl command "execute in minecraft:the_end run fill $((CX - 6)) 100 -6 $((CX + 6)) 100 6 minecraft:stone" >/dev/null
+    ctl command "execute in minecraft:the_end run fill $((CX - 6)) 101 -6 $((CX + 6)) 108 6 minecraft:air" >/dev/null
+    ctl wait 8
+    ctl command "execute in minecraft:the_end run tp @s $((CX - 2)).5 101 0.5" >/dev/null
+    ctl wait 12
+    [ "$(block_name "$CX" 100 0)" = "minecraft:stone" ] || fail "the chamber arena floor is not stone"
+}
+
+# Place the chamber **already in the hotbar** (the drop a break leaves), no `/give`: the
+# only source of that item is the broken machine, which is what proves it carries the contents.
+place_held_chamber() {
+    ctl command "execute in minecraft:the_end run tp @s $((CX - 2)).5 101 0.5" >/dev/null
+    ctl wait 6
+    ctl look-at-block "$CX" 100 0 up >/dev/null 2>&1 || fail "cannot aim at the chamber's floor"
+    ctl wait 6
+    ctl place "$CX" 101 0 --item "$CHAMBER_ID" >/dev/null || fail "the carried chamber did not place"
+    ctl wait 6
+    [ "$(block_name "$CX" 101 0)" = "$CHAMBER_ID" ] \
+        || fail "the carried chamber did not place at $CX (got '$(block_name "$CX" 101 0)')"
+}
+
+place_chamber() {
+    ctl command "item replace entity @s hotbar.0 with $CHAMBER_ID 1" >/dev/null
+    ctl wait 6
+    ctl select 1 >/dev/null
+    ctl command "execute in minecraft:the_end run tp @s $((CX - 2)).5 101 0.5" >/dev/null
+    ctl wait 6
+    ctl look-at-block "$CX" 100 0 up >/dev/null 2>&1 || fail "cannot aim at the chamber's floor"
+    ctl wait 8
+    ctl place "$CX" 101 0 --item "$CHAMBER_ID" >/dev/null || fail "the chamber did not place"
+    ctl wait 6
+    [ "$(block_name "$CX" 101 0)" = "$CHAMBER_ID" ] \
+        || fail "the chamber did not place at $CX (got '$(block_name "$CX" 101 0)')"
+}
+
+# `/industrialforegoing info` of the chamber, parsed into the F_* variables.
+cbar() {
+    say "industrialforegoing info $CX 101 0"
+    ctl wait 10
+    CBAR_LINE=$(ctl messages 10 | jq -r '.chat[]' | grep -m1 'Dissolution Chamber at' || true)
+    [ -n "$CBAR_LINE" ] || fail "no /industrialforegoing info reply for the chamber"
+    eval "$(python3 "$PORT/tools/parse_chamber.py" "$CBAR_LINE")"
+    [ "${ok:-0}" = 1 ] || fail "the chamber info line did not parse: $CBAR_LINE"
+    echo "  $CBAR_LINE" >&2
+}
+
+# One `/industrialforegoing` command of the chamber at its position, its arguments in
+# one string (`progress 0`, `fluid latex 2000`).
+csay() {
+    local sub=${1%% *} rest=""
+    [ "$sub" != "$1" ] && rest=${1#* }
+    say "industrialforegoing $sub $CX 101 0${rest:+ $rest}"
+}
+
+# Put one item into chamber input `slot` (0-7) through the container capability, as
+# vanilla's `/item replace block` does: server-side, so the machine's own tick sees it.
+feed() { # feed SLOT ITEM
+    ctl command "item replace block $CX 101 0 container.$1 with $2 1" >/dev/null \
+        || fail "could not put $2 into the chamber's input slot $1"
+    ctl wait 2
+}
+
+# Clear every input slot the harness filled.
+empty_inputs() {
+    for slot in 0 1 2 3 4 5 6 7; do
+        ctl command "item replace block $CX 101 0 container.$slot with minecraft:air" >/dev/null
+    done
+    ctl wait 4
+}
+
+# The three output slots, as `<item> x<count>` joined by commas (empty ones left out).
+chamber_outputs() {
+    ctl container "$CX" 101 0 | jq -r \
+        '.slots[8:11] | map(select(. != null)) | map("\(.item) x\(.count)") | join(", ")'
+}
+
+# The items in chamber slot `n`, as `<item> x<count>` or `empty`.
+chamber_slot() { # chamber_slot N
+    ctl container "$CX" 101 0 | jq -r --argjson n "$1" \
+        '.slots[$n] | if . == null then "empty" else "\(.item) x\(.count)" end'
+}
+
+# The recipe of the jar for the white lens: four glass panes and a white dye, in
+# latex. Slots 0-3 the panes, slot 4 the dye.
+feed_lens() {
+    for slot in 0 1 2 3; do feed "$slot" minecraft:glass_pane; done
+    feed 4 minecraft:white_dye
+}
+
+# The simple frame's eight items (its recipe's order, one per slot).
+feed_simple_frame() {
+    feed 0 industrialforegoing:plastic
+    feed 1 industrialforegoing:machine_frame_pity
+    feed 2 industrialforegoing:plastic
+    feed 3 minecraft:nether_brick
+    feed 4 minecraft:nether_brick
+    feed 5 minecraft:iron_ingot
+    feed 6 industrialforegoing:gold_gear
+    feed 7 minecraft:iron_ingot
+}
+
+# The advanced frame's eight items: the plastics, the **crafted** simple frame, the
+# netherite scraps, the gold ingots and the **crafted** diamond gear.
+feed_advanced_frame() {
+    feed 0 industrialforegoing:plastic
+    feed 1 industrialforegoing:machine_frame_simple
+    feed 2 industrialforegoing:plastic
+    feed 3 minecraft:netherite_scrap
+    feed 4 minecraft:netherite_scrap
+    feed 5 minecraft:gold_ingot
+    feed 6 industrialforegoing:diamond_gear
+    feed 7 minecraft:gold_ingot
+}
+
 echo "== launch (The End arena, the one package carries content and code) =="
 launch
+# Peaceful: the survival legs (phase S's break, U's recolours, L and AE) must not race an
+# enderman, and nothing here asserts a mob. A death mid-craft hides the assertion under it.
+ctl command "difficulty peaceful" >/dev/null
 arena
 # The game refuses a carried recipe or advancement file it cannot read, and says
 # so in its own log; neither may happen for this package's data.
@@ -647,4 +787,210 @@ expect "the scaled bar the item carried" "$PROGRESS_MAX" 80
 echo "  the broken machine came back with speed $SPEED and efficiency $EFFICIENCY"
 
 
-echo "PASS: a placed machine is empty with no sources and faces its placer; two sources condense 200 mB for exactly 1,000 FE and one condenses nothing; without 1,000 FE two sources give half for free; three and six sources give 300 and 600 mB; a nearly full tank stops at 16,000 mB while still spending the FE; the declared tank drains 400 mB of water through the fluid handler; and left alone the machine keeps condensing on its own 10-tick bar; the 24 Core ids of this slice register and read back, the four frames place and read back, an unregistered item and block id are refused, and a frame broken in survival drops itself; the condensator crafts from the tags (#c:plastics, #c:gears/iron, machine_frame/pity) with the grid empty afterwards while slice 2's stand-ins stay empty, the pity frame and the three gears craft, and all 16 lens recolours craft from the lens tag and c:dyes with the player's counts before and after; a machine broken with 7,000 FE and 5,000 mB comes back with exactly those numbers on the item it dropped; a seated speed augment of 4 makes the bar fall four a tick where an empty slot falls one, a second speed augment is refused and stays in the hand, an efficiency augment of 0.8 shortens the bar to 80 with an 8-tick cooldown at the same 1,000 FE, and both augments travel on the machine's item"
+
+echo "== X: the dissolution chamber places, reads back and shows its own recipe table =="
+chamber_arena
+place_chamber
+cbar
+expect "the chamber's facing" "$F_FACING" west
+expect "a fresh chamber's buffer" "$F_ENERGY" 0
+expect "a fresh chamber's input tank" "$F_FIN" 0
+expect "a fresh chamber's output tank" "$F_FO" 0
+expect "a fresh chamber's bar" "$F_PROGRESS" 0
+expect "the recipe a fresh chamber matches" "$F_RECIPE" none
+# The machine's own recipe type, read from this package's data: the 23 files it
+# carries (the jar's other 26 name an output this slice does not ship).
+expect "the chamber recipes decoded" "$F_RECIPES" 23
+expect "the chamber recipe files the game kept" "$F_RECIPES_TOTAL" 23
+echo "  block $(block_name "$CX" 101 0), facing $F_FACING, recipes $F_RECIPES/$F_RECIPES_TOTAL"
+
+echo "== Y: a mod fluid lives in the declared tank (the measured gap's route) =="
+# `native_fluid_insert` takes only water and lava, so the port declares the fluid
+# key and writes the entity's own `fluids` compound; the declared tank
+# capability must then report the mod fluid back.
+csay "fluid latex 2000"
+ctl wait 8
+cbar
+expect "the tank's fluid" "$F_FLUID" "industrialforegoing:latex"
+expect "the tank's amount" "$F_FIN" 2000
+expect "the fluid the capability reports" "$F_CAPFLUID" "industrialforegoing:latex"
+expect "the capability's amount" "$F_CAPMB" 2000
+echo "  input $F_FIN mB of $F_FLUID, capability $F_CAPFLUID $F_CAPMB mB"
+
+echo "== Z: the white lens recipe, a full 100-tick operation =="
+# The jar's `white_laser_lens`: four glass panes + a white dye, 250 mB of latex, 100
+# ticks. From a full buffer: 100 ticks x 90 FE = 9,000 FE, and the game's own clock
+# says how long it took.
+empty_inputs
+csay "fluid latex 2000"
+csay "energy 10000"
+csay "progress 0"
+feed_lens
+cbar
+expect "the recipe the lens grid matches" "$F_RECIPE" "industrialforegoing:dissolution_chamber/white_laser_lens"
+expect "the bar's length" "$F_LENGTH" 100
+Z_T0=$F_T
+ctl wait 130
+cbar
+Z_TICKS=$((F_T - Z_T0))
+[ "$Z_TICKS" -ge 100 ] || fail "the operation took $Z_TICKS ticks, expected at least 100"
+expect "the buffer after the run (100 x 90 FE)" "$F_ENERGY" 1000
+expect "the tank after the run (250 mB)" "$F_FIN" 1750
+expect "the input slots after the run" "$F_ITEMS" 0
+expect "the bar after the run" "$F_PROGRESS" 0
+LENS_COUNT=1
+if [ "$SELFTEST" = chamber ]; then
+    echo "(selftest: asserting two lenses came out of the operation)"
+    LENS_COUNT=2
+fi
+expect "the product" "$(chamber_slot 8)" "industrialforegoing:white_laser_lens x$LENS_COUNT"
+echo "  $Z_TICKS ticks, 9,000 FE and 250 mB latex for $(chamber_slot 8)"
+
+echo "== AA: with the tank empty the same grid does nothing (the fluid gate) =="
+csay "fluid latex 0"
+csay "energy 10000"
+csay "progress 0"
+feed_lens
+ctl wait 40
+cbar
+expect "the recipe with an empty tank" "$F_RECIPE" none
+expect "the bar with an empty tank" "$F_PROGRESS" 0
+expect "the buffer with an empty tank" "$F_ENERGY" 10000
+expect "the product with an empty tank" "$(chamber_slot 8)" "industrialforegoing:white_laser_lens x$LENS_COUNT"
+# Filling the tank starts the same grid: the gate was the fluid, not the items. The
+# bar then runs the recipe's 100 ticks (a 111-tick buffer), so 9,000 FE are spent.
+csay "fluid latex 250"
+ctl wait 130
+cbar
+expect "the buffer after the fluid arrives (100 x 90 FE)" "$F_ENERGY" 1000
+echo "  no fluid: nothing ran; 250 mB later: $(chamber_slot 8)"
+
+echo "== AB: a hopper under the chamber empties the output =="
+ctl command "execute in minecraft:the_end run setblock $CX 100 0 minecraft:hopper[facing=down]" >/dev/null
+ctl command "execute in minecraft:the_end run setblock $CX 99 0 minecraft:barrel" >/dev/null
+ctl wait 40
+BARREL=$(ctl container "$CX" 99 0 | jq -r '[.slots[]? | select(. != null) | .item] | join(",")')
+case "$BARREL" in
+    *industrialforegoing:white_laser_lens*) ;;
+    *) fail "the hopper did not empty the chamber's output into the barrel: '$BARREL'" ;;
+esac
+expect "the chamber's output after the hopper" "$(chamber_slot 8)" empty
+echo "  barrel: $BARREL"
+# Put the floor back under the chamber for the frame legs.
+ctl command "execute in minecraft:the_end run setblock $CX 100 0 minecraft:stone" >/dev/null
+ctl wait 6
+
+echo "== AC: the simple machine frame, the whole 300-tick recipe, at exactly 90 FE a tick =="
+# A 300-tick run costs 27,000 FE, three buffers. The rate is measured the way the
+# condensator measures its bar (two reads, the game's own clock), then the run is fed
+# in windows short enough that the buffer never starves (a 10,000 FE buffer buys 111
+# ticks), and the bar must climb from window to window without resetting.
+empty_inputs
+csay "fluid latex 1000"
+csay "progress 0"
+feed_simple_frame
+cbar
+expect "the recipe the frame grid matches" "$F_RECIPE" "industrialforegoing:dissolution_chamber/simple_machine_frame"
+expect "the frame bar's length" "$F_LENGTH" 300
+csay "energy 10000"
+ctl wait 4
+cbar
+AC_E1=$F_ENERGY AC_T1=$F_T AC_P1=$F_PROGRESS
+ctl wait 30
+cbar
+AC_E2=$F_ENERGY AC_T2=$F_T AC_P2=$F_PROGRESS
+AC_TICKS=$((AC_T2 - AC_T1))
+[ "$AC_TICKS" -gt 0 ] || fail "the two reads carry the same game time"
+expect "the FE one tick takes (90 x $AC_TICKS)" "$((AC_E1 - AC_E2))" "$((90 * AC_TICKS))"
+expect "the bar's rise over $AC_TICKS ticks" "$((AC_P2 - AC_P1))" "$AC_TICKS"
+echo "  $AC_TICKS ticks: $((AC_E1 - AC_E2)) FE, bar $AC_P1 -> $AC_P2"
+AC_LAST=$F_PROGRESS
+for window in 1 2 3 4 5 6; do
+    csay "energy 10000"
+    ctl wait 60
+    cbar
+    if [ "$F_PROGRESS" -gt 0 ]; then
+        [ "$F_PROGRESS" -gt "$AC_LAST" ] \
+            || fail "the bar went from $AC_LAST to $F_PROGRESS in window $window: it reset"
+        AC_LAST=$F_PROGRESS
+    fi
+    echo "  window $window: progress $F_PROGRESS/300, $F_ENERGY FE left"
+    case "$(chamber_outputs)" in
+        *"industrialforegoing:machine_frame_simple x1"*) break ;;
+    esac
+done
+case "$(chamber_outputs)" in
+    *"industrialforegoing:machine_frame_simple x1"*) ;;
+    *) fail "the simple frame is not in the output: '$(chamber_outputs)'" ;;
+esac
+expect "the tank after the frame (1,000 - 250 mB)" "$F_FIN" 750
+expect "the input slots after the frame" "$F_ITEMS" 0
+echo "  the 300-tick frame: $(chamber_outputs), 250 mB latex"
+
+echo "== AD: the advanced frame from #c:plastics, #c:gears/diamond and the simple frame =="
+# The three ingredient families `mifa`'s own recipes name: `#c:plastics` (the
+# carried tag), `#c:gears/diamond` (the gear phase K crafted) and
+# `industrialforegoing:machine_frame/advanced`, made here from the frame AC made.
+# The rate is measured as in AC (two reads, the game's own clock), then the run is
+# finished from a bar one tick short; the output slots are read as a set, because
+# AC's simple frame is still in slot 8.
+empty_inputs
+csay "fluid pink_slime 1000"
+feed_advanced_frame
+cbar
+expect "the recipe the advanced grid matches" "$F_RECIPE" "industrialforegoing:dissolution_chamber/advanced_machine_frame"
+expect "the advanced bar's length" "$F_LENGTH" 300
+csay "energy 10000"
+ctl wait 4
+cbar
+AD_E1=$F_ENERGY AD_T1=$F_T
+ctl wait 30
+cbar
+AD_E2=$F_ENERGY AD_T2=$F_T
+AD_TICKS=$((AD_T2 - AD_T1))
+[ "$AD_TICKS" -gt 0 ] || fail "the two reads carry the same game time"
+expect "the FE one tick takes on the advanced recipe" "$((AD_E1 - AD_E2))" "$((90 * AD_TICKS))"
+csay "progress 299"
+ctl wait 6
+cbar
+case "$(chamber_outputs)" in
+    *"industrialforegoing:machine_frame_advanced x1"*) ;;
+    *) fail "the advanced frame is not in the output: '$(chamber_outputs)'" ;;
+esac
+expect "the tank after the advanced frame (1,000 - 500 mB)" "$F_FIN" 500
+expect "the input slots after the advanced frame" "$F_ITEMS" 0
+echo "  #c:plastics + #c:gears/diamond + machine_frame/simple -> $(chamber_outputs), 500 mB pink slime"
+
+echo "== AE: a broken chamber's item carries its buffer and fluid back =="
+empty_inputs
+ctl command "execute in minecraft:the_end run fill $((CX - 2)) 100 -2 $((CX + 2)) 100 2 minecraft:stone" >/dev/null
+ctl wait 6
+csay "fluid latex 1500"
+csay "energy 4000"
+ctl wait 6
+cbar
+expect "the tank before the break" "$F_FIN" 1500
+expect "the buffer before the break" "$F_ENERGY" 4000
+ctl command "gamemode survival @s" >/dev/null
+ctl command "clear @s" >/dev/null
+ctl command "item replace entity @s hotbar.0 with minecraft:iron_pickaxe 1" >/dev/null
+ctl wait 6
+ctl select 1 >/dev/null
+ctl command "execute in minecraft:the_end run tp @s $((CX - 2)).5 101 0.5" >/dev/null
+ctl wait 8
+CHAMBER_BROKEN=$(ctl break "$CX" 101 0) || fail "breaking the chamber failed"
+echo "  break: $(echo "$CHAMBER_BROKEN" | jq -c '{block, drops, picked_up}')"
+[ "$(echo "$CHAMBER_BROKEN" | jq -r '.drops["industrialforegoing:dissolution_chamber"] // 0')" -ge 1 ] \
+    || fail "the broken chamber dropped no item: $(echo "$CHAMBER_BROKEN" | jq -c '.drops')"
+ctl command "execute in minecraft:the_end run tp @s $CX.5 101 0.5" >/dev/null
+ctl wait 20
+ctl select "$CHAMBER_ID" >/dev/null 2>&1 || ctl select 1 >/dev/null
+ctl command "gamemode creative @s" >/dev/null
+ctl wait 4
+place_held_chamber
+cbar
+expect "the tank the item carried" "$F_FIN" 1500
+expect "the buffer the item carried" "$F_ENERGY" 4000
+echo "  the chamber came back with $F_ENERGY FE and $F_FIN mB of latex"
+
+echo "PASS: a placed machine is empty with no sources and faces its placer; two sources condense 200 mB for exactly 1,000 FE and one condenses nothing; without 1,000 FE two sources give half for free; three and six sources give 300 and 600 mB; a nearly full tank stops at 16,000 mB while still spending the FE; the declared tank drains 400 mB of water through the fluid handler; and left alone the machine keeps condensing on its own 10-tick bar; the 24 Core ids of this slice register and read back, the four frames place and read back, an unregistered item and block id are refused, and a frame broken in survival drops itself; the condensator crafts from the tags (#c:plastics, #c:gears/iron, machine_frame/pity) with the grid empty afterwards while slice 2's stand-ins stay empty, the pity frame and the three gears craft, and all 16 lens recolours craft from the lens tag and c:dyes with the player's counts before and after; a machine broken with 7,000 FE and 5,000 mB comes back with exactly those numbers on the item it dropped; a seated speed augment of 4 makes the bar fall four a tick where an empty slot falls one, a second speed augment is refused and stays in the hand, an efficiency augment of 0.8 shortens the bar to 80 with an 8-tick cooldown at the same 1,000 FE, and both augments travel on the machine's item; the dissolution chamber places and faces its placer, reads its own recipe type from this package's data (23 files), holds its own fluids in a declared tank the capability reports back, runs the white lens recipe in exactly 100 ticks for 9,000 FE and 250 mB of latex, does nothing with an empty tank and starts when 250 mB arrive, empties its output into a hopper and a barrel, runs the simple machine frame's 300 ticks at exactly 90 FE a tick, makes the advanced frame from #c:plastics, the crafted #c:gears/diamond gear and the simple frame, and a broken chamber carries its buffer and latex back on its item"

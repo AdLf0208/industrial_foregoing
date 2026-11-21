@@ -20,9 +20,11 @@ dependency is `horizon-mod-api` from the fetched `.horizon/sdk/`), `src/lib.rs` 
 logic, the port's rule, unit-tested). `assets/` and `data/` are the carried content and travel
 in the same file. The retired `.hnmod` layout is history: `../_shared/evidence/industrialforegoing/retired-hnmod-0.1.0/`.
 
-Keep every gameplay rule and number in `src/runtime.rs` with its test; the glue in `src/lib.rs`
-only reads the game, calls `runtime`, and writes the result back. `src/runtime.rs` is
-byte-identical to the retired port's file — do not "tidy" it.
+Keep every gameplay rule and number in the pure modules (`src/runtime.rs`, `src/chamber.rs`) with
+their tests; the glue (`src/lib.rs`, `src/dissolution.rs`) only reads the game, calls the pure code,
+and writes the result back. `src/runtime.rs` is byte-identical to the retired port's file — do not
+"tidy" it (`verify-sdk-package.py` checks that byte for byte, which is why slice 5 added a second
+pure module instead of extending it).
 
 Validate, in this order, each inside a lease:
 

@@ -36,6 +36,8 @@
 //! vanilla `minecraft:block_entity_data` component (tagged with the type id), placement merges that
 //! component into the new block entity, and [`MachineItem::on_block_placed_by`] clamps the numbers
 //! back to the three capacities. An empty machine's item stays plain.
+pub mod chamber;
+pub mod dissolution;
 pub mod runtime;
 
 use std::array;
@@ -83,7 +85,7 @@ static MACHINE_KIND: OnceLock<BlockEntityTypeKey> = OnceLock::new();
 /// An augment seating a right-click asked for, applied after the level ticks: a block-entity write
 /// made during a tick can be overwritten by that entity's own write-back (HANDOVER §9d.10), so the
 /// seat and the held stack's shrink both land in `level_tick_post`.
-struct Seating {
+pub(crate) struct Seating {
     /// The clicking player's UUID (`BlockClick.player`).
     player: u128,
     /// The level the machine stands in, so only that level's tick applies it.
@@ -163,6 +165,22 @@ impl Hooks for Mod {
         tanks.faces = array::from_fn(|_| all.clone());
         tanks.outputs = vec![0];
         r.block_fluids(&block, tanks);
+        // The dissolution chamber (slice 5): its block entity type, container, tanks, buffer
+        // and Parts, declared in one place.
+        dissolution::declare(r);
+        // Its own recipe type **and** the read-only serializer for it: the game refuses a file
+        // whose type has no serializer ("unregistered recipe serializer
+        // industrialforegoing:dissolution_chamber", measured in game), and API 36's machine route
+        // is exactly this pair — the type declared, the serializer keeping the file's JSON for the
+        // mod to read through `recipes_of_type` (the game never matches it).
+        r.register_recipe_type(chamber::RECIPE_TYPE);
+        r.register_raw_recipe_serializer("dissolution_chamber", chamber::RECIPE_TYPE);
+        // The fluids its recipes name, as declared fluid keys: 26.3 has no world fluid for them
+        // (there is no latex/plastic machine in this port yet), but a declared key is what lets
+        // a tank hold one and the readout resolve it.
+        for fluid in dissolution::DECLARED_FLUIDS {
+            let _ = r.declare_fluid(fluid.strip_prefix("industrialforegoing:").unwrap_or(fluid));
+        }
     }
 
     /// `component_types` (`RegisterDataComponentsEvent`): the one component an augment item carries,
@@ -200,7 +218,11 @@ impl Hooks for Mod {
     /// entity before the block is placed, which is how a vanilla chest keeps its contents; upstream
     /// copies the block entity onto the drop the same way. An empty machine's item stays plain.
     fn block_drops(&self, level: &dyn LevelHost, event: &mut BlockDropsEvent<'_>) -> Flow {
-        if level.state_block(event.state) != Some(BLOCK) {
+        let Some(block) = level.state_block(event.state) else {
+            return Flow::Continue;
+        };
+        let chamber = block == dissolution::BLOCK;
+        if !chamber && block != BLOCK {
             return Flow::Continue;
         }
         // Explosions have already removed the block entity, so only a break that still holds it
@@ -211,15 +233,27 @@ impl Hooks for Mod {
         let Some(saved) = level.block_entity_data(entity) else {
             return Flow::Continue;
         };
-        if !has_contents(&saved) {
+        let carries = if chamber {
+            dissolution::has_contents(&saved)
+        } else {
+            has_contents(&saved)
+        };
+        if !carries {
             return Flow::Continue;
         }
-        let Some(item) = MACHINE_ITEM.get() else {
+        let (item, patch) = if chamber {
+            (dissolution::item(), dissolution::carried_patch(&saved))
+        } else {
+            (
+                MACHINE_ITEM.get().copied(),
+                carried_patch(BLOCK_ENTITY_TYPE_ID, &saved),
+            )
+        };
+        let Some(item) = item else {
             return Flow::Continue;
         };
-        let patch = carried_patch(&saved);
         for drop in event.drops.iter_mut() {
-            if drop.stack.item() == *item {
+            if drop.stack.item() == item {
                 let _ = drop.stack.apply_components(&patch);
             }
         }
@@ -237,6 +271,7 @@ impl Hooks for Mod {
             "industrialforegoing water <pos:block_pos> <amount:integer>",
             "industrialforegoing progress <pos:block_pos> <ticks:integer>",
             "industrialforegoing drain <pos:block_pos> <amount:integer>",
+            "industrialforegoing fluid <pos:block_pos> <fluid:word> <amount:integer>",
         ] {
             event.commands.push(Command::op(usage, 2));
         }
@@ -264,9 +299,25 @@ impl Hooks for Mod {
             say(host, &usage(sub));
             return Flow::Cancel;
         };
+        if sub == "fluid" {
+            let Some(fluid) = string(invocation, "fluid") else {
+                say(host, &usage(sub));
+                return Flow::Cancel;
+            };
+            let Some(amount) = integer(invocation, "amount") else {
+                say(host, &usage(sub));
+                return Flow::Cancel;
+            };
+            let fluid = qualify_fluid(fluid);
+            dissolution::set_fluid(host, pos, &fluid, amount);
+            return Flow::Cancel;
+        }
         match sub {
             "info" => {
-                let line = readout(host, pos);
+                let line = match current_block(host, pos).as_deref() {
+                    Some(dissolution::BLOCK) => dissolution::readout(host, pos),
+                    _ => readout(host, pos),
+                };
                 say(host, &line);
             }
             "energy" | "water" | "progress" => {
@@ -284,6 +335,31 @@ impl Hooks for Mod {
                     say(host, &usage(sub));
                     return Flow::Cancel;
                 };
+                let chamber = current_block(host, pos).as_deref() == Some(dissolution::BLOCK);
+                if chamber {
+                    // The chamber's bar is its recipe's, and its buffer the same 10,000 FE.
+                    let (full, unit) = match sub {
+                        "energy" => (CAPACITY_FE, "FE"),
+                        "progress" => (i32::MAX, "ticks of bar"),
+                        _ => (TANK_CAPACITY_MB, "mB of water"),
+                    };
+                    let value = value.clamp(0, full);
+                    let key = if sub == "water" {
+                        KEY_PROGRESS
+                    } else {
+                        field_key(field)
+                    };
+                    let changed = dissolution::set_int(host, pos, key, value);
+                    say(
+                        host,
+                        &if changed {
+                            format!("Dissolution Chamber at {pos:?}: {value}/{full} {unit}.")
+                        } else {
+                            format!("{pos:?} is not a dissolution chamber.")
+                        },
+                    );
+                    return Flow::Cancel;
+                }
                 let value = value.clamp(0, full);
                 let changed = set(host, pos, field, value);
                 say(
@@ -430,7 +506,7 @@ fn water_sources(host: &mut dyn ServerHost, pos: [i32; 3]) -> u32 {
 
 /// The horizontal `subfacing` a machine takes when a placer with `yaw` places it: Titanium's
 /// `FOUR_WAY` turns the block toward the placer.
-fn facing_for_yaw(yaw: f32) -> &'static str {
+pub(crate) fn facing_for_yaw(yaw: f32) -> &'static str {
     let quarter = ((f64::from(yaw) / 90.0 + 0.5).floor() as i64 & 3) as u8;
     match quarter {
         0 => "north",
@@ -449,12 +525,13 @@ fn usage(sub: &str) -> String {
     match sub {
         "info" => "usage: /industrialforegoing info <x> <y> <z>".to_owned(),
         "progress" => "usage: /industrialforegoing progress <x> <y> <z> <ticks>".to_owned(),
+        "fluid" => "usage: /industrialforegoing fluid <x> <y> <z> <fluid> <amount>".to_owned(),
         other => format!("usage: /industrialforegoing {other} <x> <y> <z> <amount>"),
     }
 }
 
 /// One feedback line to the command's source, vanilla's silence and track-output rules included.
-fn say(host: &mut dyn ServerHost, line: &str) {
+pub(crate) fn say(host: &mut dyn ServerHost, line: &str) {
     let _ = host.commands().feedback(Text::literal(line));
 }
 
@@ -474,6 +551,38 @@ fn integer(invocation: &CommandInvocation, name: &str) -> Option<i32> {
     }
 }
 
+/// The `word` argument `name`.
+fn string<'a>(invocation: &'a CommandInvocation, name: &str) -> Option<&'a str> {
+    match invocation.argument(name)? {
+        CommandArgumentValue::String(value) => Some(value.as_str()),
+        _ => None,
+    }
+}
+
+/// A fluid name as the command takes it: `latex` is this mod's own, a namespaced id is taken as
+/// written.
+fn qualify_fluid(fluid: &str) -> String {
+    if fluid.contains(':') {
+        fluid.to_owned()
+    } else {
+        format!("industrialforegoing:{fluid}")
+    }
+}
+
+/// The id of the block at `pos` in the command's dimension.
+fn current_block(host: &mut dyn ServerHost, pos: [i32; 3]) -> Option<String> {
+    let level = host.level(host.dimension())?;
+    level.block(host, pos).map(|key| key.id(&*host))
+}
+
+/// The saved key a [`Field`] writes.
+fn field_key(field: Field) -> &'static str {
+    match field {
+        Field::Int(key) => key,
+        Field::Tank => "fluids",
+    }
+}
+
 /// Which saved value `/industrialforegoing` writes.
 #[derive(Clone, Copy)]
 enum Field {
@@ -483,11 +592,15 @@ enum Field {
     Tank,
 }
 
-/// The machine's block entity at `pos`, when the block there is this mod's.
-fn our_entity(host: &mut dyn ServerHost, pos: [i32; 3]) -> Option<BlockEntityRef> {
+/// The machine's block entity at `pos`, when the block there is `block` of this mod.
+pub(crate) fn our_entity(
+    host: &mut dyn ServerHost,
+    pos: [i32; 3],
+    block: &str,
+) -> Option<BlockEntityRef> {
     let level = host.level(host.dimension())?;
-    let block = host.block_key(BLOCK)?;
-    if level.block(host, pos) != Some(block) {
+    let wanted = host.block_key(block)?;
+    if level.block(host, pos) != Some(wanted) {
         return None;
     }
     host.block_entity(level, pos)
@@ -496,7 +609,7 @@ fn our_entity(host: &mut dyn ServerHost, pos: [i32; 3]) -> Option<BlockEntityRef
 /// Write `value` into the machine at `pos` by merging it into the block entity's saved compound, as
 /// `/data merge block` does; whether it landed.
 fn set(host: &mut dyn ServerHost, pos: [i32; 3], field: Field, value: i32) -> bool {
-    let Some(entity) = our_entity(host, pos) else {
+    let Some(entity) = our_entity(host, pos, BLOCK) else {
         return false;
     };
     let mut patch = Compound::new();
@@ -546,7 +659,7 @@ fn readout(host: &mut dyn ServerHost, pos: [i32; 3]) -> String {
     let Some(level) = host.level(host.dimension()) else {
         return format!("{pos:?} is not a water condensator.");
     };
-    let Some(entity) = our_entity(host, pos) else {
+    let Some(entity) = our_entity(host, pos, BLOCK) else {
         return format!("{pos:?} is not a water condensator.");
     };
     let Some(data) = entity.data(host) else {
@@ -625,13 +738,13 @@ fn write_augment_slots(nbt: &mut Compound, slots: &[Option<Compound>; AUGMENT_SL
 }
 
 /// The augments in force, decoded from the saved slots.
-fn read_augments(nbt: &Compound) -> Augments {
+pub(crate) fn read_augments(nbt: &Compound) -> Augments {
     Augments::from_slots(augment_slots(nbt).map(|slot| slot.as_ref().and_then(decode_augment)))
 }
 
 /// The augment an item's `titanium:augments` component names, speed first as
 /// `canAcceptAugment` asks; `None` for a component this machine does not read.
-fn decode_augment(component: &Compound) -> Option<Augment> {
+pub(crate) fn decode_augment(component: &Compound) -> Option<Augment> {
     AugmentType::ALL.into_iter().find_map(|kind| {
         let value = number(component, kind.name())?;
         Some(Augment { kind, value })
@@ -653,7 +766,7 @@ fn number(nbt: &Compound, key: &str) -> Option<f32> {
 /// The `titanium:augments` component a clicked stack carries: its own override
 /// when it has one, else the item's declared default (`AugmentWrapper`'s
 /// `stack.getOrDefault(ATTACHMENT, …)` reads the effective component).
-fn augment_component(host: &dyn Host, stack: &ItemStack) -> Option<Compound> {
+pub(crate) fn augment_component(host: &dyn Host, stack: &ItemStack) -> Option<Compound> {
     let patch = stack.components().map(|components| components.as_nbt());
     if let Some(Tag::Compound(component)) =
         patch.and_then(|patch| patch.get(&AUGMENT_COMPONENT.into()))
@@ -667,7 +780,7 @@ fn augment_component(host: &dyn Host, stack: &ItemStack) -> Option<Compound> {
 }
 
 /// Queue augment seatings for the level's next `level_tick_post`.
-fn queue_seatings(seatings: Vec<Seating>) {
+pub(crate) fn queue_seatings(seatings: Vec<Seating>) {
     if let Ok(mut queued) = SEATING.lock() {
         queued.extend(seatings);
     }
@@ -689,10 +802,8 @@ fn seat_augment(host: &mut dyn ServerHost, level: mod_api::LevelRef, seat: &Seat
     let Some(entity) = host.block_entity(level, seat.pos) else {
         return;
     };
-    let Some(kind) = MACHINE_KIND.get() else {
-        return;
-    };
-    if entity.kind(&*host) != Some(*kind) {
+    // Either machine of this package: both take augments in two slots.
+    if !is_our_entity_kind(&*host, entity) {
         return;
     }
     let Some(saved) = entity.data(&*host) else {
@@ -733,6 +844,14 @@ fn shrink_held(host: &mut dyn ServerHost, seat: &Seating) {
     };
     let rest = seat.stack.clone().shrink(1);
     let _ = player.set_inventory_slot(host, slot, rest);
+}
+
+/// Whether `entity` is one of this package's two machines: both take augments in two slots.
+fn is_our_entity_kind(host: &dyn Host, entity: BlockEntityRef) -> bool {
+    let Some(kind) = entity.kind(host) else {
+        return false;
+    };
+    MACHINE_KIND.get() == Some(&kind) || dissolution::kind() == Some(kind)
 }
 
 /// The tank's amount, in the declaration's shape: one entry per tank under `fluids`.
@@ -779,10 +898,11 @@ fn has_contents(saved: &Compound) -> bool {
 }
 
 /// The `minecraft:block_entity_data` payload a broken machine's item carries: the block entity's
-/// own saved compound, tagged with its type id.
-fn carried_patch(saved: &Compound) -> Compound {
+/// own saved compound, tagged with `type_id` (vanilla's `TypedEntityData` only loads data whose
+/// `id` names the block entity it is placed as).
+pub(crate) fn carried_patch(type_id: &str, saved: &Compound) -> Compound {
     let mut payload = saved.clone();
-    payload.insert("id".into(), Tag::String(BLOCK_ENTITY_TYPE_ID.into()));
+    payload.insert("id".into(), Tag::String(type_id.into()));
     let mut patch = Compound::new();
     patch.insert(BLOCK_ENTITY_DATA.into(), Tag::Compound(payload));
     patch
@@ -908,7 +1028,7 @@ mod tests {
             has_contents(&nbt),
             "a machine holding FE, water and a part-done bar has something to carry"
         );
-        let patch = carried_patch(&nbt);
+        let patch = carried_patch(BLOCK_ENTITY_TYPE_ID, &nbt);
         let Some(Tag::Compound(payload)) = patch.get(&BLOCK_ENTITY_DATA.into()) else {
             panic!("the patch has no {BLOCK_ENTITY_DATA}");
         };
@@ -1222,10 +1342,11 @@ mod content {
             .collect();
         expected.extend(PLAIN_ITEMS.map(|id| format!("industrialforegoing:{id}")));
         expected.extend(COLOURS.map(|colour| format!("industrialforegoing:{colour}_laser_lens")));
-        // The earlier slices' ids stay declared beside this slice's.
+        // The earlier slices' ids stay declared beside this slice's, and slice 5's block.
         expected.extend(
             [
                 "water_condensator",
+                "dissolution_chamber",
                 "speed_addon_tier_1",
                 "speed_addon_tier_2",
                 "efficiency_addon_tier_1",
@@ -1412,10 +1533,119 @@ mod content {
                         !strings(&read(&file)).is_empty(),
                         "{file} is empty, so {tag} resolves to nothing"
                     );
-                } else if id.starts_with("industrialforegoing:") {
+                } else if id.starts_with("industrialforegoing:")
+                    && ![
+                        // Slice 5's fluids: declared fluid keys, not items.
+                        "industrialforegoing:latex",
+                        "industrialforegoing:pink_slime",
+                        "industrialforegoing:ether_gas",
+                    ]
+                    .contains(&id.as_str())
+                    && !id.contains('/')
+                {
                     assert!(
                         declared.contains(&id),
                         "{} names {id}, which this package does not declare",
+                        recipe.display()
+                    );
+                }
+            }
+        }
+    }
+
+    /// Slice 5: the dissolution chamber and its own recipe type, as **files**. Every chamber
+    /// recipe names its type, a shipped output, an `input` cell vocabulary that resolves (26.3's
+    /// string form: an item id or a `#tag`) and this port's own fluid. The JSON-level pass is
+    /// `tools/verify_content.py`; this pins the same families on the tree without a parser.
+    #[test]
+    fn the_chamber_and_its_own_recipes_are_carried() {
+        for name in [
+            "data/industrialforegoing/horizon/block/dissolution_chamber.json",
+            "assets/industrialforegoing/blockstates/dissolution_chamber.json",
+            "assets/industrialforegoing/models/block/dissolution_chamber.json",
+            "assets/industrialforegoing/models/item/dissolution_chamber.json",
+            "assets/industrialforegoing/items/dissolution_chamber.json",
+            "data/industrialforegoing/loot_table/blocks/dissolution_chamber.json",
+            "data/industrialforegoing/recipe/dissolution_chamber.json",
+        ] {
+            assert!(has(name), "slice 5 ships {name}");
+        }
+        let lang = read("assets/industrialforegoing/lang/en_us.json");
+        assert!(lang.contains("block.industrialforegoing.dissolution_chamber"));
+        assert!(
+            read("data/minecraft/tags/block/mineable/pickaxe.json")
+                .contains("industrialforegoing:dissolution_chamber")
+        );
+
+        let declared = declared_ids();
+        let fluids = [
+            "industrialforegoing:latex",
+            "industrialforegoing:pink_slime",
+            "industrialforegoing:ether_gas",
+        ];
+        let chamber: Vec<_> = recipes()
+            .into_iter()
+            .filter(|path| {
+                path.parent()
+                    .is_some_and(|dir| dir.ends_with("dissolution_chamber"))
+            })
+            .collect();
+        assert!(
+            chamber.len() >= 23,
+            "the chamber carries 23 recipes, found {}",
+            chamber.len()
+        );
+        for recipe in &chamber {
+            let text = std::fs::read_to_string(recipe).unwrap_or_default();
+            let values = strings(&text);
+            assert!(
+                values.contains(&"industrialforegoing:dissolution_chamber".to_owned()),
+                "{} is not a dissolution-chamber recipe",
+                recipe.display()
+            );
+            assert!(
+                values.contains(&"inputFluid".to_owned()),
+                "{} names no input fluid",
+                recipe.display()
+            );
+            assert!(
+                values.iter().any(|fluid| fluids.contains(&fluid.as_str())),
+                "{} names no fluid this port declares",
+                recipe.display()
+            );
+            // The product: the `output` object's `id` value (the `output` key, then the
+            // object's own keys sorted — `components`, `count`, `id` — so the `id` key).
+            let output = values
+                .iter()
+                .position(|value| value == "output")
+                .and_then(|index| {
+                    values[index..]
+                        .iter()
+                        .position(|value| value == "id")
+                        .and_then(|id| values.get(index + id + 1))
+                        .cloned()
+                })
+                .unwrap_or_default();
+            assert!(
+                declared.contains(&output),
+                "{} makes {output}, which this package does not declare",
+                recipe.display()
+            );
+            for value in &values {
+                if let Some(tag) = value.strip_prefix('#') {
+                    let (namespace, path) = tag.split_once(':').unwrap_or((tag, ""));
+                    let file = format!("data/{namespace}/tags/item/{path}.json");
+                    assert!(
+                        has(&file) && !strings(&read(&file)).is_empty(),
+                        "{} names the tag {tag}, which resolves to nothing ({file})",
+                        recipe.display()
+                    );
+                } else if value.starts_with("industrialforegoing:")
+                    && !fluids.contains(&value.as_str())
+                {
+                    assert!(
+                        declared.contains(value),
+                        "{} names {value}, which this package does not declare",
                         recipe.display()
                     );
                 }

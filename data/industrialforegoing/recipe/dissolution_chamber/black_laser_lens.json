@@ -1,0 +1,19 @@
+{
+  "type": "industrialforegoing:dissolution_chamber",
+  "input": [
+    "#c:glass_panes",
+    "#c:glass_panes",
+    "#c:glass_panes",
+    "#c:glass_panes",
+    "#c:dyes/black"
+  ],
+  "inputFluid": {
+    "amount": 250,
+    "fluid": "industrialforegoing:latex"
+  },
+  "output": {
+    "count": 1,
+    "id": "industrialforegoing:black_laser_lens"
+  },
+  "processingTime": 100
+}

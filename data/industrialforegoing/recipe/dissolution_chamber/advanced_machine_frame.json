@@ -1,0 +1,22 @@
+{
+  "type": "industrialforegoing:dissolution_chamber",
+  "input": [
+    "#c:plastics",
+    "#industrialforegoing:machine_frame/simple",
+    "#c:plastics",
+    "minecraft:netherite_scrap",
+    "minecraft:netherite_scrap",
+    "#c:ingots/gold",
+    "#c:gears/diamond",
+    "#c:ingots/gold"
+  ],
+  "inputFluid": {
+    "amount": 500,
+    "fluid": "industrialforegoing:pink_slime"
+  },
+  "output": {
+    "count": 1,
+    "id": "industrialforegoing:machine_frame_advanced"
+  },
+  "processingTime": 300
+}
