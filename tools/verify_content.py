@@ -50,9 +50,14 @@ COLOURS = [
     "red",
     "black",
 ]
-PLAIN_ITEMS = ["iron_gear", "gold_gear", "diamond_gear", "plastic"]
+PLAIN_ITEMS = ["iron_gear", "gold_gear", "diamond_gear", "plastic", "dryrubber"]
 # Slice 5: the dissolution chamber and the file of its own recipe type.
 CHAMBER = "dissolution_chamber"
+# Slice 6: the latex chain's two machines, their own recipe type's files, and their lengths.
+LATEX = ["fluid_extractor", "latex_processing_unit"]
+EXTRACTOR_RECIPES = 9
+BRAND_FLUIDS = {"industrialforegoing:latex", "industrialforegoing:pink_slime",
+                "industrialforegoing:ether_gas"}
 
 
 class Files:
@@ -109,6 +114,12 @@ def region(files: Files, prefix: str) -> list[str]:
     return [n for n in files.names if n.startswith(prefix) and n.endswith(".json")]
 
 
+def pickaxe_values(files: Files) -> list[str]:
+    """The ids in `minecraft:mineable/pickaxe`."""
+    name = "data/minecraft/tags/block/mineable/pickaxe.json"
+    return files.json(name).get("values", []) if files.has(name) else []
+
+
 def tag_id(name: str) -> str:
     """`data/<ns>/tags/item/<path>.json` -> `<ns>:<path>`."""
     _, ns, _, _, rest = name.split("/", 4)
@@ -148,6 +159,7 @@ def check(files: Files) -> list[str]:
     # The slice's ids are declared, named and modelled.
     expected = (
         [f"{MOD}:{CHAMBER}"]
+        + [f"{MOD}:{machine}" for machine in LATEX]
         + [f"{MOD}:{frame}" for frame in FRAMES]
         + [f"{MOD}:{item}" for item in PLAIN_ITEMS]
         + [f"{MOD}:{colour}_laser_lens" for colour in COLOURS]
@@ -191,9 +203,13 @@ def check(files: Files) -> list[str]:
             failures.append(f"{frame} has no blockstate")
 
     # Every carried recipe: its result exists, and every ingredient resolves.
-    recipes = region(files, f"data/{MOD}/recipe/")
-    if len(recipes) < 21:
-        failures.append(f"{len(recipes)} recipes carried, expected at least 21")
+    recipes = [
+        name
+        for name in region(files, f"data/{MOD}/recipe/")
+        if not name.startswith(f"data/{MOD}/recipe/fluid_extractor/")
+    ]
+    if len(recipes) < 24:
+        failures.append(f"{len(recipes)} recipes carried, expected at least 24")
     for name in recipes:
         recipe = files.json(name)
         result = recipe.get("result", {}).get("id")
@@ -208,8 +224,7 @@ def check(files: Files) -> list[str]:
 
     # The chamber's own recipe type: `input` cells are 26.3 strings, its `output` is a
     # shipped id, and its `inputFluid` names a fluid the brand declares.
-    brand_fluids = {"industrialforegoing:latex", "industrialforegoing:pink_slime",
-                    "industrialforegoing:ether_gas"}
+    brand_fluids = BRAND_FLUIDS
     chamber_recipes = region(files, f"data/{MOD}/recipe/dissolution_chamber/")
     if len(chamber_recipes) < 23:
         failures.append(f"{len(chamber_recipes)} chamber recipes carried, expected at least 23")
@@ -232,6 +247,53 @@ def check(files: Files) -> list[str]:
             if out and out.get("id", out.get("fluid")) not in brand_fluids:
                 failures.append(f"{name} {key} names an undeclared fluid")
 
+    # The latex chain: both machines declared, named, modelled, with a blockstate and a loot
+    # table that drops them; the plastic's smelting recipe names a shipped item; and the
+    # extractor's nine recipes of its own type input a 26.3 string and output a declared fluid.
+    for machine in LATEX:
+        item_id = f"{MOD}:{machine}"
+        if item_id not in blocks:
+            failures.append(f"the {machine} is not declared as a block")
+        if not files.has(f"assets/{MOD}/blockstates/{machine}.json"):
+            failures.append(f"the {machine} has no blockstate")
+        loot = f"data/{MOD}/loot_table/blocks/{machine}.json"
+        if not files.has(loot):
+            failures.append(f"the {machine} has no loot table")
+        elif item_id not in json.dumps(files.json(loot)):
+            failures.append(f"{loot} does not drop {machine}")
+        if not files.has(f"data/{MOD}/horizon/block/{machine}.json"):
+            failures.append(f"the {machine} has no declaration")
+        if f"{MOD}:{machine}" not in pickaxe_values(files):
+            failures.append(f"the {machine} has requires_tool but no mineable/pickaxe entry")
+    smelting = files.json(f"data/{MOD}/recipe/plastic.json")
+    if smelting.get("type") != "minecraft:smelting":
+        failures.append("plastic.json is not a smelting recipe")
+    if smelting.get("ingredient") != f"{MOD}:dryrubber":
+        failures.append("the plastic's smelting recipe does not name dryrubber")
+    if smelting.get("result", {}).get("id") not in declared:
+        failures.append("the plastic's smelting recipe results in an undeclared item")
+    extractor_recipes = region(files, f"data/{MOD}/recipe/fluid_extractor/")
+    if len(extractor_recipes) < EXTRACTOR_RECIPES:
+        failures.append(
+            f"{len(extractor_recipes)} fluid-extractor recipes carried, "
+            f"expected at least {EXTRACTOR_RECIPES}"
+        )
+    for name in extractor_recipes:
+        recipe = files.json(name)
+        if recipe.get("type") != f"{MOD}:fluid_extractor":
+            failures.append(f"{name} is not a {MOD}:fluid_extractor recipe")
+        if not isinstance(recipe.get("input"), str):
+            failures.append(f"{name} has a non-string input {recipe.get('input')!r}")
+        else:
+            resolves(recipe["input"], f"{name} input")
+        if not isinstance(recipe.get("result"), str):
+            failures.append(f"{name} has a non-string result {recipe.get('result')!r}")
+        output = recipe.get("output", {}).get("id")
+        if output not in BRAND_FLUIDS:
+            failures.append(f"{name} outputs {output}, which the port does not declare")
+        if not isinstance(recipe.get("breakChance"), (int, float)):
+            failures.append(f"{name} has no breakChance")
+
     # Every tag value resolves, including the ones this port writes for the
     # convention tags 26.3's base data does not ship.
     for name, values in tag_values.items():
@@ -249,7 +311,7 @@ def check(files: Files) -> list[str]:
             failures.append(f"the condensator recipe still uses the stand-in {stand_in}")
 
     # A frame drops nothing without a mineable entry: `requires_tool` is true.
-    pickaxe = files.json("data/minecraft/tags/block/mineable/pickaxe.json").get("values", [])
+    pickaxe = pickaxe_values(files)
     for frame in FRAMES:
         if f"{MOD}:{frame}" not in pickaxe:
             failures.append(f"{frame} has requires_tool but no mineable/pickaxe entry")
@@ -275,6 +337,8 @@ def selftest() -> int:
         ("a missing declaration", f"data/{MOD}/horizon/item/iron_gear.json", {}),
         ("the chamber's glass-pane tag", "data/c/tags/item/glass_panes.json", {}),
         ("the chamber's declaration", f"data/{MOD}/horizon/block/{CHAMBER}.json", {}),
+        ("the latex chain's cobblestone tag", "data/c/tags/item/cobblestones.json", {}),
+        ("an extractor recipe", f"data/{MOD}/recipe/fluid_extractor/oak.json", {}),
     ]
     failures = 0
     for label, drop, edit in cases:

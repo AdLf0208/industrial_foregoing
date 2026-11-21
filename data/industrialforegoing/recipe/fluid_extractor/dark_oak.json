@@ -1,0 +1,11 @@
+{
+  "breakChance": 0.01,
+  "defaultRecipe": false,
+  "input": "minecraft:dark_oak_log",
+  "output": {
+    "amount": 3,
+    "id": "industrialforegoing:latex"
+  },
+  "result": "minecraft:stripped_dark_oak_log[axis=y]",
+  "type": "industrialforegoing:fluid_extractor"
+}

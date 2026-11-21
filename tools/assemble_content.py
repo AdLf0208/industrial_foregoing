@@ -61,6 +61,52 @@ CARRIED_ASSETS = [
     "assets/industrialforegoing/textures/item/efficiency_addon_2.png",
 ]
 
+# Slice 6: the latex chain's own assets. Both machines' block models are the jar's
+# `block/base_block` with one face overridden (`tree_fluid_extractor_back` on the
+# extractor's south, `latex_processing_unit_front` on the unit's north), so the three
+# base textures above are their sides too. The extractor's back texture is animated
+# (its `.mcmeta` travels with it), and dryrubber is a plain item with the jar's own
+# `rubber` texture and a `generated` model.
+LATEX_ASSETS = [
+    "assets/industrialforegoing/blockstates/fluid_extractor.json",
+    "assets/industrialforegoing/models/block/fluid_extractor.json",
+    "assets/industrialforegoing/models/item/fluid_extractor.json",
+    "assets/industrialforegoing/textures/block/tree_fluid_extractor_back.png",
+    "assets/industrialforegoing/textures/block/tree_fluid_extractor_back.png.mcmeta",
+    "assets/industrialforegoing/blockstates/latex_processing_unit.json",
+    "assets/industrialforegoing/models/block/latex_processing_unit.json",
+    "assets/industrialforegoing/models/item/latex_processing_unit.json",
+    "assets/industrialforegoing/textures/block/latex_processing_unit_front.png",
+]
+
+# Slice 6: the two machines' shaped recipes, their advancements and the plastic's smelting
+# recipe (dryrubber -> plastic, 200 ticks), which this slice's latex chain finally feeds.
+LATEX_DATA = [
+    "data/industrialforegoing/loot_table/blocks/fluid_extractor.json",
+    "data/industrialforegoing/loot_table/blocks/latex_processing_unit.json",
+    "data/industrialforegoing/recipe/fluid_extractor.json",
+    "data/industrialforegoing/recipe/latex_processing_unit.json",
+    "data/industrialforegoing/recipe/plastic.json",
+    "data/industrialforegoing/advancement/recipes/misc/fluid_extractor.json",
+    "data/industrialforegoing/advancement/recipes/misc/latex_processing_unit.json",
+    "data/industrialforegoing/advancement/recipes/misc/plastic.json",
+]
+
+# The extractor's own recipe type: the jar's nine log recipes (`fluid_extractor/<log>.json`,
+# the eight named logs and the `default` fallback for any other). Their `input` becomes 26.3's
+# ingredient string and their `result` the `/setblock` string the machine writes.
+EXTRACTOR_RECIPES = [
+    "acacia",
+    "birch",
+    "cherry",
+    "dark_oak",
+    "default",
+    "jungle",
+    "mangrove",
+    "oak",
+    "spruce",
+]
+
 # Slice 5: the dissolution chamber's own assets. Its block model is the jar's
 # `block/base_block` with `north` overridden to the front texture, so the three base
 # textures above are its sides too.
@@ -110,8 +156,9 @@ COLOURS = [
     ("black", "Black"),
 ]
 
-# The plain items this slice ships (`ModuleCore.IRON_GEAR`.. and `PLASTIC`).
-PLAIN_ITEMS = ["iron_gear", "gold_gear", "diamond_gear", "plastic"]
+# The plain items this slice ships (`ModuleCore.IRON_GEAR`.., `PLASTIC` and, from slice 6,
+# `DRY_RUBBER`). All of them are `RecipelessCustomItem`s with the jar's own texture.
+PLAIN_ITEMS = ["iron_gear", "gold_gear", "diamond_gear", "plastic", "dryrubber"]
 
 # Carried with the 26.3 upgrade (see the module docstring).
 CARRIED_DATA = [
@@ -269,6 +316,46 @@ BLOCK = {
 }
 
 
+# Both latex-chain machines are `new IndustrialBlock(…, Properties.ofFullCopy(Blocks.STONE), …)`:
+# stone's hardness and blast resistance, a pickaxe for its drops, the stone sound group, a full
+# cube, and Titanium's `FOUR_WAY` (`subfacing`, four values).
+STONE_BLOCK = {
+    "template": "minecraft:stone",
+    "properties": {
+        "hardness": 1.5,
+        "explosion_resistance": 6.0,
+        "requires_tool": True,
+        "sounds": "minecraft:stone",
+    },
+    "state_properties": {
+        "subfacing": {"type": "enum", "values": ["north", "south", "east", "west"]},
+    },
+    "default_state": {"subfacing": "north"},
+}
+
+
+def extractor_recipe(raw: bytes) -> bytes:
+    """One `industrialforegoing:fluid_extractor` recipe, 26.3's shape.
+
+    `input` becomes the **string** the game's `native_recipe_ingredient` reads (`"I"` /
+    `"#T"`), as the chamber's cells are; `result` (the jar's `{Name, Properties}` block
+    state) becomes the `/setblock` string `block_state_id` parses. `breakChance`, `output`
+    and `defaultRecipe` are the codec's own fields and are kept exactly as the jar writes
+    them.
+    """
+    recipe = json.loads(raw)
+    recipe.pop("neoforge:conditions", None)
+    recipe["input"] = upgrade_ingredient(recipe.get("input"))
+    result = recipe.get("result") or {}
+    name = result.get("Name", "minecraft:air")
+    properties = result.get("Properties") or {}
+    if properties:
+        recipe["result"] = f"{name}[{','.join(f'{k}={v}' for k, v in sorted(properties.items()))}]"
+    else:
+        recipe["result"] = name
+    return (json.dumps(recipe, indent=2, sort_keys=True) + "\n").encode()
+
+
 def frame_block(rarity: str) -> dict:
     """A `MachineFrameBlock`: `Properties.ofFullCopy(IRON_BLOCK)` with no state
     property (its blockstate's one variant is keyed `""`), and a
@@ -294,7 +381,12 @@ TAB = {
 CORE_TAB = {
     "title": "itemGroup.industrialforegoing_core",
     "icon": f"{MOD}:machine_frame_pity",
-    "items": [f"{MOD}:dissolution_chamber"]
+    "items": [
+        f"{MOD}:dissolution_chamber",
+        f"{MOD}:fluid_extractor",
+        f"{MOD}:latex_processing_unit",
+        f"{MOD}:dryrubber",
+    ]
     + [f"{MOD}:{frame}" for frame, _, _ in FRAMES]
     + [f"{MOD}:{colour}_laser_lens" for colour, _ in COLOURS]
     + [f"{MOD}:{item}" for item in PLAIN_ITEMS],
@@ -429,6 +521,11 @@ def main() -> None:
     ]
     for frame, _, _ in FRAMES:
         strings[f"block.industrialforegoing.{frame}"] = lang[f"block.industrialforegoing.{frame}"]
+    # Slice 6: the latex chain's two machines.
+    for machine in ("fluid_extractor", "latex_processing_unit"):
+        strings[f"block.industrialforegoing.{machine}"] = lang[
+            f"block.industrialforegoing.{machine}"
+        ]
     for item in PLAIN_ITEMS:
         strings[f"item.industrialforegoing.{item}"] = lang[f"item.industrialforegoing.{item}"]
     for colour, name in COLOURS:
@@ -493,6 +590,20 @@ def main() -> None:
     for name in chamber_recipes:
         path = f"data/{MOD}/recipe/dissolution_chamber/{name}.json"
         write(CONTENT / path, chamber_recipe(archive.read(path)))
+    # Slice 6: the latex chain. The two machines' own assets and data, the plastic's smelting
+    # recipe, and the extractor's nine log recipes of its own type.
+    for name in LATEX_ASSETS:
+        write(CONTENT / name, archive.read(name))
+    for name in LATEX_DATA:
+        write(CONTENT / name, carried_data(archive, name, upgraded=True))
+    for name in EXTRACTOR_RECIPES:
+        path = f"data/{MOD}/recipe/fluid_extractor/{name}.json"
+        write(CONTENT / path, extractor_recipe(archive.read(path)))
+    for machine in ("fluid_extractor", "latex_processing_unit"):
+        write(CONTENT / f"data/{MOD}/horizon/block/{machine}.json", STONE_BLOCK)
+        write(CONTENT / f"assets/{MOD}/items/{machine}.json", item_definition(machine))
+    write(CONTENT / f"assets/{MOD}/items/dryrubber.json", item_definition("dryrubber"))
+
     write(CONTENT / f"data/{MOD}/horizon/block/water_condensator.json", BLOCK)
     write(CONTENT / f"data/{MOD}/horizon/creative_tab/resource_production.json", TAB)
     write(CONTENT / f"data/{MOD}/horizon/creative_tab/core.json", CORE_TAB)
@@ -517,6 +628,18 @@ def main() -> None:
         {"values": ["minecraft:glass_pane"]
          + [f"minecraft:{colour}_stained_glass_pane" for colour, _ in COLOURS]},
     )
+    # The latex chain's own convention tag: the extractor's recipe names `#c:cobblestones`
+    # (Titanium's `Tags.Items.COBBLESTONES`).
+    write(
+        CONTENT / "data/c/tags/item/cobblestones.json",
+        {
+            "values": [
+                "minecraft:cobblestone",
+                "minecraft:mossy_cobblestone",
+                "minecraft:cobbled_deepslate",
+            ]
+        },
+    )
     write(
         CONTENT / "data/c/tags/item/storage_blocks/redstone.json",
         {"values": ["minecraft:redstone_block"]},
@@ -530,7 +653,12 @@ def main() -> None:
     write(
         CONTENT / "data/minecraft/tags/block/mineable/pickaxe.json",
         {
-            "values": [f"{MOD}:water_condensator", f"{MOD}:dissolution_chamber"]
+            "values": [
+                f"{MOD}:water_condensator",
+                f"{MOD}:dissolution_chamber",
+                f"{MOD}:fluid_extractor",
+                f"{MOD}:latex_processing_unit",
+            ]
             + [f"{MOD}:{frame}" for frame, _, _ in FRAMES]
         },
     )

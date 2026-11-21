@@ -434,7 +434,7 @@ fn output_room(machine: &Machine, rule: &ChamberRecipe) -> bool {
 
 /// Insert `product` into the first output slot that holds it, else the first empty one
 /// (`ItemHandlerHelper.insertItem`).
-fn put(host: &dyn Host, outputs: &mut [Option<ItemStack>], product: ItemStack) -> bool {
+pub(crate) fn put(host: &dyn Host, outputs: &mut [Option<ItemStack>], product: ItemStack) -> bool {
     let max = host.max_stack_size(product.item()).unwrap_or(64);
     let same = outputs.iter().position(|slot| {
         slot.as_ref().is_some_and(|stack| {

@@ -1,0 +1,20 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "key": {
+    "C": "#c:cobblestones",
+    "G": "minecraft:light_weighted_pressure_plate",
+    "I": "#c:ingots/iron",
+    "M": "#industrialforegoing:machine_frame/pity",
+    "P": "minecraft:piston"
+  },
+  "pattern": [
+    "IGI",
+    "CMC",
+    "IPI"
+  ],
+  "result": {
+    "count": 1,
+    "id": "industrialforegoing:fluid_extractor"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "default_state": {
+    "subfacing": "north"
+  },
+  "properties": {
+    "explosion_resistance": 6.0,
+    "hardness": 1.5,
+    "requires_tool": true,
+    "sounds": "minecraft:stone"
+  },
+  "state_properties": {
+    "subfacing": {
+      "type": "enum",
+      "values": [
+        "north",
+        "south",
+        "east",
+        "west"
+      ]
+    }
+  },
+  "template": "minecraft:stone"
+}

@@ -13,7 +13,9 @@ port root (`CONTENT = ROOT`) and no longer writes a content-only manifest, and i
 recipe/advancement repair **in the script** (`upgrade_recipe`, `upgrade_advancement`) — a rerun used
 to re-introduce the absent tags and the `neoforge:item_exists` condition, which stopped the machine
 crafting. Since 0.2.4 it also carries the `ModuleCore` item set (slice 4): the four frames, the
-three gears, plastic and the 16 lenses, their tags, their recipes and the `core` creative tab.
+three gears, plastic and the 16 lenses, their tags, their recipes and the `core` creative tab;
+since 0.2.6 the latex chain (slice 6): the Fluid Extractor, the Latex Processing Unit, `dryrubber`,
+plastic's smelting recipe and the extractor's nine log recipes of its own type.
 
 ## Carried byte-for-byte from the jar
 
@@ -54,6 +56,30 @@ three gears, plastic and the 16 lenses, their tags, their recipes and the `core`
 (`range_addon_*`, `infinity_*`, `mechanical_dirt`, `mycelial_reactor`, `pink_slime_ball/ingot`,
 `processing_addon_tier_*`), except `xp_bottles`, whose input fluid is literally called `None`.
 
+## Slice 6 — the latex chain (`tools/assemble_content.py`, `LATEX_*`, `EXTRACTOR_RECIPES`)
+
+| File | Note |
+|---|---|
+| `assets/industrialforegoing/blockstates/{fluid_extractor,latex_processing_unit}.json` | the jar's own four `subfacing` variants each |
+| `assets/industrialforegoing/models/block/{fluid_extractor,latex_processing_unit}.json`, `models/item/{fluid_extractor,latex_processing_unit}.json` | the jar's own: `base_block` with one face overridden (`south` = `tree_fluid_extractor_back`, `north` = `latex_processing_unit_front`); the item models are the block models |
+| `assets/industrialforegoing/textures/block/tree_fluid_extractor_back.png` (+ `.mcmeta`), `latex_processing_unit_front.png` | the jar's two textures; the extractor's is animated and its `.mcmeta` travels with it |
+| `assets/industrialforegoing/items/{fluid_extractor,latex_processing_unit,dryrubber}.json` | 26.3's item model definitions |
+| `assets/industrialforegoing/textures/item/rubber.png`, `models/item/dryrubber.json` | `ModuleCore.DRY_RUBBER`'s texture and model (the model is re-parented to `minecraft:item/generated` with the jar's display transforms, as the other plain items are) |
+| `data/industrialforegoing/horizon/block/{fluid_extractor,latex_processing_unit}.json` | template **`minecraft:stone`** (`ofFullCopy(STONE)`: hardness 1.5, blast resistance 6.0, pickaxe, stone sounds) plus the same `subfacing` enum as the condensator |
+| `data/industrialforegoing/horizon/item/dryrubber.json` | the plain item (template `minecraft:paper`) |
+| `data/industrialforegoing/loot_table/blocks/{fluid_extractor,latex_processing_unit}.json` | carried, 26.3-upgraded |
+| `data/industrialforegoing/recipe/{fluid_extractor,latex_processing_unit}.json` | the two shaped recipes (`IGI/CMC/IPI` from `#c:cobblestones`, `#c:ingots/iron`, a pressure plate, a piston and the pity frame; `IGI/BMB/IFI` from buckets, a furnace, `#c:storage_blocks/redstone` and the pity frame), `neoforge:conditions` dropped |
+| `data/industrialforegoing/recipe/plastic.json` | the **smelting** recipe `dryrubber -> plastic` (200 ticks, 0.3 xp) — the reason this slice exists |
+| `data/industrialforegoing/recipe/fluid_extractor/*.json` (9) | the machine's own type: the eight named logs and the `default` fallback for any other. Every `input` is re-spelled to 26.3's **string** form and `result` to the `/setblock` string (`minecraft:stripped_oak_log[axis=y]`); `breakChance`, `output` (`{amount, id}`) and `defaultRecipe` are the codec's own fields, kept exactly |
+| `data/industrialforegoing/advancement/recipes/misc/{fluid_extractor,latex_processing_unit,plastic}.json` | carried, conditions dropped |
+| `data/c/tags/item/cobblestones.json` | written here: the extractor's recipe names `#c:cobblestones`, which 26.3's base data does not ship (`cobblestone`, `mossy_cobblestone`, `cobbled_deepslate`) |
+| the `core` tab, the `minecraft:mineable/pickaxe` tag | both machines and `dryrubber` joined `TAB_CORE` upstream |
+
+**Not carried:** the jar's `tinydryrubber` (its own name says "Deprecated", nothing crafts or uses
+it), the latex **bucket** and **block** (`latex_bucket`, `latex_block` — the chain the port ships
+ends at the fluid, and a bucket would need a fluid-container item the pin has no route for), and
+`data/c/tags/fluid/latex.json` (a fluid tag; the port declares the fluid key instead).
+
 ## Carried with the 26.3 upgrade
 
 | File | Upgrade |
@@ -86,13 +112,13 @@ three gears, plastic and the 16 lenses, their tags, their recipes and the `core`
 - The **GUI texture** and the menu: the machine has no item slots and upstream's
   screen is Titanium's tank/energy/progress bars; slice 1 exposes the same
   numbers through `/industrialforegoing info` instead (gap 1 in `notes.md`).
-- **`plastic`'s own recipe** (`smelting dryrubber`): `dryrubber` is the latex chain, which this slice
-  does not carry, and a recipe naming an absent item is dropped whole. Plastic is `give`-only.
+- ~~**`plastic`'s own recipe** (`smelting dryrubber`)~~ **carried in 0.2.6 (slice 6)**, with the
+  `dryrubber` the Latex Processing Unit makes.
 - ~~**The three higher frames' recipes and every lens' own recipe**~~ **carried in 0.2.5 (slice 5)** by
   the dissolution chamber.
 - **The 16 `laser_lens_inverted` models and textures**: orphan resources — no item, blockstate, model
   or code names them (only lang files mention the key), so carrying them would be art with no item.
 - The `industrialforegoing:loot_table` for unported blocks, `pack.mcmeta` and the jar's `META-INF`:
   not content.
-- Every other blockstate/model/texture in the jar (the latex/plastic machines, mycelial generators,
-  conveyors, laser drills): the rest of the mod.
+- Every other blockstate/model/texture in the jar (the mycelial generators, conveyors, laser
+  drills, the refinery): the rest of the mod.

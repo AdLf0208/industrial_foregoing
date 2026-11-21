@@ -2,6 +2,9 @@
   "icon": "industrialforegoing:machine_frame_pity",
   "items": [
     "industrialforegoing:dissolution_chamber",
+    "industrialforegoing:fluid_extractor",
+    "industrialforegoing:latex_processing_unit",
+    "industrialforegoing:dryrubber",
     "industrialforegoing:machine_frame_pity",
     "industrialforegoing:machine_frame_simple",
     "industrialforegoing:machine_frame_advanced",
@@ -25,7 +28,8 @@
     "industrialforegoing:iron_gear",
     "industrialforegoing:gold_gear",
     "industrialforegoing:diamond_gear",
-    "industrialforegoing:plastic"
+    "industrialforegoing:plastic",
+    "industrialforegoing:dryrubber"
   ],
   "title": "itemGroup.industrialforegoing_core"
 }

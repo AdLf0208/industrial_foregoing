@@ -1,0 +1,11 @@
+{
+  "breakChance": 0.01,
+  "defaultRecipe": false,
+  "input": "minecraft:cherry_log",
+  "output": {
+    "amount": 3,
+    "id": "industrialforegoing:latex"
+  },
+  "result": "minecraft:stripped_cherry_log[axis=y]",
+  "type": "industrialforegoing:fluid_extractor"
+}

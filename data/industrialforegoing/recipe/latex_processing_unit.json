@@ -1,0 +1,20 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "key": {
+    "B": "minecraft:bucket",
+    "F": "minecraft:furnace",
+    "G": "#c:storage_blocks/redstone",
+    "I": "#c:ingots/iron",
+    "M": "#industrialforegoing:machine_frame/pity"
+  },
+  "pattern": [
+    "IGI",
+    "BMB",
+    "IFI"
+  ],
+  "result": {
+    "count": 1,
+    "id": "industrialforegoing:latex_processing_unit"
+  }
+}

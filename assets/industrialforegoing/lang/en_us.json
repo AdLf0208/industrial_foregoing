@@ -1,5 +1,7 @@
 {
   "block.industrialforegoing.dissolution_chamber": "Dissolution Chamber",
+  "block.industrialforegoing.fluid_extractor": "Fluid Extractor",
+  "block.industrialforegoing.latex_processing_unit": "Latex Processing Unit",
   "block.industrialforegoing.machine_frame_advanced": "Advanced Machine Frame",
   "block.industrialforegoing.machine_frame_pity": "Pity Machine Frame",
   "block.industrialforegoing.machine_frame_simple": "Simple Machine Frame",
@@ -10,6 +12,7 @@
   "item.industrialforegoing.brown_laser_lens": "Brown Laser Lens",
   "item.industrialforegoing.cyan_laser_lens": "Cyan Laser Lens",
   "item.industrialforegoing.diamond_gear": "Diamond Gear",
+  "item.industrialforegoing.dryrubber": "Dry Rubber",
   "item.industrialforegoing.efficiency_addon_tier_1": "Addon: Efficiency Tier 1",
   "item.industrialforegoing.efficiency_addon_tier_2": "Addon: Efficiency Tier 2",
   "item.industrialforegoing.gold_gear": "Gold Gear",

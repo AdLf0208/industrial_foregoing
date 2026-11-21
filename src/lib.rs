@@ -38,6 +38,8 @@
 //! back to the three capacities. An empty machine's item stays plain.
 pub mod chamber;
 pub mod dissolution;
+pub mod fluidchain;
+pub mod latex;
 pub mod runtime;
 
 use std::array;
@@ -168,6 +170,8 @@ impl Hooks for Mod {
         // The dissolution chamber (slice 5): its block entity type, container, tanks, buffer
         // and Parts, declared in one place.
         dissolution::declare(r);
+        // The latex chain (slice 6): the fluid extractor and the latex processing unit.
+        fluidchain::declare(r);
         // Its own recipe type **and** the read-only serializer for it: the game refuses a file
         // whose type has no serializer ("unregistered recipe serializer
         // industrialforegoing:dissolution_chamber", measured in game), and API 36's machine route
@@ -175,6 +179,11 @@ impl Hooks for Mod {
         // mod to read through `recipes_of_type` (the game never matches it).
         r.register_recipe_type(chamber::RECIPE_TYPE);
         r.register_raw_recipe_serializer("dissolution_chamber", chamber::RECIPE_TYPE);
+        // The fluid extractor's own type (API 36's machine route, as the chamber's): the
+        // serializer keeps each file's JSON for `/industrialforegoing info` and the tick to read
+        // through `recipes_of_type`.
+        r.register_recipe_type(fluidchain::RECIPE_TYPE);
+        r.register_raw_recipe_serializer("fluid_extractor", fluidchain::RECIPE_TYPE);
         // The fluids its recipes name, as declared fluid keys: 26.3 has no world fluid for them
         // (there is no latex/plastic machine in this port yet), but a declared key is what lets
         // a tank hold one and the readout resolve it.
@@ -221,10 +230,6 @@ impl Hooks for Mod {
         let Some(block) = level.state_block(event.state) else {
             return Flow::Continue;
         };
-        let chamber = block == dissolution::BLOCK;
-        if !chamber && block != BLOCK {
-            return Flow::Continue;
-        }
         // Explosions have already removed the block entity, so only a break that still holds it
         // (a player's, a mob's) can carry the contents.
         let Some(entity) = event.block_entity else {
@@ -233,22 +238,38 @@ impl Hooks for Mod {
         let Some(saved) = level.block_entity_data(entity) else {
             return Flow::Continue;
         };
-        let carries = if chamber {
-            dissolution::has_contents(&saved)
+        let (carries, item, patch) = if block == dissolution::BLOCK {
+            (
+                dissolution::has_contents(&saved),
+                dissolution::item(),
+                dissolution::carried_patch(&saved),
+            )
+        } else if block == BLOCK {
+            (
+                has_contents(&saved),
+                MACHINE_ITEM.get().copied(),
+                carried_patch(BLOCK_ENTITY_TYPE_ID, &saved),
+            )
+        } else if block == fluidchain::EXTRACTOR_BLOCK {
+            let id = fluidchain::EXTRACTOR_BLOCK;
+            (
+                fluidchain::has_contents(id, &saved),
+                fluidchain::item(id),
+                fluidchain::carried_patch(id, &saved),
+            )
+        } else if block == fluidchain::UNIT_BLOCK {
+            let id = fluidchain::UNIT_BLOCK;
+            (
+                fluidchain::has_contents(id, &saved),
+                fluidchain::item(id),
+                fluidchain::carried_patch(id, &saved),
+            )
         } else {
-            has_contents(&saved)
+            return Flow::Continue;
         };
         if !carries {
             return Flow::Continue;
         }
-        let (item, patch) = if chamber {
-            (dissolution::item(), dissolution::carried_patch(&saved))
-        } else {
-            (
-                MACHINE_ITEM.get().copied(),
-                carried_patch(BLOCK_ENTITY_TYPE_ID, &saved),
-            )
-        };
         let Some(item) = item else {
             return Flow::Continue;
         };
@@ -271,7 +292,10 @@ impl Hooks for Mod {
             "industrialforegoing water <pos:block_pos> <amount:integer>",
             "industrialforegoing progress <pos:block_pos> <ticks:integer>",
             "industrialforegoing drain <pos:block_pos> <amount:integer>",
+            "industrialforegoing fill <pos:block_pos> <fluid:word> <amount:integer>",
             "industrialforegoing fluid <pos:block_pos> <fluid:word> <amount:integer>",
+            "industrialforegoing extraction <pos:block_pos> <hits:integer>",
+            "industrialforegoing roll <pos:block_pos> <value:number>",
         ] {
             event.commands.push(Command::op(usage, 2));
         }
@@ -299,6 +323,14 @@ impl Hooks for Mod {
             say(host, &usage(sub));
             return Flow::Cancel;
         };
+        // The latex chain (slice 6) first: its two machines take the same harness commands, with
+        // their own readouts and their own tank order.
+        if let Some(block) = current_block(host, pos)
+            && (block == fluidchain::EXTRACTOR_BLOCK || block == fluidchain::UNIT_BLOCK)
+        {
+            latex_command(host, invocation, pos, &block, sub);
+            return Flow::Cancel;
+        }
         if sub == "fluid" {
             let Some(fluid) = string(invocation, "fluid") else {
                 say(host, &usage(sub));
@@ -409,21 +441,32 @@ impl BlockPart for Machine {
         host: &mut dyn ServerHost,
         event: &mut UseItemOnEvent<'_>,
     ) -> Option<InteractionResult> {
-        let click = event.click;
-        let stack = click.stack?;
-        let component = augment_component(&*host, stack)?;
-        let augment = decode_augment(&component)?;
-        queue_seatings(vec![Seating {
-            player: click.player,
-            dimension: click.dimension.key().id(),
-            pos: click.pos,
-            hand: click.hand,
-            stack: stack.clone(),
-            kind: augment.kind,
-            component,
-        }]);
-        Some(InteractionResult::Consume)
+        seat_from_click(host, event)
     }
+}
+
+/// `AddonItem.useOn` for every machine of this package: right-clicking it with an addon queues a
+/// seating for the level's `level_tick_post` and consumes the click. A stack without
+/// `titanium:augments` passes through, as `canAcceptAugment` refuses it and upstream falls through
+/// to the item.
+pub(crate) fn seat_from_click(
+    host: &mut dyn ServerHost,
+    event: &mut UseItemOnEvent<'_>,
+) -> Option<InteractionResult> {
+    let click = event.click;
+    let stack = click.stack?;
+    let component = augment_component(&*host, stack)?;
+    let augment = decode_augment(&component)?;
+    queue_seatings(vec![Seating {
+        player: click.player,
+        dimension: click.dimension.key().id(),
+        pos: click.pos,
+        hand: click.hand,
+        stack: stack.clone(),
+        kind: augment.kind,
+        component,
+    }]);
+    Some(InteractionResult::Consume)
 }
 
 #[mod_api::horizon_part]
@@ -526,6 +569,9 @@ fn usage(sub: &str) -> String {
         "info" => "usage: /industrialforegoing info <x> <y> <z>".to_owned(),
         "progress" => "usage: /industrialforegoing progress <x> <y> <z> <ticks>".to_owned(),
         "fluid" => "usage: /industrialforegoing fluid <x> <y> <z> <fluid> <amount>".to_owned(),
+        "fill" => "usage: /industrialforegoing fill <x> <y> <z> <fluid> <amount>".to_owned(),
+        "extraction" => "usage: /industrialforegoing extraction <x> <y> <z> <hits>".to_owned(),
+        "roll" => "usage: /industrialforegoing roll <x> <y> <z> <0..1>".to_owned(),
         other => format!("usage: /industrialforegoing {other} <x> <y> <z> <amount>"),
     }
 }
@@ -559,18 +605,28 @@ fn string<'a>(invocation: &'a CommandInvocation, name: &str) -> Option<&'a str> 
     }
 }
 
-/// A fluid name as the command takes it: `latex` is this mod's own, a namespaced id is taken as
-/// written.
+/// The `number` argument `name`.
+fn decimal(invocation: &CommandInvocation, name: &str) -> Option<f64> {
+    match invocation.argument(name)? {
+        CommandArgumentValue::Number(value) => Some(*value),
+        _ => None,
+    }
+}
+
+/// A fluid name as the command takes it: `latex` is this mod's own, `water`/`lava` are vanilla's,
+/// and a namespaced id is taken as written.
 fn qualify_fluid(fluid: &str) -> String {
     if fluid.contains(':') {
         fluid.to_owned()
+    } else if fluid == "water" || fluid == "lava" {
+        format!("minecraft:{fluid}")
     } else {
         format!("industrialforegoing:{fluid}")
     }
 }
 
 /// The id of the block at `pos` in the command's dimension.
-fn current_block(host: &mut dyn ServerHost, pos: [i32; 3]) -> Option<String> {
+pub(crate) fn current_block(host: &mut dyn ServerHost, pos: [i32; 3]) -> Option<String> {
     let level = host.level(host.dimension())?;
     level.block(host, pos).map(|key| key.id(&*host))
 }
@@ -652,6 +708,107 @@ fn drain(host: &mut dyn ServerHost, invocation: &CommandInvocation, pos: [i32; 3
         })
         .unwrap_or_else(|()| format!("{pos:?} is not a water condensator."));
     say(host, &answer);
+}
+
+/// The harness commands of the latex chain's two machines (`fluidchain`'s readout, tanks and the
+/// extractor's shared hit counter). Everything a machine cannot be told through its GUI is told
+/// through here, as for the condensator and the chamber.
+fn latex_command(
+    host: &mut dyn ServerHost,
+    invocation: &CommandInvocation,
+    pos: [i32; 3],
+    block: &str,
+    sub: &str,
+) {
+    let extractor = block == fluidchain::EXTRACTOR_BLOCK;
+    let label = if extractor {
+        "Fluid Extractor"
+    } else {
+        "Latex Processing Unit"
+    };
+    match sub {
+        "info" => {
+            let line = if extractor {
+                fluidchain::extractor_readout(host, pos)
+            } else {
+                fluidchain::unit_readout(host, pos)
+            };
+            say(host, &line);
+        }
+        "energy" | "progress" => {
+            let (argument, full, unit, key) = if sub == "energy" {
+                (
+                    "amount",
+                    crate::latex::EXTRACTOR_CAPACITY_FE,
+                    "FE",
+                    KEY_ENERGY,
+                )
+            } else {
+                (
+                    "ticks",
+                    crate::latex::EXTRACTOR_MAX_PROGRESS,
+                    "ticks of bar",
+                    KEY_PROGRESS,
+                )
+            };
+            let Some(value) = integer(invocation, argument) else {
+                say(host, &usage(sub));
+                return;
+            };
+            let value = value.clamp(0, full);
+            let changed = fluidchain::set_int(host, pos, block, key, value);
+            say(
+                host,
+                &if changed {
+                    format!("{label} at {pos:?}: {value}/{full} {unit}.")
+                } else {
+                    format!("{pos:?} is not a mod block entity.")
+                },
+            );
+        }
+        "water" if !extractor => {
+            let Some(value) = integer(invocation, "amount") else {
+                say(host, &usage(sub));
+                return;
+            };
+            fluidchain::set_fluid(host, pos, block, fluidchain::WATER, value);
+        }
+        "drain" => {
+            let amount = integer(invocation, "amount").unwrap_or(0).max(0);
+            fluidchain::drain(host, pos, block, amount);
+        }
+        "fill" | "fluid" => {
+            let Some(fluid) = string(invocation, "fluid") else {
+                say(host, &usage(sub));
+                return;
+            };
+            let Some(amount) = integer(invocation, "amount") else {
+                say(host, &usage(sub));
+                return;
+            };
+            let fluid = qualify_fluid(fluid);
+            if sub == "fill" {
+                fluidchain::fill(host, pos, block, &fluid, amount);
+            } else {
+                fluidchain::set_fluid(host, pos, block, &fluid, amount);
+            }
+        }
+        "extraction" => {
+            let Some(hits) = integer(invocation, "hits") else {
+                say(host, &usage(sub));
+                return;
+            };
+            fluidchain::extraction(host, pos, block, Some(hits));
+        }
+        "roll" => {
+            let Some(value) = decimal(invocation, "value") else {
+                say(host, &usage(sub));
+                return;
+            };
+            fluidchain::roll(host, pos, block, value as f32);
+        }
+        _ => say(host, &usage(sub)),
+    }
 }
 
 /// The machine's state, as `/industrialforegoing info` prints it.
@@ -740,6 +897,11 @@ fn write_augment_slots(nbt: &mut Compound, slots: &[Option<Compound>; AUGMENT_SL
 /// The augments in force, decoded from the saved slots.
 pub(crate) fn read_augments(nbt: &Compound) -> Augments {
     Augments::from_slots(augment_slots(nbt).map(|slot| slot.as_ref().and_then(decode_augment)))
+}
+
+/// Whether a machine's saved compound holds a seated augment in either slot.
+pub(crate) fn has_seated_augment(nbt: &Compound) -> bool {
+    augment_slots(nbt).iter().any(Option::is_some)
 }
 
 /// The augment an item's `titanium:augments` component names, speed first as
@@ -846,12 +1008,14 @@ fn shrink_held(host: &mut dyn ServerHost, seat: &Seating) {
     let _ = player.set_inventory_slot(host, slot, rest);
 }
 
-/// Whether `entity` is one of this package's two machines: both take augments in two slots.
+/// Whether `entity` is one of this package's machines: all four take augments in two slots.
 fn is_our_entity_kind(host: &dyn Host, entity: BlockEntityRef) -> bool {
     let Some(kind) = entity.kind(host) else {
         return false;
     };
-    MACHINE_KIND.get() == Some(&kind) || dissolution::kind() == Some(kind)
+    MACHINE_KIND.get() == Some(&kind)
+        || dissolution::kind() == Some(kind)
+        || fluidchain::kind_of(entity, host)
 }
 
 /// The tank's amount, in the declaration's shape: one entry per tank under `fluids`.
@@ -1217,8 +1381,18 @@ mod content {
         "machine_frame_supreme",
     ];
 
-    /// The plain items `ModuleCore` registers for this set: the three gears and the plastic.
-    const PLAIN_ITEMS: [&str; 4] = ["iron_gear", "gold_gear", "diamond_gear", "plastic"];
+    /// The plain items `ModuleCore` registers for this set: the three gears, the plastic and
+    /// (slice 6) the dry rubber.
+    const PLAIN_ITEMS: [&str; 5] = [
+        "iron_gear",
+        "gold_gear",
+        "diamond_gear",
+        "plastic",
+        "dryrubber",
+    ];
+
+    /// The latex chain's two machines (slice 6).
+    const LATEX: [&str; 2] = ["fluid_extractor", "latex_processing_unit"];
 
     /// The port root, which is also the package root.
     fn root() -> PathBuf {
@@ -1347,6 +1521,8 @@ mod content {
             [
                 "water_condensator",
                 "dissolution_chamber",
+                "fluid_extractor",
+                "latex_processing_unit",
                 "speed_addon_tier_1",
                 "speed_addon_tier_2",
                 "efficiency_addon_tier_1",
@@ -1413,8 +1589,8 @@ mod content {
     fn every_declared_id_has_a_name() {
         let lang = read("assets/industrialforegoing/lang/en_us.json");
         let names = strings(&lang);
-        for frame in FRAMES {
-            let key = format!("block.industrialforegoing.{frame}");
+        for block in FRAMES.iter().chain(LATEX.iter()) {
+            let key = format!("block.industrialforegoing.{block}");
             assert!(
                 names.contains(&key),
                 "{key} has no English name, so the game shows the raw key"

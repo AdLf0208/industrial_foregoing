@@ -1,0 +1,11 @@
+{
+  "breakChance": 0.01,
+  "defaultRecipe": false,
+  "input": "minecraft:mangrove_log",
+  "output": {
+    "amount": 4,
+    "id": "industrialforegoing:latex"
+  },
+  "result": "minecraft:stripped_mangrove_log[axis=y]",
+  "type": "industrialforegoing:fluid_extractor"
+}

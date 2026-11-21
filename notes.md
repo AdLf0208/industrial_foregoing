@@ -33,7 +33,10 @@ removes the redundant `block_part` call (see [The doubled Part](#the-doubled-par
 0.2.2 carries that repair **and never shipped before**; 0.2.3 is the same machine plus its
 augment slots; 0.2.4 adds the Core set beside it. See [Slice 2](#slice-2--contents-survive-the-break--the-recipe-crafts-022-2026-11-21),
 [Slice 3](#slice-3--the-augment-family-023-2026-11-21) and [Slice 4](#slice-4--the-modulecore-item-and-block-set-024-2026-11-21).
-The gap list at the end is the rest of the mod.
+slice 6 (0.2.6, 2026-11-22) adds the **latex chain** — the Fluid Extractor and the Latex
+Processing Unit with the extractor's own recipe type and its nine log recipes, `dryrubber` and the
+`smelting dryrubber -> plastic` recipe — so `plastic` finally has a source and the fluids slice 5
+declared are produced by a machine. The gap list at the end is the rest of the mod.
 
 **Why this mod now:** it is the rank-0 `content`/`machines` core mod
 `precheck-mod.py industrialforegoing` offers (`DISPATCHABLE`, jar licence MIT,
@@ -972,9 +975,13 @@ fail at their own assertions.
 
 ### Deviations and gaps this slice adds
 
-19. **The fluids have no source in this package.** `industrialforegoing:latex`, `:pink_slime` and
+19. ~~**The fluids have no source in this package.**~~ **Closed in 0.2.6 (slice 6) for
+    `industrialforegoing:latex`**: the Fluid Extractor produces it, and phase AI drains 400 mB of it
+    out of the declared tank. `:pink_slime` and `:ether_gas` still have no source (their machines
+    are later slices) and the fill path has not changed; the original note follows.
+    **The fluids have no source in this package.** `industrialforegoing:latex`, `:pink_slime` and
     `:ether_gas` are declared fluid keys, and a tank holds them by writing its own `fluids` compound;
-    nothing in the port produces them (the latex/plastic machines are a later slice), and
+    nothing in the port produced them (the latex/plastic machines were a later slice), and
     `native_fluid_insert` refuses a mod fluid, so `/industrialforegoing fluid` is the only fill path.
     A pack with the latex chain ported writes the same compound. Recorded, not faked.
 20. **The input slots have no per-slot limit.** `DissolutionChamberTile` builds its input inventory
@@ -1011,22 +1018,183 @@ fail at their own assertions.
 > holds the chamber's rules. The latex/plastic machines, the remaining chamber recipes (their products
 > are not in this package) and the GUI are the following slices.
 
+## Slice 6 — the latex chain: `fluid_extractor` + `latex_processing_unit` (0.2.6, 2026-11-22)
+
+**The slice: the port's own deviation 19** — *"the fluids have no source in this package …
+nothing in the port produces them (the latex/plastic machines are a later slice), and
+`native_fluid_insert` refuses a mod fluid, so `/industrialforegoing fluid` is the only fill path"* —
+together with deviation 17's last sentence: *"`plastic` is still `give`-only: its recipe is
+`smelting dryrubber`, and `dryrubber` is the latex chain."* It is the family the condensator's own
+`#c:plastics` ingredient and every add-on recipe that names plastic wait on. Tier **machines**
+(ledger): two block entities with a fluid tank each, an FE buffer, one item container, a server
+tick and commands — no renderer, no dimension work, no entity AI.
+
+### The fluid-move question, settled first
+
+The brief asked whether `native_move_fluids` (API 55) moves a **mod** fluid between two block
+entities. It does not, for two independent reasons, both measured:
+
+1. **It is not on the package's surface.** `move_fluids` is a `.hnmod` **helper**
+   (`horizon/native-hooks.json`, `helpers[].name = "move_fluids"`), not a hook, and it has no SDK
+   counterpart: `ports/_shared/sdk/0a875da/surface.json` and the `horizon-mod-vocab` host areas
+   have no `move_fluids`, no `fluid_tank_move` and no equivalent — the SDK's fluid writes are
+   [`fluid_tank_insert`](FluidsEnergyBackendMut::fluid_tank_insert) and
+   `fluid_tank_extract` per tank. A package cannot call it at all.
+2. **Even engine-side it moves nothing.** `native_move_fluids` takes from the source and then fills
+   the target through `native_fluid_insert`, whose first statement is
+   `if fluid != "minecraft:water" && fluid != "minecraft:lava" { return amount; }`
+   (`game/machines/native_fluids.rs:206`); what the target refuses goes straight back into the
+   source, so the net move of `industrialforegoing:latex` is zero. The same gate is what the SDK
+   documents for `fluid_tank_capacity` ("none … a fluid the tanks there don't take: other than
+   water and lava") and for `fluid_tank_insert`.
+
+Proven in game, in phase AK, through the declared capability itself (the same path
+`native_fluid_insert` serves): `/industrialforegoing fill <unit> water 1000` →
+`accepted 1000 mB of minecraft:water (tank 1 took 1000 mB)`, and
+`/industrialforegoing fill <unit> latex 100` →
+`accepted 0 mB of industrialforegoing:latex (the pin's fill takes water and lava only)`. So the
+tanks are filled by the command path — `/industrialforegoing fluid`, which merges the block
+entity's own `fluids` compound as `/data merge block` does — and the report says so instead of
+implying a move.
+
+### Upstream (jar `industrialforegoing-1.21-3.6.39.jar`; source `Buuz135/Industrial-Foregoing`
+### `ce2852db`, read for behaviour, clone deleted)
+
+| upstream | behaviour | what the port carries |
+|---|---|---|
+| `FluidExtractorBlock` | `Properties.ofFullCopy(STONE)`, `RotationType.FOUR_WAY`, `TAB_CORE` | block + item, `subfacing` (four values), stone template |
+| `FluidExtractorTile` | `IndustrialAreaWorkingTile(RangeType.BEHIND)`: a 100-tick bar counting **down**, `WorkAction(0.4f, 500)` powered / `(1f, 0)` idle, a 1,000 mB latex tank (`Action.DRAIN`), a 10,000 FE buffer | the tick, the tank, the buffer, the parts |
+| `FluidExtractorRecipe` (+ its own `ModuleCore.FLUID_EXTRACTOR_TYPE`/`_SERIALIZER`) | `input` (Ingredient), `result` (BlockState), `breakChance`, `output` (FluidStack), `defaultRecipe`; `findRecipe` takes a named recipe before the default one | the recipe type + read-only serializer (API 36, as the chamber's), the jar's nine files, the decode in `src/latex.rs` |
+| `work()` | the block **behind** the machine; an empty or full machine is `(1f, 0)`; else `output.amount × (powered ? 3 : 1)`; a `breakChance` roll raises a per-**position** counter shared by every extractor; the **eighth** hit resets it, sets the block to `result` and adds `output.amount × (powered ? 200 : 1)` | the same, with the counter in a static map and the roll from the level's own random |
+| `LatexProcessingUnitBlock` | `ofFullCopy(STONE)`, `FOUR_WAY`, `TAB_CORE` | block + item |
+| `LatexProcessingUnitTile` | `IndustrialProcessingTile`: a bar **rising** to 100, 20 FE a tick, latex and water tanks of 16,000 mB, nine output slots, `onFinish` = −750 mB latex, −500 mB water, +1 `dryrubber` | the same arithmetic, the tanks, the container |
+| `ModuleCore.DRY_RUBBER` | `RecipelessCustomItem("dryrubber", TAB_CORE)` | the item, its texture/model/definition, the `core` tab |
+| `plastic`'s recipe | `smelting dryrubber`, 200 ticks, 0.3 xp | carried, and crafted in a furnace in game |
+
+`FluidExtractorConfig`: `maxProgress` 100, `powerPerOperation` **500**, `maxStoredPower` 10,000,
+`maxLatexTankSize` **1,000** (its comment says 8,000; the value is what the game uses).
+`LatexProcessingUnitConfig`: `powerPerTick` 20, `maxStoredPower` 10,000, both tanks 16,000; the
+tile's `AMOUNT_LATEX` is **750** and `AMOUNT_WATER` **500** (the jar's own patchouli text says 75
+and 1,000 — the code is what runs, and the port follows the code).
+
+### TDD, in order
+
+1. **Red** (`src/latex.rs`, the rules as 17 tests with three bodies at `todo!()`;
+   `evidence/industrialforegoing/sdk-test-red-slice6.log`): **78 passed, 17 failed**, every failure
+   `panicked at src/latex.rs: not yet implemented` — `recipe_for`, the extractor's `tick` and the
+   unit's `tick`.
+2. **The rules** (`src/latex.rs`, a third pure module — `runtime.rs` stays byte-identical, which
+   `verify-sdk-package.py` checks): `ExtractorRecipe` + `recipe_for` (a named recipe before the
+   default one), `Extractor` (bar down from 100, 500 FE an operation, the 40/100 cooldown, the tank
+   clamp, the hit counter, the burst), `Unit` (the 750/500 gate, 20 FE a tick, the 100-tick bar,
+   `floor(100 × efficiency)` with an efficiency augment, the speed augment one tick late).
+3. **The glue** (`src/fluidchain.rs`): both block entity types, their Parts (placement rotation, the
+   tick, the augment seating slice 3 shares, the item that carries the contents), the extractor's
+   recipe table (decoded once per table identity, as the chamber's), the readouts and the setters.
+   Ten glue tests: the declarations, the block behind, the tank round trip and its clamp, the
+   carried patch's `id`, the shared counter.
+4. **In game**, phases AF–AM (below), `PASS` + `EXIT:0`.
+
+### In game (`evidence/industrialforegoing-e2e/e2e-launcher.log`, phases AF–AM)
+
+| phase | what it asserts | the value it read |
+|---|---|---|
+| AF | the extractor places, faces its placer, sees the log **behind** it, reads its own recipe table | `subfacing=west`, `log minecraft:oak_log`, `recipe industrialforegoing:fluid_extractor/oak`, `recipes 9/9`; one unpowered operation: `latex 2 mB`, `0 FE` |
+| AG | a powered operation is exactly three times the recipe | `latex 8 mB` (2 + 6), `4500/10000 FE` (500 spent), bar resting at 36/100 |
+| AH | **the counterfactual**: the same machine facing stone | `log minecraft:stone`, `recipe none`, the tank and the buffer unchanged |
+| AI | the eighth hit consumes the log and bursts 200× | `hits 7` + a pinned roll 0 → `hits 0`, the log became `minecraft:stripped_oak_log`, `latex +406 mB` (6 + 400), and `/drain 400` answered `drained 400 mB of industrialforegoing:latex` |
+| AJ | a roll **over** the break chance moves nothing | `roll 1.0` → `hits 7` kept, the log stays an oak log, the operation still gave its 6 mB |
+| AK | the unit takes latex and water and makes dry rubber | latex 1,000 mB by `/fluid`, water 1,000 mB by `/fill` (the capability), `fill latex` accepted **0 mB**; 100 ticks later `latex 250`, `water 500`, `8000/10000 FE`, `output industrialforegoing:dryrubber x1` |
+| AL | the chain closes: a hopper feeds a furnace and the rubber smelts into plastic | the furnace's output `industrialforegoing:plastic x1`, its input empty, the unit's output empty |
+| AM | a broken unit carries its tank and buffer | broken at `1500 mB` latex / `400 mB` water / `4000 FE`, placed back with exactly those numbers |
+
+**Fail-capable, six ways, all `EXIT:1`:** the control leg (the same Nightly without the package)
+stops at its first `give` (`FAIL: the machine item did not register`); `SELFTEST=1` flips B
+(`FAIL: the water is 200, expected 201`); `SELFTEST=contents` flips L (`FAIL: the restored tank is
+5000, expected 5001`); `SELFTEST=core` flips U (`FAIL: the red lens count after the craft is 1,
+expected 2`); `SELFTEST=chamber` flips Z; and **`SELFTEST=latex`** — this slice's own — flips AF
+(`FAIL: the latex one unpowered operation gives is 3, expected 2`). Phases AH and AJ are in-run
+counterfactuals: the same machine with stone behind it and with a roll over its break chance.
+`check-e2e-logs.py industrialforegoing-e2e --strict` reads **7/7**.
+
+**Harness facts this slice added** (each cost a run):
+
+- `ctl messages N` can return an **earlier** readout of the same machine when the reply lands a
+  tick or two late; the readout helper now reads the game's own `[CHAT]` log (`ctl logs`) and waits
+  for a line whose `t=` differs from the previous read's.
+- A helper that took only `$5` truncated `fluid … latex 1000` to `fluid … latex`, and the
+  dispatcher answered `Unknown or incomplete command` — a harness bug that reads exactly like a
+  registration bug.
+- A block entity keeps working while the harness talks to it: every phase parks the bar at 100 and
+  reads a **before** value, so a finished bar between two commands cannot spend a pinned roll.
+- `merge_data` replaces a list, so writing one tank from an empty patch drops the other; the
+  command path now seeds its patch with the entity's own `fluids`.
+- A hopper under a machine eats its drop; the contents leg takes the hopper out first.
+
+### Coverage (families this slice adds)
+
+| family | coverage |
+|---|---|
+| the `fluid_extractor` block and item | `tested` — AF places it from its item, reads `subfacing=west` and the block id back |
+| its `industrialforegoing:fluid_extractor` recipe type and the jar's nine recipes | `tested` — AF/AI/AJ: `recipes 9/9`, a named log recipe and the `default` fallback both matched and run in game |
+| `output.amount × 3` powered / `× 1` free, 500 FE an operation, the 40/100-tick cooldown | `tested` — AF (2 mB, 0 FE) and AG (6 mB, 500 FE, bar 36) |
+| the block **behind** it (`RangeType.BEHIND`) | `tested` — AH: stone gives `recipe none` and no latex; AF: the oak log east of a west-facing machine |
+| the hit counter and the eighth-hit consumption (`breakChance` 0.01) | `tested` — AI (a pinned roll 0 consumes the log and bursts 400 mB) and AJ (a roll of 1.0 does not) |
+| the 1,000 mB latex tank as a capability | `tested` — AI drains 400 mB of `industrialforegoing:latex` out of it |
+| the `latex_processing_unit` block and item | `tested` — AK places it and reads both tanks empty |
+| the 750 mB latex + 500 mB water → dryrubber operation | `tested` — AK: 100 ticks, `dryrubber x1`, latex 1,000 → 250, water 1,000 → 500, 2,000 FE |
+| its two 16,000 mB tanks | `tested` — latex by the command path, water through the **declared capability** (`fill water 1000` accepted), both reported back by the capability |
+| the nine output slots | `tested` — AK reads the product out of them; AL empties them through a hopper into a furnace |
+| `industrialforegoing:dryrubber` | `tested` — AK makes it, AL smelts it, R gives and reads it back |
+| the `smelting dryrubber -> plastic` recipe | `tested` — AL: a furnace turns it into `industrialforegoing:plastic x1` and consumes the rubber |
+| the machines' items carrying their contents | `tested` — AM (the unit: latex, water, FE); the extractor carries its tank and bar by the same `block_drops` path |
+| the augments on both machines | `ported, not exercised in game` — both seat through the same `use_item_on` path the condensator's phases M–Q prove, and the unit's arithmetic is unit-tested (the efficiency bar, the speed tick); no phase seats one in either machine |
+| a GUI screen, redstone control, a comparator | `not ported` — gaps 1, 2, 7 |
+| the jar's other machines (mycelial, conveyors, laser drills, the refinery, the sewage chain) | `not ported` — gap 9 |
+
+### Deviations and gaps this slice adds
+
+23. **The latex tank's fill face is closed on the unit.** Upstream's latex tank is fillable (with a
+    latex validator); the pin's `ModFluidTanks` has no per-tank fluid filter and
+    `native_fluid_insert` fills a mod block's tanks with any water/lava it is handed into *any*
+    input tank holding that fluid or none — so a water fill could land in the latex tank. The
+    latex tank therefore declares no fill face and the water tank is the only input: nothing can be
+    inserted into the latex tank at this pin anyway, because a mod fluid has no insert path at all.
+    `/industrialforegoing fluid` writes it, as slice 5's chamber's tank is written.
+24. **The break roll is the level's own random, with a harness override.** `breakChance` is rolled
+    against `level.random.nextDouble()` (`LevelRef::with_random`), exactly as upstream. Because an
+    0.01 chance needs ~800 operations to consume one log (about half an hour of game time),
+    `/industrialforegoing roll <pos> <0..1>` pins the next operation's roll, and
+    `/industrialforegoing extraction <pos> <hits>` sets the shared counter — the only way the
+    eighth-hit path can be asserted in a bounded run. Both are OP-level harness controls, like
+    `energy`/`progress`.
+25. **The hit counter is in memory, per position and dimension.** Upstream's
+    `FluidExtractorTile.EXTRACTION` is a static map keyed by dimension type, chunk and position, and
+    it is not saved either; the port keeps the same map, keyed by dimension id and position, and a
+    restart resets it as upstream's does.
+26. **The extractor keeps extracting from the stripped log.** After the eighth hit the block
+    becomes a stripped log, which `#minecraft:logs` still names, so the `default` recipe answers it
+    at 1 mB an operation — upstream's behaviour with the same data, and phase AI reads exactly that
+    (`recipe industrialforegoing:fluid_extractor/default` after the strip). Not a defect: it is what
+    the jar's own recipes do.
+
+
 ## Skills
 
-Skills: superpowers/using-superpowers,brainstorming,writing-plans,test-driven-development,systematic-debugging,verification-before-completion; BeautifulRust/rust-best-practices (slice 5: the set actually loaded for this slice — `brainstorming` to weigh the slice against the gap list, `systematic-debugging` for the in-game gates: the recipe-serializer crash, the client-side `ctl container` writes that never reached the server's block entity, and the bar resets a too-long window caused)
+Skills: superpowers/using-superpowers,brainstorming,writing-plans,test-driven-development,systematic-debugging,verification-before-completion; BeautifulRust/rust-best-practices,rust-review (slice 6: `brainstorming` to weigh the latex chain against the gap list, `writing-plans` for SLICE-6-PLAN.md, `test-driven-development` for the 17 red rules, `systematic-debugging` for the four in-game gates this slice cost — the stale `ctl messages` window, the truncated `lsay` argument, the list-replacing `merge_data` and the hopper eating a drop — and `verification-before-completion` before recording; `rust-best-practices` for the new pure module and the glue, `rust-review` for the after-the-fact audit of `src/fluidchain.rs`)
 
 `cargo fmt --package industrialforegoing --check`, `cargo clippy --all-targets -- -D warnings` and
-`cargo test` were run before hand-back (slice 5: `FMT-CLEAN`, 0 warnings, 75 passed).
+`cargo test` were run before hand-back (slice 6: `FMT-CLEAN`, 0 warnings, **105 passed**).
 `#[allow(private_interfaces, reason = "…")]` marks the injected module's own private
 `Game`/`ModBlockEntity` parameters (the same exception `botanypots`, `powah`, `charginggadgets` and
 `mininggadgets` record).
 
 ## Verification
 
-**[`VALIDATION.md`](VALIDATION.md) is the ladder for the delivered 0.2.5 package** at the
-campaign pin `0a875da…` (the red test run, fmt, clippy, 75 tests, two `cmp`-identical builds, `check`,
+**[`VALIDATION.md`](VALIDATION.md) is the ladder for the delivered 0.2.6 package** at the
+campaign pin `0a875da…` (the red test run, fmt, clippy, 105 tests, two `cmp`-identical builds, `check`,
 both `fits` runs, the content verifier with its selftest, and the in-game legs — green, control and
-all three selftests — with their exit statuses). The tables below are the earlier ladders, kept as
+five selftests — with their exit statuses). The tables below are the earlier ladders, kept as
 history.
 
 ### The SDK ladder (2026-11-18, the 0.2.0 migration; historical)
@@ -1122,6 +1290,8 @@ The current package (2026-11-21, SDK format) — one file, code and content toge
 
 | File | Size | SHA-256 | Entries |
 |---|---:|---|---:|
+| `industrialforegoing.hmod` (0.2.6) | 225,305 B | `d9dbb2316b701dab2bf7877bf2361772d3f634113dd75291ac9e6e172b4869a4` | 305 |
+| `industrialforegoing.hmod` (0.2.5) | 189,268 B | `0876ea235c4fd196113992cd743c116d513add5e408e723dc2ec7bf34c7b2bad` | 268 |
 | `industrialforegoing.hmod` (0.2.4) | 153,549 B | `dd43090d0f7a96b01f82d842cf42cd2f59f45e9d2763c524d65187c320b9508f` | 230 |
 | `industrialforegoing.hmod` (0.2.3) | 59,334 B | `819f00fc54dd6a2623406681494a3842f57331207d60e620b2f597ef66559e7c` | 41 |
 | `industrialforegoing.hmod` (0.2.2) | 34,096 B | `2672a80085cb0a258239408750b625fbee497f760693e473d823c0b947404826` | 25 |
@@ -1187,13 +1357,14 @@ The `.hnmod` carried the content mod as
 8. **No config file.** The three values are the upstream defaults
    (`maxProgress` 100, `powerPerOperation` 1000, `maxStoredPower` 10000,
    `maxWaterTankSize` 16000); `config/` is not created.
-9. ~~**One machine only.**~~ **Partly closed in 0.2.4 (slice 4).** The `ModuleCore` items and blocks
+9. ~~**One machine only.**~~ **Partly closed in 0.2.4 (slice 4) and again in 0.2.6 (slice 6).** The `ModuleCore` items and blocks
    ship now — the four machine frames, the iron/gold/diamond gears, plastic and the 16 coloured laser
    lenses — with the tags the pack's add-ons bind to. Still outside the slice: the jar's other
    blockstates and their machines (mycelial generators, the latex/plastic chain and its
    `fluid_extractor`/`latex_processing_unit`, the **dissolution chamber**, conveyors, black-hole units,
-   the laser drills, …), the ranges addons, `dryrubber`/`fertilizer`/`pink_slime`/`straw`, and the
-   patchouli book. `industrialforegoingsouls` is still `blocked(missing-parent-recipe-type:
+   the laser drills, …), the ranges addons, `fertilizer`/`pink_slime`/`straw`, and the patchouli
+   book. **Slice 6 took the latex/plastic chain** (`fluid_extractor`, `latex_processing_unit`,
+   `dryrubber`, plastic's own smelting recipe). `industrialforegoingsouls` is still `blocked(missing-parent-recipe-type:
    industrialforegoing:laser_drill_ore)` and `mifa` still `blocked(industrialforegoing:dissolution_chamber)`.
 10. **The block declaration's `sounds` names a vanilla *block***, not a sound
     group id: `"sounds": "minecraft:iron"` was rejected at load
@@ -1236,10 +1407,11 @@ The `.hnmod` carried the content mod as
     (pity common, simple uncommon, advanced rare, supreme epic) and the item colours differ. Cosmetic
     only; recorded in [Slice 4](#slice-4--the-modulecore-item-and-block-set-024-2026-11-21).
 17. ~~**Three machine frames and 16 lenses are `give`-only or craft-from-each-other**~~ **Closed in
-    0.2.5 (slice 5).** `machine_frame_simple/advanced/supreme` and every lens are made by the
-    dissolution chamber from the jar's own recipes, and the four addon items too (their chamber
-    recipes were `give`-only in slice 3). `plastic` is still `give`-only: its recipe is
-    `smelting dryrubber`, and `dryrubber` is the latex chain.
+    0.2.5 (slice 5), and `plastic` with it in 0.2.6 (slice 6).** `machine_frame_simple/advanced/
+    supreme` and every lens are made by the dissolution chamber from the jar's own recipes, and the
+    four addon items too (their chamber recipes were `give`-only in slice 3). `plastic` is now
+    smelted from `dryrubber`, which the latex chain makes: phase AK's unit produces the rubber and
+    phase AL's furnace turns it into one plastic.
 18. **`c:gears` (the umbrella tag) has no consumer in this package.** It is carried whole (a pack's
     add-on may ask for "any gear"); its three sub-tags are each exercised by a craft.
 
@@ -1273,6 +1445,18 @@ were recorded above and in the slice section):- **Industrial Foregoing `ce2852db
 Clean-room: the rewrite is this port's own Rust against the pin's APIs; the Java was read for
 behaviour only, and where the pin cannot express something (no item handler on a menu-less machine)
 the deviation is recorded above instead of faked.
+
+Slice 6 re-read the same repository at `ce2852db` (`block/core/FluidExtractorBlock.java`,
+`block/core/tile/FluidExtractorTile.java` — its `work()`, its `EXTRACTION` map,
+`maxLatexTankSize`, `block/core/tile/LatexProcessingUnitTile.java` — its two tanks, its nine output
+slots, `AMOUNT_LATEX`/`AMOUNT_WATER` and `canIncrease`, `config/machine/core/FluidExtractorConfig.java`,
+`LatexProcessingUnitConfig.java`, `recipe/FluidExtractorRecipe.java` — its codec, `findRecipe`'s
+named-before-default order and the nine `init` recipes, `block/tile/IndustrialWorkingTile.java`'s
+`work()`/`onFinishWork` order and `IndustrialProcessingTile.java`'s bar). The jar's own JSON
+(blockstates, models, the two machines' textures, their loot tables, the nine
+`recipe/fluid_extractor/*.json`, the two shaped recipes and the plastic's smelting recipe) was the
+authority for every carried file. The clone was deleted after the findings; no Java was copied or
+translated.
 
 Slice 5 re-read the same repository at `ce2852db` (`block/core/DissolutionChamberBlock.java`,
 `block/core/tile/DissolutionChamberTile.java`, `recipe/DissolutionChamberRecipe.java`,

@@ -509,6 +509,9 @@ industrialforegoing:iron_gear
 industrialforegoing:gold_gear
 industrialforegoing:diamond_gear
 industrialforegoing:plastic
+industrialforegoing:dryrubber
+industrialforegoing:fluid_extractor
+industrialforegoing:latex_processing_unit
 industrialforegoing:white_laser_lens
 industrialforegoing:orange_laser_lens
 industrialforegoing:magenta_laser_lens
@@ -788,6 +791,117 @@ echo "  the broken machine came back with speed $SPEED and efficiency $EFFICIENC
 
 
 
+
+# ---------------------------------------------------------------------------
+# The latex chain (slice 6): the fluid extractor and the latex processing unit
+# ---------------------------------------------------------------------------
+
+LX=240            # the fluid extractor's column (its log is at LX+1)
+LXU=244           # the latex processing unit's column (hopper and furnace below)
+EXTRACTOR_ID=industrialforegoing:fluid_extractor
+UNIT_ID=industrialforegoing:latex_processing_unit
+
+# Its own platform east of the chamber's: stone at y=100, air above, and a cleared
+# shaft under LXU for the hopper and the furnace.
+latex_arena() {
+    ctl command "execute in minecraft:the_end run tp @s $((LX - 2)).5 104 0.5" >/dev/null
+    local loaded=false
+    for _ in $(seq 1 120); do
+        ctl wait 5 >/dev/null
+        if [ "$(ctl block "$LX" 100 0 | jq -r '.loaded // false')" = true ]; then
+            loaded=true
+            break
+        fi
+    done
+    [ "$loaded" = true ] || fail "the latex arena chunk never loaded"
+    ctl command "execute in minecraft:the_end run fill $((LX - 8)) 100 -8 $((LX + 12)) 100 8 minecraft:stone" >/dev/null
+    ctl command "execute in minecraft:the_end run fill $((LX - 8)) 101 -8 $((LX + 12)) 108 8 minecraft:air" >/dev/null
+    ctl wait 8
+    ctl command "execute in minecraft:the_end run kill @e[type=!player]" >/dev/null
+    ctl command "execute in minecraft:the_end run tp @s $((LX - 2)).5 101 0.5" >/dev/null
+    ctl wait 16
+    [ "$(block_name "$LX" 100 0)" = "minecraft:stone" ] || fail "the latex arena floor is not stone"
+}
+
+# Place any machine of this package from a `/give`n item, aimed at the floor under it so
+# the placer's yaw is what the machine's `subfacing` reads.
+place_any() { # place_any X Y Z ITEM
+    local x=$1 y=$2 z=$3 item=$4
+    ctl command "item replace entity @s hotbar.0 with $item 1" >/dev/null
+    ctl wait 6
+    ctl select 1 >/dev/null
+    ctl command "execute in minecraft:the_end run tp @s $((x - 2)).5 $y $z.5" >/dev/null
+    ctl wait 6
+    ctl look-at-block "$x" $((y - 1)) "$z" up >/dev/null 2>&1 || fail "cannot aim at the floor under $x,$y,$z"
+    ctl wait 8
+    ctl place "$x" "$y" "$z" --item "$item" >/dev/null || fail "the $item did not place at $x,$y,$z"
+    ctl wait 6
+    [ "$(block_name "$x" "$y" "$z")" = "$item" ] \
+        || fail "the $item did not place at $x,$y,$z (got '$(block_name "$x" "$y" "$z")')"
+}
+
+# Place a machine **already in the hotbar** at X Y Z (no `/give`): the drop a break leaves is the
+# only source of that item, which is what proves it carries the machine's contents.
+place_held_any() { # place_held_any X Y Z ITEM
+    local x=$1 y=$2 z=$3 item=$4
+    ctl command "execute in minecraft:the_end run tp @s $((x - 2)).5 $y $z.5" >/dev/null
+    ctl wait 6
+    ctl look-at-block "$x" $((y - 1)) "$z" up >/dev/null 2>&1 || fail "cannot aim at the floor under $x,$y,$z"
+    ctl wait 6
+    ctl place "$x" "$y" "$z" --item "$item" >/dev/null || fail "the carried $item did not place"
+    ctl wait 6
+    [ "$(block_name "$x" "$y" "$z")" = "$item" ] \
+        || fail "the carried $item did not place at $x,$y,$z (got '$(block_name "$x" "$y" "$z")')"
+}
+
+# `/industrialforegoing info` of either latex-chain machine, parsed into the L_* variables.
+#
+# The answer is read from the **game's own log**, whose `[CHAT]` lines are complete and in order;
+# the `ctl messages` window can return an earlier readout of the same machine when the reply lands
+# a tick or two late (measured: the fresh line at t=3354, the stale one at t=3343 twice). The
+# read waits for a line whose game time differs from the previous read's, bounded at 30 ticks.
+linfo() { # linfo X Y Z
+    local previous=${L_T:-} line="" t="" attempt
+    say "industrialforegoing info $1 $2 $3"
+    for attempt in $(seq 1 15); do
+        ctl wait 2 >/dev/null
+        line=$(ctl logs --lines 400 \
+            | grep -E '\[CHAT\] (Fluid Extractor|Latex Processing Unit) at' \
+            | tail -1 | sed 's/^.*\[CHAT\] //' || true)
+        [ -n "$line" ] || continue
+        t=$(echo "$line" | sed -n 's/.* t=\(-*[0-9][0-9]*\)$/\1/p')
+        if [ -n "$t" ] && [ "$t" != "$previous" ]; then
+            break
+        fi
+    done
+    [ -n "$line" ] || fail "no /industrialforegoing info reply for the latex chain"
+    eval "$(python3 "$PORT/tools/parse_latex.py" "$line")"
+    [ "${ok:-0}" = 1 ] || fail "the latex machine's info line did not parse: $line"
+    echo "  $line" >&2
+}
+
+# One `/industrialforegoing` command of a latex-chain machine at its position; every argument
+# after the subcommand is passed on (`lsay X Y Z fluid latex 1000`). Taking only `$5` here
+# truncated `fluid … latex 1000` to `fluid … latex`, which the dispatcher answered with
+# "Unknown or incomplete command" — a harness bug, not the mod's.
+lsay() { # lsay X Y Z SUB [ARGS...]
+    local x=$1 y=$2 z=$3 sub=$4
+    shift 4
+    say "industrialforegoing $sub $x $y $z${*:+ $*}"
+}
+
+# The chat reply to the last `/industrialforegoing` command, matched by `pattern`.
+reply() { # reply PATTERN
+    local line="" attempt
+    for attempt in $(seq 1 15); do
+        ctl wait 2 >/dev/null
+        line=$(ctl logs --lines 400 | grep -E '\[CHAT\] ' | sed 's/^.*\[CHAT\] //' \
+            | grep -E "$1" | tail -1 || true)
+        [ -n "$line" ] && break
+    done
+    echo "$line"
+}
+
 echo "== X: the dissolution chamber places, reads back and shows its own recipe table =="
 chamber_arena
 place_chamber
@@ -993,4 +1107,203 @@ expect "the tank the item carried" "$F_FIN" 1500
 expect "the buffer the item carried" "$F_ENERGY" 4000
 echo "  the chamber came back with $F_ENERGY FE and $F_FIN mB of latex"
 
-echo "PASS: a placed machine is empty with no sources and faces its placer; two sources condense 200 mB for exactly 1,000 FE and one condenses nothing; without 1,000 FE two sources give half for free; three and six sources give 300 and 600 mB; a nearly full tank stops at 16,000 mB while still spending the FE; the declared tank drains 400 mB of water through the fluid handler; and left alone the machine keeps condensing on its own 10-tick bar; the 24 Core ids of this slice register and read back, the four frames place and read back, an unregistered item and block id are refused, and a frame broken in survival drops itself; the condensator crafts from the tags (#c:plastics, #c:gears/iron, machine_frame/pity) with the grid empty afterwards while slice 2's stand-ins stay empty, the pity frame and the three gears craft, and all 16 lens recolours craft from the lens tag and c:dyes with the player's counts before and after; a machine broken with 7,000 FE and 5,000 mB comes back with exactly those numbers on the item it dropped; a seated speed augment of 4 makes the bar fall four a tick where an empty slot falls one, a second speed augment is refused and stays in the hand, an efficiency augment of 0.8 shortens the bar to 80 with an 8-tick cooldown at the same 1,000 FE, and both augments travel on the machine's item; the dissolution chamber places and faces its placer, reads its own recipe type from this package's data (23 files), holds its own fluids in a declared tank the capability reports back, runs the white lens recipe in exactly 100 ticks for 9,000 FE and 250 mB of latex, does nothing with an empty tank and starts when 250 mB arrive, empties its output into a hopper and a barrel, runs the simple machine frame's 300 ticks at exactly 90 FE a tick, makes the advanced frame from #c:plastics, the crafted #c:gears/diamond gear and the simple frame, and a broken chamber carries its buffer and latex back on its item"
+
+echo "== AF: the extractor works on the log behind it, for free without power =="
+latex_arena
+# The log goes down first: `RangeManager.RangeType.BEHIND` is the block opposite the
+# machine's `subfacing`, and the machine faces its placer (west), so the log is east.
+ctl command "execute in minecraft:the_end run setblock $((LX + 1)) 101 0 minecraft:oak_log" >/dev/null
+ctl wait 4
+place_any "$LX" 101 0 "$EXTRACTOR_ID"
+linfo "$LX" 101 0
+expect "the machine the line describes" "$L_KIND" EXTRACTOR
+expect "the facing" "$L_FACING" west
+expect "the log it sees" "$L_LOG" minecraft:oak_log
+expect "the recipe it answers" "$L_RECIPE" "industrialforegoing:fluid_extractor/oak"
+expect "the recipe files its own type carries" "$L_RECIPES" 9
+expect "the recipe files the game kept" "$L_RECIPES_TOTAL" 9
+expect "a fresh tank" "$L_LATEX" 0
+lsay "$LX" 101 0 energy 0
+lsay "$LX" 101 0 progress 1
+ctl wait 4
+linfo "$LX" 101 0
+LATEX_FREE=$L_LATEX
+if [ "$SELFTEST" = latex ]; then
+    echo "(selftest: asserting three mB from an unpowered operation)"
+    LATEX_FREE=$((LATEX_FREE + 1))
+fi
+expect "the latex one unpowered operation gives" "$LATEX_FREE" 2
+expect "the buffer it left untouched" "$L_ENERGY" 0
+echo "  an oak log: $L_LATEX mB for 0 FE, bar $L_PROGRESS/100"
+
+echo "== AG: with 500 FE an operation gives three times the recipe =="
+lsay "$LX" 101 0 energy 5000
+lsay "$LX" 101 0 progress 1
+ctl wait 4
+linfo "$LX" 101 0
+expect "the latex after a powered operation (2 + 6 mB)" "$L_LATEX" 8
+expect "the buffer after a powered operation (5,000 - 500 FE)" "$L_ENERGY" 4500
+[ "$L_PROGRESS" -ge 1 ] && [ "$L_PROGRESS" -le 40 ] \
+    || fail "the powered cooldown is $L_PROGRESS, expected 1..40 of 100"
+echo "  powered: +6 mB for 500 FE, bar $L_PROGRESS/100"
+
+echo "== AH: a stone block behind it gives nothing (the counterfactual) =="
+ctl command "execute in minecraft:the_end run setblock $((LX + 1)) 101 0 minecraft:stone" >/dev/null
+ctl wait 4
+linfo "$LX" 101 0
+expect "the block it sees" "$L_LOG" minecraft:stone
+expect "the recipe a stone answers" "$L_RECIPE" none
+lsay "$LX" 101 0 energy 5000
+lsay "$LX" 101 0 progress 1
+ctl wait 6
+linfo "$LX" 101 0
+expect "the latex stone leaves" "$L_LATEX" 8
+expect "the buffer stone leaves" "$L_ENERGY" 5000
+# An idle attempt rests the bar at 100 and takes nothing; the read below lands a few
+# ticks later, so the bar is somewhere between 80 and 100 rather than exactly 100.
+[ "$L_PROGRESS" -ge 80 ] && [ "$L_PROGRESS" -le 100 ] \
+    || fail "the bar a machine with no log rests at is $L_PROGRESS, expected 80..100 of 100"
+echo "  stone behind it: $L_LATEX mB, $L_ENERGY FE, bar $L_PROGRESS/100"
+
+echo "== AI: the eighth hit consumes the log and bursts 400 mB =="
+ctl command "execute in minecraft:the_end run setblock $((LX + 1)) 101 0 minecraft:oak_log" >/dev/null
+ctl wait 4
+# Park the bar at 100 and the tank at a known amount first: the machine keeps working while
+# the harness talks to it, and a finished bar between two commands would spend the roll (and
+# a hit) before the assertion. Only the forced `progress 1` may run an operation.
+lsay "$LX" 101 0 progress 100
+lsay "$LX" 101 0 energy 5000
+ctl wait 4
+linfo "$LX" 101 0
+BURST_BEFORE=$L_LATEX
+HITS_REPLY=$(lsay "$LX" 101 0 extraction 7 || true; reply "has taken")
+case "$HITS_REPLY" in
+    *"has taken 7/8 hits"*) ;;
+    *) fail "the hit counter did not take 7: $HITS_REPLY" ;;
+esac
+lsay "$LX" 101 0 roll 0
+lsay "$LX" 101 0 progress 1
+ctl wait 6
+linfo "$LX" 101 0
+expect "the hits after the consuming operation" "$L_HITS" 0
+expect "the latex the operation gave (6 + 400 mB)" "$L_LATEX" "$((BURST_BEFORE + 406))"
+expect "the buffer after the operation" "$L_ENERGY" 4500
+expect "the block the consumed log left" "$(block_name "$((LX + 1))" 101 0)" minecraft:stripped_oak_log
+DRAIN_LINE=$(lsay "$LX" 101 0 drain 400 || true; reply "drained")
+case "$DRAIN_LINE" in
+    *"drained 400 mB of industrialforegoing:latex"*) ;;
+    *) fail "the tank refused the drain of the mod fluid it made: $DRAIN_LINE" ;;
+esac
+linfo "$LX" 101 0
+expect "the tank after a 400 mB drain" "$L_LATEX" "$((BURST_BEFORE + 6))"
+echo "  the eighth hit: $(block_name "$((LX + 1))" 101 0), $L_LATEX mB left after draining 400"
+
+echo "== AJ: a roll over the break chance moves the counter not at all =="
+ctl command "execute in minecraft:the_end run setblock $((LX + 1)) 101 0 minecraft:oak_log" >/dev/null
+ctl wait 4
+lsay "$LX" 101 0 progress 100
+lsay "$LX" 101 0 energy 5000
+ctl wait 4
+linfo "$LX" 101 0
+ROLL_BEFORE=$L_LATEX
+lsay "$LX" 101 0 extraction 7
+lsay "$LX" 101 0 roll 1
+lsay "$LX" 101 0 progress 1
+ctl wait 6
+linfo "$LX" 101 0
+expect "the hits a roll over the chance leaves" "$L_HITS" 7
+expect "the block a roll over the chance leaves" "$(block_name "$((LX + 1))" 101 0)" minecraft:oak_log
+expect "the latex the operation still gave" "$L_LATEX" "$((ROLL_BEFORE + 6))"
+echo "  roll 1.0: no hit, the log stays, $L_LATEX mB"
+
+echo "== AK: the unit takes latex and water, and makes dry rubber =="
+place_any "$LXU" 101 0 "$UNIT_ID"
+linfo "$LXU" 101 0
+expect "the machine the line describes" "$L_KIND" UNIT
+expect "a fresh unit's latex tank" "$L_LATEX" 0
+expect "a fresh unit's water tank" "$L_WATER" 0
+lsay "$LXU" 101 0 fluid latex 1000
+ctl wait 4
+# Water through the declared tank capability: the pin's insert takes water and lava.
+FILL_REPLY=$(lsay "$LXU" 101 0 fill water 1000 || true; reply "accepted")
+case "$FILL_REPLY" in
+    *"accepted 1000 mB of minecraft:water"*) ;;
+    *) fail "the water tank refused the pin's own fill: $FILL_REPLY" ;;
+esac
+linfo "$LXU" 101 0
+expect "the unit's latex tank" "$L_LATEX" 1000
+expect "the unit's water tank" "$L_WATER" 1000
+expect "the latex the capability reports" "$L_CAP_FLUID" industrialforegoing:latex
+# The same fill path with a mod fluid: zero moved, which is why the latex chain's own
+# tanks are filled by `/industrialforegoing fluid` (the report's fluid-move answer).
+LATEX_FILL=$(lsay "$LXU" 101 0 fill latex 100 || true; reply "accepted")
+case "$LATEX_FILL" in
+    *"accepted 0 mB of industrialforegoing:latex"*) ;;
+    *) fail "the pin's fill accepted a mod fluid: $LATEX_FILL" ;;
+esac
+lsay "$LXU" 101 0 energy 10000
+ctl wait 130
+linfo "$LXU" 101 0
+expect "the latex after one operation (1,000 - 750 mB)" "$L_LATEX" 250
+expect "the water after one operation (1,000 - 500 mB)" "$L_WATER" 500
+expect "the buffer after 100 ticks at 20 FE" "$L_ENERGY" 8000
+expect "the bar after the operation" "$L_PROGRESS" 0
+expect "the product" "$L_OUTPUT" "industrialforegoing:dryrubber x1"
+echo "  $L_OUTPUT from 750 mB latex and 500 mB water, 2,000 FE; the mod fluid refused a fill"
+
+echo "== AL: a hopper feeds a furnace, and the dry rubber smelts into plastic =="
+ctl command "execute in minecraft:the_end run setblock $LXU 100 0 minecraft:hopper[facing=down]" >/dev/null
+ctl command "execute in minecraft:the_end run setblock $LXU 99 0 minecraft:furnace" >/dev/null
+ctl command "item replace block $LXU 99 0 container.1 with minecraft:coal 4" >/dev/null
+ctl wait 300
+FURNACE=$(ctl container "$LXU" 99 0)
+FURNACE_OUT=$(echo "$FURNACE" | jq -r '.slots[2] | if . == null then "empty" else "\(.item) x\(.count)" end')
+FURNACE_IN=$(echo "$FURNACE" | jq -r '.slots[0] | if . == null then "empty" else "\(.item) x\(.count)" end')
+expect "the furnace's product" "$FURNACE_OUT" "industrialforegoing:plastic x1"
+expect "the dry rubber the furnace consumed" "$FURNACE_IN" empty
+linfo "$LXU" 101 0
+expect "the unit's output after the hopper" "$L_OUTPUT" empty
+echo "  the hopper moved the rubber into the furnace, which made $FURNACE_OUT"
+
+echo "== AM: a broken unit carries its latex, water and buffer on its item =="
+# Take the hopper and the furnace of the previous leg out first: a hopper under the machine
+# would swallow the drop before the player can stand on it.
+ctl command "execute in minecraft:the_end run setblock $LXU 100 0 minecraft:stone" >/dev/null
+ctl command "execute in minecraft:the_end run setblock $LXU 99 0 minecraft:air" >/dev/null
+ctl wait 6
+# 400 mB of water is under the machine's 500 mB gate, so it stands idle and spends nothing:
+# the numbers read before the break are the numbers the item must carry, exactly.
+lsay "$LXU" 101 0 fluid latex 1500
+lsay "$LXU" 101 0 fluid water 400
+lsay "$LXU" 101 0 energy 4000
+ctl wait 6
+linfo "$LXU" 101 0
+expect "the latex before the break" "$L_LATEX" 1500
+expect "the water before the break" "$L_WATER" 400
+expect "the buffer before the break" "$L_ENERGY" 4000
+ctl command "gamemode survival @s" >/dev/null
+ctl command "clear @s" >/dev/null
+ctl command "item replace entity @s hotbar.0 with minecraft:iron_pickaxe 1" >/dev/null
+ctl wait 6
+ctl select 1 >/dev/null
+ctl command "execute in minecraft:the_end run tp @s $((LXU - 2)).5 101 0.5" >/dev/null
+ctl wait 8
+UNIT_BROKEN=$(ctl break "$LXU" 101 0) || fail "breaking the unit failed"
+echo "  break: $(echo "$UNIT_BROKEN" | jq -c '{block, drops, picked_up}')"
+[ "$(echo "$UNIT_BROKEN" | jq -r ".drops[\"$UNIT_ID\"] // 0")" -ge 1 ] \
+    || fail "the broken unit dropped no item: $(echo "$UNIT_BROKEN" | jq -c '.drops')"
+ctl command "execute in minecraft:the_end run tp @s $LXU.5 101 0.5" >/dev/null
+ctl wait 20
+HELD_UNIT=$(ctl inventory | jq -r '.counts["industrialforegoing:latex_processing_unit"] // 0')
+[ "$HELD_UNIT" -ge 1 ] || fail "the broken unit's item was not picked up (counts $HELD_UNIT)"
+ctl select "$UNIT_ID" >/dev/null 2>&1 || ctl select 1 >/dev/null
+ctl command "gamemode creative @s" >/dev/null
+ctl wait 4
+place_held_any "$LXU" 101 0 "$UNIT_ID"
+linfo "$LXU" 101 0
+expect "the latex the item carried" "$L_LATEX" 1500
+expect "the water the item carried" "$L_WATER" 400
+expect "the buffer the item carried" "$L_ENERGY" 4000
+echo "  the unit came back with $L_ENERGY FE, $L_LATEX mB of latex and $L_WATER mB of water"
+
+echo "PASS: a placed machine is empty with no sources and faces its placer; two sources condense 200 mB for exactly 1,000 FE and one condenses nothing; without 1,000 FE two sources give half for free; three and six sources give 300 and 600 mB; a nearly full tank stops at 16,000 mB while still spending the FE; the declared tank drains 400 mB of water through the fluid handler; and left alone the machine keeps condensing on its own 10-tick bar; the Core ids of these slices register and read back, the four frames place and read back, an unregistered item and block id are refused, and a frame broken in survival drops itself; the condensator crafts from the tags (#c:plastics, #c:gears/iron, machine_frame/pity) with the grid empty afterwards while slice 2's stand-ins stay empty, the pity frame and the three gears craft, and all 16 lens recolours craft from the lens tag and c:dyes with the player's counts before and after; a machine broken with 7,000 FE and 5,000 mB comes back with exactly those numbers on the item it dropped; a seated speed augment of 4 makes the bar fall four a tick where an empty slot falls one, a second speed augment is refused and stays in the hand, an efficiency augment of 0.8 shortens the bar to 80 with an 8-tick cooldown at the same 1,000 FE, and both augments travel on the machine's item; the dissolution chamber places and faces its placer, reads its own recipe type from this package's data (23 files), holds its own fluids in a declared tank the capability reports back, runs the white lens recipe in exactly 100 ticks for 9,000 FE and 250 mB of latex, does nothing with an empty tank and starts when 250 mB arrive, empties its output into a hopper and a barrel, runs the simple machine frame's 300 ticks at exactly 90 FE a tick, makes the advanced frame from #c:plastics, the crafted #c:gears/diamond gear and the simple frame, and a broken chamber carries its buffer and latex back on its item; and the latex chain: a fluid extractor works on the oak log behind it, giving 2 mB for free and 6 mB for 500 FE, nothing at all when the block behind it is stone, and — on its eighth hit — consuming the log into a stripped one and bursting 400 mB that drain back out of its declared tank, where a roll over its break chance moves nothing; a latex processing unit takes 1,000 mB of latex through the command path and 1,000 mB of water through the declared capability (which refuses the mod fluid, so no fluid move can fill it), turns 750 mB of latex and 500 mB of water into one dry rubber for 2,000 FE, a hopper feeds that rubber into a furnace which smelts it into one plastic, and a broken unit carries its latex, water and buffer back on its item"
