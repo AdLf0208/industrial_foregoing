@@ -39,18 +39,22 @@
 pub mod runtime;
 
 use std::array;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use mod_api::{
     self, BlockDropsEvent, BlockEntityPart, BlockEntityRef, BlockEntityTickEvent,
-    BlockEntityTicksEvent, BlockPart, BlockState, Command, CommandArgumentValue, CommandInvocation,
-    Compound, Direction, FLUIDS, Flow, FluidIdentity, Hooks, Host, HostTransaction, ItemKey,
-    ItemPart, LevelHost, ModEnergyBuffer, ModFluidTanks, OnBlockPlacedByEvent,
-    RegisterCommandsEvent, Registrar, RegistrationContext, RunModCommandEvent, ServerHost,
-    StateForPlacementEvent, Tag, Text,
+    BlockEntityTicksEvent, BlockEntityTypeKey, BlockPart, BlockState, Command,
+    CommandArgumentValue, CommandInvocation, ComponentTypesEvent, Compound, Direction, FLUIDS,
+    Flow, FluidIdentity, Hand, Hooks, Host, HostSide, HostTransaction, InteractionResult, ItemKey,
+    ItemPart, ItemStack, LevelHost, LevelTickPostEvent, ModEnergyBuffer, ModFluidTanks,
+    OnBlockPlacedByEvent, RegisterCommandsEvent, Registrar, RegistrationContext,
+    RunModCommandEvent, ServerHost, StateForPlacementEvent, Tag, Text, UseItemOnEvent,
 };
 
-use crate::runtime::{CAPACITY_FE, Condensator, MAX_PROGRESS, TANK_CAPACITY_MB};
+use crate::runtime::{
+    AUGMENT_COMPONENT, AUGMENT_SLOTS, Augment, AugmentType, Augments, CAPACITY_FE, Condensator,
+    MAX_PROGRESS, TANK_CAPACITY_MB,
+};
 
 /// The machine (`ModuleResourceProduction.WATER_CONDENSATOR`).
 pub const BLOCK: &str = "industrialforegoing:water_condensator";
@@ -59,6 +63,8 @@ pub const SUBFACING: &str = "subfacing";
 /// The saved keys: the buffer's amount (the energy declaration's own), the bar and the tank.
 const KEY_ENERGY: &str = "energy";
 const KEY_PROGRESS: &str = "progress";
+/// The two augment slots, each an item's `titanium:augments` component.
+const KEY_AUGMENTS: &str = "augments";
 /// `minecraft:water`, the only fluid the tank takes.
 const WATER: &str = "minecraft:water";
 /// A side the tank is read and drained through (all six reach it).
@@ -69,6 +75,33 @@ const COMMAND: &str = "industrialforegoing";
 /// The machine's item, resolved once in `register`: `block_drops` runs with a read-only level host,
 /// which cannot name an item, so the drop is only given the machine when it is ours.
 static MACHINE_ITEM: OnceLock<ItemKey> = OnceLock::new();
+
+/// The block entity type `register` declares, kept so a queued augment seating can prove the block
+/// entity it writes to is still this machine — wherever in the world it is, without swapping a level.
+static MACHINE_KIND: OnceLock<BlockEntityTypeKey> = OnceLock::new();
+
+/// An augment seating a right-click asked for, applied after the level ticks: a block-entity write
+/// made during a tick can be overwritten by that entity's own write-back (HANDOVER §9d.10), so the
+/// seat and the held stack's shrink both land in `level_tick_post`.
+struct Seating {
+    /// The clicking player's UUID (`BlockClick.player`).
+    player: u128,
+    /// The level the machine stands in, so only that level's tick applies it.
+    dimension: &'static str,
+    /// The clicked machine.
+    pos: [i32; 3],
+    /// The hand the augment came from, to shrink the right slot.
+    hand: Hand,
+    /// The stack as it was clicked, to give back one fewer of it.
+    stack: ItemStack,
+    /// Which yield the augment moves, for the one-of-each-type rule.
+    kind: AugmentType,
+    /// The component's value, saved into the slot unchanged.
+    component: Compound,
+}
+
+/// The seatings queued by `use_item_on`, in click order.
+static SEATING: Mutex<Vec<Seating>> = Mutex::new(Vec::new());
 
 /// The six sides, in `Direction`'s order (down, up, north, south, west, east).
 const SIDES: [[i32; 3]; 6] = [
@@ -102,6 +135,7 @@ impl Hooks for Mod {
             .block_entity_type("water_condensator")
             .blocks(&["water_condensator"])
             .build();
+        let _ = MACHINE_KIND.set(kind);
         // One Part, attached once, to the block entity type: `block_entity_part` also puts its
         // block half on every block of the type (`expand_block_entity_parts`), which is what makes
         // the block's own moments — `block_entity_ticks` and the placement rotation — reach it.
@@ -129,6 +163,36 @@ impl Hooks for Mod {
         tanks.faces = array::from_fn(|_| all.clone());
         tanks.outputs = vec![0];
         r.block_fluids(&block, tanks);
+    }
+
+    /// `component_types` (`RegisterDataComponentsEvent`): the one component an augment item carries,
+    /// frozen before any content loads so this package's `horizon/item/` files may set it.
+    /// `titanium:augments` is Titanium's `AugmentWrapper.ATTACHMENT`, the key every IF add-on
+    /// (and `mifa`) puts on its addon items.
+    fn component_types(&self, _context: &RegistrationContext, event: &mut ComponentTypesEvent<'_>) {
+        event.types.push(AUGMENT_COMPONENT.to_owned());
+    }
+
+    /// After a level's tick pass: apply the augment seatings its right-clicks asked for. A block
+    /// entity written during a tick can be overwritten by that entity's own write-back (HANDOVER
+    /// §9d.10), so both the slot and the shrunk held stack are written here, never inside the tick.
+    fn level_tick_post(&self, host: HostSide, event: &mut LevelTickPostEvent) {
+        let HostSide::Server(host) = host else {
+            return;
+        };
+        let dimension = event.level.dimension_id();
+        let queued = take_seatings();
+        let mut later = Vec::new();
+        for seat in queued {
+            if seat.dimension != dimension {
+                later.push(seat);
+                continue;
+            }
+            seat_augment(host, event.level, &seat);
+        }
+        if !later.is_empty() {
+            queue_seatings(later);
+        }
     }
 
     /// `BlockDropsEvent`: a broken machine's own item carries the machine's FE, water and bar, so
@@ -255,6 +319,35 @@ impl BlockPart for Machine {
             level.state_with_property(event.state, SUBFACING, facing_for_yaw(event.context.yaw))?;
         Some(Some(faced))
     }
+
+    /// `AddonItem.useOn`: right-clicking the machine with an addon seats one in the first empty
+    /// augment slot and takes one from the hand. The game asks a block's Part only for that block,
+    /// so this never fires for another machine; a stack without `titanium:augments` passes, as
+    /// `canAcceptAugment` refuses it and upstream falls through to the item.
+    ///
+    /// The seating is queued, not written here: the write lands in [`Mod::level_tick_post`]. The
+    /// click is consumed either way, as upstream answers `CONSUME_PARTIAL` once it seats and the
+    /// machine has nothing else to use; a refused second augment simply changes nothing.
+    fn use_item_on(
+        &self,
+        host: &mut dyn ServerHost,
+        event: &mut UseItemOnEvent<'_>,
+    ) -> Option<InteractionResult> {
+        let click = event.click;
+        let stack = click.stack?;
+        let component = augment_component(&*host, stack)?;
+        let augment = decode_augment(&component)?;
+        queue_seatings(vec![Seating {
+            player: click.player,
+            dimension: click.dimension.key().id(),
+            pos: click.pos,
+            hand: click.hand,
+            stack: stack.clone(),
+            kind: augment.kind,
+            component,
+        }]);
+        Some(InteractionResult::Consume)
+    }
 }
 
 #[mod_api::horizon_part]
@@ -275,7 +368,7 @@ impl BlockEntityPart for Machine {
             read_progress(&event.entity.nbt),
         );
         let before = (machine.energy, machine.water_mb, machine.progress);
-        machine.tick(water_sources(host, pos));
+        machine.tick_with_augments(water_sources(host, pos), read_augments(&event.entity.nbt));
         if machine.energy != before.0 {
             write_int(&mut event.entity.nbt, KEY_ENERGY, machine.energy);
         }
@@ -462,13 +555,17 @@ fn readout(host: &mut dyn ServerHost, pos: [i32; 3]) -> String {
     let energy = read_int(&data, KEY_ENERGY).clamp(0, CAPACITY_FE);
     let water = read_tank(&data).clamp(0, TANK_CAPACITY_MB);
     let progress = read_progress(&data).unwrap_or(MAX_PROGRESS);
+    let augments = read_augments(&data);
     let sources = water_sources(host, pos);
     let facing = level
         .block_property(host, pos, SUBFACING)
         .unwrap_or_else(|| "unknown".to_owned());
     let time = level.game_time(host).unwrap_or(0);
     format!(
-        "Water Condensator at {pos:?}: {energy}/{CAPACITY_FE} FE, water {water}/{TANK_CAPACITY_MB} mB, sources {sources}, progress {progress}/{MAX_PROGRESS}, facing {facing}, t={time}"
+        "Water Condensator at {pos:?}: {energy}/{CAPACITY_FE} FE, water {water}/{TANK_CAPACITY_MB} mB, sources {sources}, progress {progress}/{}, augments speed {} efficiency {:.2}, facing {facing}, t={time}",
+        augments.bar_max(),
+        augments.speed,
+        augments.efficiency,
     )
 }
 
@@ -494,6 +591,148 @@ fn read_progress(nbt: &Compound) -> Option<i32> {
         Some(Tag::Int(value)) => Some(*value),
         _ => None,
     }
+}
+
+// ---------------------------------------------------------------------------
+// The augment slots (slice 3)
+// ---------------------------------------------------------------------------
+
+/// The machine's two augment slots, the `titanium:augments` component each
+/// item carried; an empty compound (or a missing entry) is an empty slot.
+fn augment_slots(nbt: &Compound) -> [Option<Compound>; AUGMENT_SLOTS] {
+    let mut slots = [const { None }; AUGMENT_SLOTS];
+    let Some(Tag::List(entries)) = nbt.get(&KEY_AUGMENTS.into()) else {
+        return slots;
+    };
+    for (slot, entry) in slots.iter_mut().zip(entries) {
+        if let Tag::Compound(component) = entry
+            && !component.is_empty()
+        {
+            *slot = Some(component.clone());
+        }
+    }
+    slots
+}
+
+/// Write both slots back, keeping the positions: an empty slot is an empty
+/// compound, so slot 1 does not move to slot 0.
+fn write_augment_slots(nbt: &mut Compound, slots: &[Option<Compound>; AUGMENT_SLOTS]) {
+    let entries = slots
+        .iter()
+        .map(|slot| Tag::Compound(slot.clone().unwrap_or_default()))
+        .collect();
+    nbt.insert(KEY_AUGMENTS.into(), Tag::List(entries));
+}
+
+/// The augments in force, decoded from the saved slots.
+fn read_augments(nbt: &Compound) -> Augments {
+    Augments::from_slots(augment_slots(nbt).map(|slot| slot.as_ref().and_then(decode_augment)))
+}
+
+/// The augment an item's `titanium:augments` component names, speed first as
+/// `canAcceptAugment` asks; `None` for a component this machine does not read.
+fn decode_augment(component: &Compound) -> Option<Augment> {
+    AugmentType::ALL.into_iter().find_map(|kind| {
+        let value = number(component, kind.name())?;
+        Some(Augment { kind, value })
+    })
+}
+
+/// A component value as the float Titanium stores: a data pack's JSON number
+/// reaches it as a `Double`, a `/give`'s SNBT as a `Float`, a hand-written one
+/// as an `Int`.
+fn number(nbt: &Compound, key: &str) -> Option<f32> {
+    match nbt.get(&key.into())? {
+        Tag::Float(bits) => Some(f32::from_bits(*bits)),
+        Tag::Double(bits) => Some(f64::from_bits(*bits) as f32),
+        Tag::Int(value) => Some(*value as f32),
+        _ => None,
+    }
+}
+
+/// The `titanium:augments` component a clicked stack carries: its own override
+/// when it has one, else the item's declared default (`AugmentWrapper`'s
+/// `stack.getOrDefault(ATTACHMENT, …)` reads the effective component).
+fn augment_component(host: &dyn Host, stack: &ItemStack) -> Option<Compound> {
+    let patch = stack.components().map(|components| components.as_nbt());
+    if let Some(Tag::Compound(component)) =
+        patch.and_then(|patch| patch.get(&AUGMENT_COMPONENT.into()))
+    {
+        return Some(component.clone());
+    }
+    match host.item_default_component(stack.item(), AUGMENT_COMPONENT) {
+        Some(Tag::Compound(component)) => Some(component),
+        _ => None,
+    }
+}
+
+/// Queue augment seatings for the level's next `level_tick_post`.
+fn queue_seatings(seatings: Vec<Seating>) {
+    if let Ok(mut queued) = SEATING.lock() {
+        queued.extend(seatings);
+    }
+}
+
+/// Take every queued seating.
+fn take_seatings() -> Vec<Seating> {
+    SEATING
+        .lock()
+        .map(|mut queued| std::mem::take(&mut *queued))
+        .unwrap_or_default()
+}
+
+/// Seat one queued augment: the first empty slot of the machine at `pos` takes
+/// the component, then one comes out of the hand that clicked. A second augment
+/// of a type the machine already has is refused (`canAcceptAugment`), and
+/// nothing is taken from the hand.
+fn seat_augment(host: &mut dyn ServerHost, level: mod_api::LevelRef, seat: &Seating) {
+    let Some(entity) = host.block_entity(level, seat.pos) else {
+        return;
+    };
+    let Some(kind) = MACHINE_KIND.get() else {
+        return;
+    };
+    if entity.kind(&*host) != Some(*kind) {
+        return;
+    }
+    let Some(saved) = entity.data(&*host) else {
+        return;
+    };
+    let mut slots = augment_slots(&saved);
+    if slots
+        .iter()
+        .flatten()
+        .filter_map(decode_augment)
+        .any(|seated| seated.kind == seat.kind)
+    {
+        return;
+    }
+    let Some(index) = slots.iter().position(Option::is_none) else {
+        return;
+    };
+    slots[index] = Some(seat.component.clone());
+    let mut patch = Compound::new();
+    write_augment_slots(&mut patch, &slots);
+    if entity.merge_data(host, patch).unwrap_or(false) {
+        shrink_held(host, seat);
+    }
+}
+
+/// Take one augment out of the hand that clicked: the selected hotbar slot for
+/// the main hand, the off hand's own slot for the other.
+fn shrink_held(host: &mut dyn ServerHost, seat: &Seating) {
+    let Some(player) = host.player(seat.player) else {
+        return;
+    };
+    let slot = match seat.hand {
+        Hand::Main => player.selected_slot(&*host).map(|slot| slot as u32),
+        Hand::Off => Some(40),
+    };
+    let Some(slot) = slot else {
+        return;
+    };
+    let rest = seat.stack.clone().shrink(1);
+    let _ = player.set_inventory_slot(host, slot, rest);
 }
 
 /// The tank's amount, in the declaration's shape: one entry per tank under `fluids`.
@@ -533,7 +772,10 @@ fn has_contents(saved: &Compound) -> bool {
         read_tank(saved),
         read_progress(saved),
     );
-    machine.energy > 0 || machine.water_mb > 0 || machine.progress != MAX_PROGRESS
+    machine.energy > 0
+        || machine.water_mb > 0
+        || machine.progress != MAX_PROGRESS
+        || augment_slots(saved).iter().any(Option::is_some)
 }
 
 /// The `minecraft:block_entity_data` payload a broken machine's item carries: the block entity's
@@ -720,6 +962,96 @@ mod tests {
         assert!(
             clamp_patch(&fine).is_none(),
             "a machine within capacity is left exactly as it was"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // The augment slots (slice 3)
+    // -----------------------------------------------------------------------
+
+    /// A `titanium:augments` component: Titanium's `Map<String, Float>`, which
+    /// a data pack's JSON reaches as a double and a `/give`'s SNBT as a float.
+    fn component(kind: &str, value: Tag) -> Compound {
+        let mut map = Compound::new();
+        map.insert(kind.into(), value);
+        map
+    }
+
+    #[test]
+    fn an_augment_component_decodes_speed_before_efficiency() {
+        assert_eq!(
+            decode_augment(&component("Speed", Tag::Float(4.0f32.to_bits()))),
+            Some(Augment {
+                kind: AugmentType::Speed,
+                value: 4.0
+            })
+        );
+        let both = {
+            let mut map = component("Efficiency", Tag::Double(0.8f64.to_bits()));
+            map.insert("Speed".into(), Tag::Float(3.0f32.to_bits()));
+            map
+        };
+        assert_eq!(
+            decode_augment(&both).map(|augment| augment.kind),
+            Some(AugmentType::Speed),
+            "canAcceptAugment asks Speed first"
+        );
+        assert_eq!(
+            decode_augment(&component("Efficiency", Tag::Double(0.8f64.to_bits()))),
+            Some(Augment {
+                kind: AugmentType::Efficiency,
+                value: 0.8
+            }),
+            "a data pack's JSON number is a Double"
+        );
+        assert_eq!(
+            decode_augment(&component("Speed", Tag::Int(3))),
+            Some(Augment {
+                kind: AugmentType::Speed,
+                value: 3.0
+            })
+        );
+        assert_eq!(
+            decode_augment(&component("Processing", Tag::Float(3.0f32.to_bits()))),
+            None
+        );
+        assert_eq!(decode_augment(&Compound::new()), None);
+    }
+
+    #[test]
+    fn a_seated_augment_round_trips_through_the_saved_compound() {
+        let speed_four = component("Speed", Tag::Float(4.0f32.to_bits()));
+        let mut nbt = Compound::new();
+        assert_eq!(augment_slots(&nbt), [None, None]);
+        write_augment_slots(&mut nbt, &[Some(speed_four.clone()), None]);
+        assert_eq!(augment_slots(&nbt), [Some(speed_four), None]);
+        assert_eq!(read_augments(&nbt).speed, 4);
+    }
+
+    #[test]
+    fn the_two_slots_keep_their_positions() {
+        let efficiency = component("Efficiency", Tag::Double(0.8f64.to_bits()));
+        let mut nbt = Compound::new();
+        write_augment_slots(&mut nbt, &[None, Some(efficiency.clone())]);
+        let slots = augment_slots(&nbt);
+        assert_eq!(slots[0], None, "the first slot stays empty");
+        assert_eq!(slots[1], Some(efficiency));
+        let augments = read_augments(&nbt);
+        assert_eq!(augments.efficiency, 0.8);
+        assert_eq!(augments.speed, 1, "no speed augment is the base rate");
+    }
+
+    #[test]
+    fn an_empty_machine_with_only_an_augment_has_something_to_carry() {
+        let mut nbt = Compound::new();
+        assert!(!has_contents(&nbt), "a fresh machine carries nothing");
+        write_augment_slots(
+            &mut nbt,
+            &[Some(component("Speed", Tag::Float(3.0f32.to_bits()))), None],
+        );
+        assert!(
+            has_contents(&nbt),
+            "a machine holding an augment has something to carry"
         );
     }
 }

@@ -2,10 +2,11 @@
 """Parse `/industrialforegoing info`'s line into shell assignments.
 
 `Water Condensator at [202, 101, 0]: 4000/10000 FE, water 200/16000 mB,
-sources 2, progress 10/100, facing west, t=264`
+sources 2, progress 10/100, augments speed 1 efficiency 1.00, facing west, t=264`
 
 Prints `ENERGY=… FE_CAP=… WATER=… WATER_CAP=… SOURCES=… PROGRESS=…
-PROGRESS_MAX=… FACING=… T=…` (or `ok=0`), for the e2e to `eval`.
+PROGRESS_MAX=… SPEED=… EFFICIENCY=… FACING=… T=…` (or `ok=0`), for the e2e to
+`eval`.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ LINE = re.compile(
     r"^Water Condensator at \[.*?\]: (?P<energy>-?\d+)/(?P<fe_cap>\d+) FE, "
     r"water (?P<water>-?\d+)/(?P<water_cap>\d+) mB, "
     r"sources (?P<sources>\d+), progress (?P<progress>-?\d+)/(?P<progress_max>\d+), "
+    r"augments speed (?P<speed>-?\d+) efficiency (?P<efficiency>\d+\.\d+), "
     r"facing (?P<facing>[a-z_]+), t=(?P<t>\d+)$"
 )
 
@@ -35,6 +37,8 @@ def main() -> None:
     print(f"SOURCES={match['sources']}")
     print(f"PROGRESS={match['progress']}")
     print(f"PROGRESS_MAX={match['progress_max']}")
+    print(f"SPEED={match['speed']}")
+    print(f"EFFICIENCY={match['efficiency']}")
     print(f"FACING={match['facing']}")
     print(f"T={match['t']}")
 

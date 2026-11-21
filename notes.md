@@ -19,18 +19,19 @@ injection or `support.rs` describes the **retired** port and is kept as history.
 
 Status: **ported-partial** — slice 1 (the Water Condensator: its block, FE
 buffer, water tank, the one condensation rule and its placement rotation) is verified in game,
-and slice 2 (0.2.2, 2026-11-21) adds the machine's **contents surviving a break** and makes its
-**carried recipe actually craft**. The current pin is nightly
-**`0a875da91dbb0fdcb7ba8c42c11341aa229af51a`** + mixins
+slice 2 (0.2.2, 2026-11-21) adds the machine's **contents surviving a break** and makes its
+**carried recipe actually craft**, and slice 3 (0.2.3, 2026-11-21) adds the **`titanium:augments`
+component and the speed/efficiency arithmetic** the parent's machines read. The current pin is
+nightly **`0a875da91dbb0fdcb7ba8c42c11341aa229af51a`** + mixins
 **`e59da9094f0c2fdda6c627fe9eff22dec6a906f0`**. **0.2.0 — the version merged in the registry —
 could not load at all**: it attached `Machine` as both the block's Part and the block entity
 type's Part, which the engine refuses ("`industrialforegoing::Machine is attached to
 industrialforegoing:water_condensator twice`"), and it had no in-game run to catch that. 0.2.1
 removes the redundant `block_part` call (see [The doubled Part](#the-doubled-part-021-2026-11-20));
-0.2.2 carries that repair **and never shipped before**, so it is the first version of this mod
-that both loads and keeps its contents. See
-[Slice 2](#slice-2--contents-survive-the-break--the-recipe-crafts-022-2026-11-21). The gap list
-at the end is the rest of the mod.
+0.2.2 carries that repair **and never shipped before**; 0.2.3 is the same machine plus its
+augment slots. See [Slice 2](#slice-2--contents-survive-the-break--the-recipe-crafts-022-2026-11-21)
+and [Slice 3](#slice-3--the-augment-family-023-2026-11-21). The gap list at the end is the rest of
+the mod.
 
 **Why this mod now:** it is the rank-0 `content`/`machines` core mod
 `precheck-mod.py industrialforegoing` offers (`DISPATCHABLE`, jar licence MIT,
@@ -99,6 +100,13 @@ the port (ARCHITECTURE.md §8, "Libraries are mapped, not ported").
   `/industrialforegoing drain <pos> <amount>` — upstream has no commands of its
   own (its GUI is the only control); precedent `/powah info|set`,
   `/charginggadgets energy`.
+- **The augment slots (slice 3).** Two slots in the block entity's compound (`augments`), each the
+  `titanium:augments` component an item carried. Right-clicking the machine with an addon seats one
+  (after the level ticks, never mid-tick) and takes it from the hand; a second of the same type is
+  refused. `Speed` sets how far the bar falls a tick and `Efficiency` scales its length
+  (`floor(100 * efficiency)`), which is what the next cooldown is taken from — Titanium's
+  `IndustrialWorkingTile`, not a new mechanic. `/industrialforegoing info` prints both and the bar's
+  current maximum.
 
 ## Hooks — the retired `.hnmod` plan (history; the mapping is in §Migration)
 
@@ -528,7 +536,8 @@ the faces.
 | the carried advancement | `not ported` (data) — repaired and loaded, but no criterion is exercised in game |
 | GUI screen / tooltip | `not ported` — gap 1 (no menu; the readout is the command) |
 | redstone control modes | `not ported` — gap 2 |
-| augments, comparator, config file | `not ported` — gaps 3, 7, 8 |
+| augments | `tested` — slice 3, phases M–Q below |
+| comparator output, config file | `not ported` — gaps 7, 8 |
 | the other ~71 blocks and their recipes | `not ported` — gap 9 (they are other slices) |
 
 ### The changelog for the 0.2.2 resubmission
@@ -545,9 +554,133 @@ the faces.
 > recipe now crafts and consumes them in game, and the carried advancement's unknown
 > `neoforge:item_exists` condition is dropped. `runtime.rs` is unchanged, byte for byte.
 
+## Slice 3 — the augment family (0.2.3, 2026-11-21)
+
+**The slice: gap 3 — "No augments. Speed, efficiency and processing augments are Titanium
+components; none is ported, so every machine runs at the base rate."** It is the surface two
+add-ons of this campaign are blocked on, measured rather than assumed: `mifa` resolved 29 of its
+61 external symbols as missing and the blocking one is `titanium:augments` plus the machine that
+reads it (`evidence/mifa/parent-references.log`), and `industrialforegoingsouls` references the
+parent seven times with none resolved. The port now registers the component and reads it, so an
+item that carries it is no longer inert.
+
+Upstream, read at `Buuz135/Industrial-Foregoing` `ce2852db` and Titanium `e53e869`:
+
+- `AugmentWrapper` stores a `Map<String, Float>` under **`titanium:augments`**; `AugmentTypes`
+  names the keys `Speed` and `Efficiency`.
+- `AddonItem.useOn`: right-click a `MachineTile` with an augment → the first empty slot of its
+  two-slot augment inventory takes one and the hand gives one up (`CONSUME_PARTIAL`);
+  `IndustrialMachineTile.canAcceptAugment` refuses a second augment of the same type.
+- `IndustrialWorkingTile`: every tick sets the bar's `progressIncrease` from the speed value, and
+  after a completed operation sets `maxProgress = floor(100 * efficiency)` and rests the bar at
+  `maxProgress * workAmount`. So **speed divides the cooldown** (the bar falls faster) and
+  **efficiency shortens the bar** at the same 1,000 FE a operation — the same energy per
+  operation, a higher rate.
+- The parent's own items are `speed_addon_tier_1/2` (`Speed` 2.0 / 3.0) and
+  `efficiency_addon_tier_1/2` (`Efficiency` 0.9 / 0.8).
+
+What this package does with them:
+
+| piece | where | what |
+|---|---|---|
+| component registration | `Hooks::component_types` (`src/lib.rs`) | declares `titanium:augments` before content loads, so this package's `horizon/item/` files may set it |
+| the two slots | `augments` list in the block entity's compound | two compounds, each an item's `titanium:augments` value; an empty compound is an empty slot, and the positions never move |
+| seating | `BlockPart::use_item_on` → queued, applied in `Hooks::level_tick_post` | the click queues the seat; the tick's end merges the slot into the block entity and takes one from the hand (`Hand::Main` = the selected hotbar slot, `Hand::Off` = 40). A block-entity write made *during* a tick is overwritten by that entity's own write-back (HANDOVER §9d.10), which is why it lands here and not in the item hook |
+| the arithmetic | `src/runtime.rs` | `AugmentType`/`Augment`/`Augments`, `Augments::bar_max()` (`floor(100 * efficiency)` in float, as Java's `(int) Math.floor`), `Attempt::cooldown_in(bar_max)`, `Condensator::tick_with_augments`; `tick` is the same call with `Augments::NONE` |
+| the readout | `/industrialforegoing info` | `progress <p>/<bar max>` and `augments speed <n> efficiency <0.00>` |
+| the items | `data/industrialforegoing/horizon/item/` | the parent's four addon items with their declared `titanium:augments` default and `max_stack_size` 16, and their own carried textures/models |
+
+**TDD, in order.** The nine runtime tests and four glue tests were written first against `todo!()`
+bodies: **16 passed, 23 failed**, every failure `not yet implemented` — the arithmetic
+(`a_speed_augment_falls_four_a_tick`, `a_speed_augment_finishes_the_bar_in_twenty_five_ticks`,
+`an_efficiency_augment_changes_the_bar_maximum_after_a_work`,
+`the_efficiency_multiplier_floors_like_java_float_math`,
+`the_speed_value_truncates_toward_zero_like_a_java_cast`,
+`the_augment_path_with_no_augment_is_the_base_rate`) and the saved shape
+(`an_augment_component_decodes_speed_before_efficiency`,
+`a_seated_augment_round_trips_through_the_saved_compound`, `the_two_slots_keep_their_positions`,
+`an_empty_machine_with_only_an_augment_has_something_to_carry`). Green: **39 passed, 0 failed**
+(`evidence/industrialforegoing/sdk-test-red-slice3.log`, `sdk-test-slice3.log` = `sdk-test.log`).
+
+**In game** (launcher build at the pin, `evidence/industrialforegoing-e2e/e2e-launcher-slice3.log`),
+phases M–Q, quoted:
+
+```
+== M: with no augment the bar falls exactly one a tick ==
+  Water Condensator at [202, 101, 0]: 0/10000 FE, water 5000/16000 mB, sources 0, progress 81/100, augments speed 1 efficiency 1.00, facing west, t=1129
+  Water Condensator at [202, 101, 0]: 0/10000 FE, water 5000/16000 mB, sources 0, progress 98/100, augments speed 1 efficiency 1.00, facing west, t=1150
+  Water Condensator at [202, 101, 0]: 0/10000 FE, water 5000/16000 mB, sources 0, progress 88/100, augments speed 1 efficiency 1.00, facing west, t=1160
+  empty slot: progress 98 -> 88 over 10 ticks
+== N: an efficiency addon shortens the bar to 80 and the cooldown to 8 ==
+  Water Condensator at [202, 101, 0]: 0/10000 FE, water 5000/16000 mB, sources 0, progress 44/80, augments speed 1 efficiency 0.80, facing west, t=1204
+  Water Condensator at [202, 101, 0]: 4000/10000 FE, water 400/16000 mB, sources 2, progress 7/80, augments speed 1 efficiency 0.80, facing west, t=1246
+  efficiency 0.80: +400 mB for 1000 FE, bar 7/80
+== O: a seated speed addon makes the bar fall four a tick (100 -> 60 in 10) ==
+  Water Condensator at [202, 101, 0]: 0/10000 FE, water 800/16000 mB, sources 0, progress 4/80, augments speed 4 efficiency 0.80, facing west, t=1315
+  Water Condensator at [202, 101, 0]: 0/10000 FE, water 800/16000 mB, sources 0, progress 84/80, augments speed 4 efficiency 0.80, facing west, t=1335
+  Water Condensator at [202, 101, 0]: 0/10000 FE, water 800/16000 mB, sources 0, progress 52/80, augments speed 4 efficiency 0.80, facing west, t=1343
+  speed 4: progress 84 -> 52 over 8 ticks
+== P: a second speed addon is refused and stays in the hand ==
+  Water Condensator at [202, 101, 0]: 0/10000 FE, water 800/16000 mB, sources 0, progress 44/80, augments speed 4 efficiency 0.80, facing west, t=1385
+== Q: the augments travel on the machine's item ==
+  Water Condensator at [202, 101, 0]: 0/10000 FE, water 800/16000 mB, sources 0, progress 72/80, augments speed 4 efficiency 0.80, facing west, t=1523
+  the broken machine came back with speed 4 and efficiency 0.80
+PASS: … a machine broken with 7,000 FE and 5,000 mB comes back with exactly those numbers on the item it dropped; a seated speed augment of 4 makes the bar fall four a tick where an empty slot falls one, a second speed augment is refused and stays in the hand, an efficiency augment of 0.8 shortens the bar to 80 with an 8-tick cooldown at the same 1,000 FE, and both augments travel on the machine's item
+```
+
+The rate is measured against the readout's own `t=` (`progress 84 -> 52 over 8 ticks` is exactly
+`4 x 8`), so the chat round trip and the harness's waits cannot skew it, and the window is short
+enough that a finished 80-tick bar cannot reset inside it (an earlier version used a 19–25 tick
+window and read a reset as a negative rate). The run is fail-capable four ways: `SELFTEST=1` flips
+phase B (`FAIL: the water is 200, expected 201`); `SELFTEST=augments` leaves phase B alone and
+flips phase O's rate (`selftest: asserting a fall of 57` / `FAIL: speed 4 fell 56 over 14 ticks,
+expected 57`), because a run that fails at B never reaches the augment legs; `SELFTEST=contents`
+flips phase L; and the control leg (the same Nightly without the package) stops at the first
+`give` (`FAIL: the machine item did not register`). All four are `EXIT:1`.
+
+### Coverage (families this slice adds)
+
+| family | coverage |
+|---|---|
+| the `titanium:augments` component registration | `tested` — the four items declare it and the e2e reads `speed 4` / `efficiency 0.80` off the machine after seating them |
+| the two augment slots (saved shape, positions) | `tested` — `the_two_slots_keep_their_positions`, and phase Q breaks the machine and reads both back |
+| seating an augment (`AddonItem.useOn`) | `tested` — phases N/O: the hand gives one up (`held … 0`), the slot takes it |
+| one of each type (`canAcceptAugment`) | `tested` — phase P: a second speed addon is refused and stays held |
+| the speed arithmetic | `tested` — phase O: `progress 84 -> 52 over 8 ticks`, four a tick, against phase M's one a tick |
+| the efficiency arithmetic | `tested` — phase N: `progress …/80` and `+400 mB for 1000 FE`, cooldown 1..8 |
+| the processing augment | `not ported` — a third type; its parent item is `processing_addon_*`, and this machine runs one operation a cycle, so it adds nothing here (gap 3b) |
+| the addons' dissolution-chamber recipes | `blocked(industrialforegoing:dissolution_chamber)` — the machine is a later slice; the four items are `give`-only, and their recipes name that chamber |
+| the GUI augment slots | `not ported` — gap 1 (no menu); the slots are seated by right-clicking the machine |
+
+### Script regression found and fixed while doing this slice
+
+`tools/assemble_content.py` regenerated `data/…/recipe/water_condensator.json` and the advancement
+**from the jar**, which re-introduced the three absent tags slice 2 had replaced (`#c:plastics`,
+`#c:gears/iron`, `#industrialforegoing:machine_frame/pity`) and the `neoforge:item_exists`
+condition — the machine stopped crafting in game (`recipe PASS` → `the declared recipe did not
+craft … None`). The repair now lives **in the script** (`upgrade_recipe`'s `fallbacks`,
+`upgrade_advancement`), so a rerun reproduces slice 2's behaviour instead of undoing it; the
+script also writes to the port root (`CONTENT = ROOT`) and no longer writes a content-only
+manifest over the port's `horizon-mod.toml`.
+
+### The changelog for the 0.2.3 update
+
+> Supersedes the closed 0.2.2 PR of this entry (itself superseding 0.2.1/#600). **New: the
+> augment family.** `titanium:augments` is registered through `component_types`, the Water
+> Condensator has the parent's two augment slots in its saved compound, right-clicking it with an
+> addon seats one (after the level ticks) and one of each type is allowed, and the speed and
+> efficiency augments move the bar exactly as Titanium's `IndustrialWorkingTile` does — speed by
+> its value a tick, efficiency by `floor(100 * efficiency)`. The parent's four addon items ship as
+> `give`-only data with their component defaults and their own textures. Proven in game: an empty
+> slot falls one a tick, a seated speed 4 falls four (84 → 52 over 8 ticks), an efficiency 0.8
+> gives an 80-tick bar and an 8-tick cooldown at the same 1,000 FE, a second speed addon is refused
+> and stays in the hand, and both augments travel on the broken machine's item. No `runtime.rs`
+> rule of slices 1–2 changed: the base-rate path is the same call with no augment seated, and the
+> 26 slice-1/2 tests pass unchanged.
+
 ## Skills
 
-Skills: superpowers/using-superpowers,brainstorming,writing-plans,test-driven-development,systematic-debugging,verification-before-completion; BeautifulRust/rust-best-practices,rust-port
+Skills: superpowers/using-superpowers,brainstorming,writing-plans,test-driven-development,systematic-debugging,verification-before-completion; BeautifulRust/rust-best-practices
 
 `cargo fmt`, `cargo clippy --all-targets -- -D warnings` and `cargo test` were
 run before hand-back. `#[allow(private_interfaces, reason = "…")]` marks the
@@ -556,10 +689,10 @@ exception `botanypots`, `powah`, `charginggadgets` and `mininggadgets` record).
 
 ## Verification
 
-**[`VALIDATION.md`](VALIDATION.md) is the ladder for the delivered 0.2.2 package** at the
+**[`VALIDATION.md`](VALIDATION.md) is the ladder for the delivered 0.2.3 package** at the
 campaign pin `0a875da…` (tests, fmt, clippy, two `cmp`-identical builds, `check`, both `fits`
-runs, the 0.2.0 load refusal rebuilt at this pin, and the six in-game legs with their exit
-statuses). The tables below are the earlier ladders, kept as history.
+runs, and the in-game legs — green, control and both selftests — with their exit statuses). The
+tables below are the earlier ladders, kept as history.
 
 ### The SDK ladder (2026-11-18, the 0.2.0 migration; historical)
 
@@ -654,13 +787,14 @@ The current package (2026-11-21, SDK format) — one file, code and content toge
 
 | File | Size | SHA-256 | Entries |
 |---|---:|---|---:|
+| `industrialforegoing.hmod` (0.2.3) | 59,334 B | `819f00fc54dd6a2623406681494a3842f57331207d60e620b2f597ef66559e7c` | 41 |
 | `industrialforegoing.hmod` (0.2.2) | 34,096 B | `2672a80085cb0a258239408750b625fbee497f760693e473d823c0b947404826` | 25 |
 | `industrialforegoing.hmod` (0.2.1, never published) | 30,694 B | `4cc91337a2d92c023aad9d2bcfd9a83ef1c37c284bf1b33b8bbaeafebeaa1b55` | 25 |
 | `industrialforegoing.hmod` (0.2.0, superseded) | 28,979 B | `c10182f32584e6522b274855f6c8331793421237112d87acf804a4fb17752ed7` | 25 |
 
-It holds `horizon-mod.toml`, `Cargo.toml`, `src/lib.rs`, `src/runtime.rs`, `uses.json`,
-`LICENSE`, `LICENSE-NOTICE.md`, `README.md` and the 17 carried content files — the whole mod, in
-the single file a registry entry names.
+0.2.3 holds `horizon-mod.toml`, `Cargo.toml`, `src/lib.rs`, `src/runtime.rs`, `uses.json`,
+`LICENSE`, `LICENSE-NOTICE.md`, `README.md` and the **33** carried content files (the block's 17,
+plus the four addon items' definitions, models and textures and their four lang strings).
 
 The retired pair, kept in `../_shared/evidence/industrialforegoing/retired-hnmod-0.1.0/`:
 
@@ -683,8 +817,12 @@ The `.hnmod` carried the content mod as
 2. **No redstone control modes.** Upstream's `RedstoneManager` offers
    ignore/on/once/with/without; the default action is `IGNORE`, which this port
    reproduces (the machine always runs). The modes are a gap.
-3. **No augments.** Speed, efficiency and processing augments are Titanium
-   components; none is ported, so every machine runs at the base rate.
+3. ~~**No augments.**~~ **Closed for speed and efficiency in 0.2.3 (slice 3).** `titanium:augments`
+   is registered and the machine has the parent's two augment slots, seated by right-clicking it;
+   the speed augment moves the bar and the efficiency one shortens it, as Titanium's
+   `IndustrialWorkingTile` does. Still open: the **processing** augment (a third type; this
+   machine runs one operation a cycle, so it has nothing to multiply) and the addons' own
+   dissolution-chamber recipes (gap 9's machine). The four parent items ship as `give`-only data.
 4. **Titanium is mapped, not ported.** `titanium` is a `library` row; this slice
    reimplements only what the machine needs — the energy-storage arithmetic
    (capacity, unlimited IO), the drain-only tank and the progress bar's
@@ -736,6 +874,20 @@ The `.hnmod` carried the content mod as
     before and `/industrialforegoing info ~ ~ ~1` works as well — a widening, not
     a change. Permission levels are the same (`info` for everyone, the four
     setters at level 2).
+14. **The augment slots are a saved list, not an item handler.** Upstream keeps two
+    `InventoryComponent` slots; this machine has no menu (gap 1) and no item capability, so the
+    two slots are the `titanium:augments` values themselves in the block entity's compound —
+    what the arithmetic reads. A hopper cannot push an addon in, and the GUI's slot screen is
+    absent; right-clicking the machine is the only seat. Two further small differences:
+    `/industrialforegoing info` shows the scaled bar maximum as soon as an efficiency addon is
+    seated, where upstream's `maxProgress` only changes after a completed operation (the
+    arithmetic is identical — the in-flight cycle is counted on the old length in neither);
+    and a refused second addon consumes the click (upstream falls through to the item's own
+    `useOn`), which changes nothing for a plain addon.
+15. **The four addon items are `give`-only.** `speed_addon_tier_1/2` and `efficiency_addon_tier_1/2`
+    are the parent's own items with their `titanium:augments` defaults, but their recipes are
+    dissolution-chamber recipes — that machine is a later slice — so nothing crafts them yet and
+    they are not in a creative tab.
 
 ## Provenance (upstream analysis)
 
@@ -749,6 +901,26 @@ deleted after the findings were written. Files read and behaviour extracted:
 `ports/_shared/licence-cache/industrialforegoing-1.21-3.6.39.jar` (provenance:
 `ports/_shared/carry-work/industrialforegoing/SOURCE.md`). Clean-room rewrite:
 no Java was copied or translated and no jar was decompiled.
+
+Slice 3 re-read two upstream trees (shallow clones in `/tmp/opencode/`, deleted after the findings
+were recorded above and in the slice section):
+
+- **Industrial Foregoing `ce2852db`** (`1.21`): `item/addon/AddonItem.java` (the `useOn` seat),
+  `item/addon/SpeedAddonItem.java` / `EfficiencyAddonItem.java` (`1 + tier`, `1 - tier * 0.1`,
+  `Properties().stacksTo(16)`), `block/tile/IndustrialWorkingTile.java` (the bar's
+  `progressIncrease`, `maxProgress = floor(100 * efficiency)` after a work and
+  `setProgress(maxProgress * workAmount)`), `block/tile/IndustrialMachineTile.java`
+  (`canAcceptAugment`, the two-slot augment inventory), `module/ModuleCore.java` (tiers 1 and 2 of
+  each addon).
+- **Titanium `e53e8695`**: `item/AugmentWrapper.java` (the `titanium:augments` component, a
+  `Map<String, Float>`, read through the stack's effective component), `api/augment/AugmentTypes.java`
+  (`Speed`, `Efficiency`; the 1.21-era build also has `Processing`, not in the parent's working
+  tile this machine uses), `component/progress/ProgressBarComponent.java` (the fall by
+  `progressIncrease`, the finish-and-reset order).
+
+Clean-room: the rewrite is this port's own Rust against the pin's APIs; the Java was read for
+behaviour only, and where the pin cannot express something (no item handler on a menu-less machine)
+the deviation is recorded above instead of faked.
 
 ## Review repairs (PR #600)
 

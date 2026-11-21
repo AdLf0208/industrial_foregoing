@@ -26,7 +26,10 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 JAR = ROOT.parent / "_shared/licence-cache/industrialforegoing-1.21-3.6.39.jar"
-CONTENT = ROOT / "content"
+# Since the 2026-11-18 SDK migration `assets/` and `data/` sit at the port root,
+# beside `src/` and the one `horizon-mod.toml`; the script rebuilds them there
+# and never writes the manifest (the port's own `[native]` one is hand-kept).
+CONTENT = ROOT
 MOD = "industrialforegoing"
 # The pack's Modrinth SHA-1 for industrialforegoing-1.21-3.6.39.jar.
 JAR_SHA1 = "a653f5c2b56f51c82d008b473f2b89aeff5747fd"
@@ -42,6 +45,11 @@ CARRIED_ASSETS = [
     "assets/industrialforegoing/textures/block/base/side.png",
     "assets/industrialforegoing/textures/block/base/top.png",
     "assets/industrialforegoing/textures/block/base/bottom.png",
+    # Slice 3: the four addon items' own textures.
+    "assets/industrialforegoing/textures/item/speed_addon_1.png",
+    "assets/industrialforegoing/textures/item/speed_addon_2.png",
+    "assets/industrialforegoing/textures/item/efficiency_addon_1.png",
+    "assets/industrialforegoing/textures/item/efficiency_addon_2.png",
 ]
 # Carried with the 26.3 upgrade (see below).
 CARRIED_DATA = [
@@ -56,8 +64,49 @@ LANG_KEYS = [
     "text.industrialforegoing.tooltip.power_optional",
 ]
 
+# Slice 3: the parent's own four addon items (`ModuleCore` registers tiers 1 and
+# 2 of each), with the `titanium:augments` value its item class sets
+# (`SpeedAddonItem`: 1 + tier; `EfficiencyAddonItem`: 1 - tier * 0.1). Their
+# recipes are dissolution-chamber ones, so this slice ships the items alone.
+ADDONS = [
+    # (id, component key, value, the jar's texture name)
+    ("speed_addon_tier_1", "Speed", 2.0, "speed_addon_1"),
+    ("speed_addon_tier_2", "Speed", 3.0, "speed_addon_2"),
+    ("efficiency_addon_tier_1", "Efficiency", 0.9, "efficiency_addon_1"),
+    ("efficiency_addon_tier_2", "Efficiency", 0.8, "efficiency_addon_2"),
+]
+
+# The names upstream's `getDescriptionId` composes from `item.industrialforegoing.addon`
+# + `.speed`/`.efficiency` + `.tier` + the number, written as one key per item.
+ADDON_NAMES = {
+    "speed_addon_tier_1": "Addon: Speed Tier 1",
+    "speed_addon_tier_2": "Addon: Speed Tier 2",
+    "efficiency_addon_tier_1": "Addon: Efficiency Tier 1",
+    "efficiency_addon_tier_2": "Addon: Efficiency Tier 2",
+}
+
 # 26.3's item model definition: the jar's own `models/item` file, named by it.
 ITEM_DEFINITION = {"model": {"type": "minecraft:model", "model": f"{MOD}:item/water_condensator"}}
+
+
+def addon_definition(item: str) -> dict:
+    """26.3's item model definition for one addon item."""
+    return {"model": {"type": "minecraft:model", "model": f"{MOD}:item/{item}"}}
+
+
+def addon_model(texture: str) -> dict:
+    """The addon model: the jar's own points at `builtin/generated`, which 26.3
+    spells `minecraft:item/generated`; the layer0 texture is the jar's."""
+    return {"parent": "minecraft:item/generated", "textures": {"layer0": f"{MOD}:item/{texture}"}}
+
+
+def addon_item(kind: str, value: float) -> dict:
+    """One addon item: `Properties().stacksTo(16)` and its one component."""
+    return {
+        "template": "minecraft:stick",
+        "max_stack_size": 16,
+        "components": {"titanium:augments": {kind: value}},
+    }
 
 # The machine is `new WaterCondensatorBlock()`: `Properties.ofFullCopy(IRON_BLOCK)`
 # (hardness 5.0, blast resistance 6.0, correct tool for drops, the iron block's
@@ -86,21 +135,8 @@ TAB = {
     "items": [f"{MOD}:water_condensator"],
 }
 
-MANIFEST = f"""# Port-owned content mod for the Industrial Foregoing 1.21-3.6.39 slice: the
-# Water Condensator block and the carried assets/data. The blockstate, models,
-# textures, loot table, recipe and advancement are upstream's own MIT assets,
-# read from the exact ATM10 jar (see ../../_shared/carry-work/industrialforegoing/SOURCE.md).
-id = "{MOD}"
-name = "Industrial Foregoing"
-version = "0.1.0"
-api = "0.2"
-side = "both"
-capabilities = ["registries"]
-"""
-
-
 def upgrade_recipe(recipe: dict) -> dict:
-    """The carry pipeline's 1.21.1 → 26.3 recipe upgrade."""
+    """The carry pipeline's 1.21.1 → 26.3 recipe upgrade, plus slice 2's repair."""
     # `neoforge:conditions` is not a 26.3 recipe condition; the item exists
     # whenever this mod does, so the gate says nothing here.
     recipe.pop("neoforge:conditions", None)
@@ -109,7 +145,31 @@ def upgrade_recipe(recipe: dict) -> dict:
             recipe["key"][key] = f"#{value['tag']}"
         elif isinstance(value, dict) and "item" in value:
             recipe["key"][key] = value["item"]
+    # Slice 2's `Upstream defects fixed` repair: the three ingredients upstream
+    # names as tags belong to parts of the mod this package does not carry, and
+    # 26.3 drops a recipe whose list names an absent tag — so each is its
+    # vanilla fallback alone, the only shape that both loads and crafts
+    # standalone. When the frames/plastics are ported these become the tags
+    # again, one tag per ingredient.
+    fallbacks = {
+        "#c:plastics": "minecraft:slime_ball",
+        "#c:gears/iron": "minecraft:iron_block",
+        "#industrialforegoing:machine_frame/pity": "minecraft:iron_block",
+    }
+    for key, value in list(recipe.get("key", {}).items()):
+        recipe["key"][key] = fallbacks.get(value, value)
     return recipe
+
+
+def upgrade_advancement(advancement: dict) -> dict:
+    """Slice 2's repair: 26.3 has no `neoforge:conditions`, so the file was left
+    out entirely; its `has_item` criterion names the absent `#c:plastics` tag."""
+    advancement.pop("neoforge:conditions", None)
+    criterion = advancement.get("criteria", {}).get("has_item", {})
+    for entry in criterion.get("conditions", {}).get("items", []):
+        if entry.get("items") == "#c:plastics":
+            entry["items"] = "minecraft:slime_ball"
+    return advancement
 
 
 def upgrade_loot(loot: dict) -> dict:
@@ -148,24 +208,35 @@ def main() -> None:
             data = (json.dumps(upgrade_loot(json.loads(data)), indent=2) + "\n").encode()
         elif name.endswith("recipe/water_condensator.json"):
             data = (json.dumps(upgrade_recipe(json.loads(data)), indent=2) + "\n").encode()
+        elif "advancement/" in name:
+            data = (json.dumps(upgrade_advancement(json.loads(data)), indent=2) + "\n").encode()
         write(CONTENT / name, data)
 
     lang = json.loads(archive.read("assets/industrialforegoing/lang/en_us.json"))
-    write(
-        CONTENT / f"assets/{MOD}/lang/en_us.json",
-        {key: lang[key] for key in LANG_KEYS},
+    strings = {key: lang[key] for key in LANG_KEYS}
+    strings.update(
+        {f"item.industrialforegoing.{item}": name for item, name in ADDON_NAMES.items()}
     )
+    write(CONTENT / f"assets/{MOD}/lang/en_us.json", strings)
     write(CONTENT / f"assets/{MOD}/items/water_condensator.json", ITEM_DEFINITION)
+    for item, kind, value, texture in ADDONS:
+        write(CONTENT / f"assets/{MOD}/items/{item}.json", addon_definition(item))
+        write(CONTENT / f"assets/{MOD}/models/item/{item}.json", addon_model(texture))
+        write(CONTENT / f"data/{MOD}/horizon/item/{item}.json", addon_item(kind, value))
     write(CONTENT / f"data/{MOD}/horizon/block/water_condensator.json", BLOCK)
     write(CONTENT / f"data/{MOD}/horizon/creative_tab/resource_production.json", TAB)
     write(
         CONTENT / "data/minecraft/tags/block/mineable/pickaxe.json",
         {"values": [f"{MOD}:water_condensator"]},
     )
-    (CONTENT / "horizon-mod.toml").write_text(MANIFEST)
 
-    files = sorted(p for p in CONTENT.rglob("*") if p.is_file() and p.name != "README.md")
-    print(f"{len(files)} files under {CONTENT}")
+    files = sorted(
+        path
+        for folder in ("assets", "data")
+        for path in (CONTENT / folder).rglob("*")
+        if path.is_file()
+    )
+    print(f"{len(files)} files under {CONTENT}/{{assets,data}}")
     for path in files:
         print(" ", path.relative_to(CONTENT))
 

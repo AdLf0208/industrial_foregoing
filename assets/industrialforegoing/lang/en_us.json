@@ -1,5 +1,9 @@
 {
   "block.industrialforegoing.water_condensator": "Water Condensator",
+  "item.industrialforegoing.efficiency_addon_tier_1": "Addon: Efficiency Tier 1",
+  "item.industrialforegoing.efficiency_addon_tier_2": "Addon: Efficiency Tier 2",
+  "item.industrialforegoing.speed_addon_tier_1": "Addon: Speed Tier 1",
+  "item.industrialforegoing.speed_addon_tier_2": "Addon: Speed Tier 2",
   "itemGroup.industrialforegoing_resource_production": "Industrial Foregoing: Resource Production",
   "text.industrialforegoing.tooltip.power_optional": "* Power Optional"
 }

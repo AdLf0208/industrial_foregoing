@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# In-game check for Industrial Foregoing (slices 1-2): the Water Condensator
+# In-game check for Industrial Foregoing (slices 1-3): the Water Condensator
 # condenses water from the FE in its buffer, one 100 mB per water source block
 # beside it (half, for free, without power), and nothing below two sources; its
-# carried recipe crafts in a plain crafting table; and a machine broken with FE
-# and water in it drops an item that puts them back.
+# carried recipe crafts in a plain crafting table; a machine broken with FE and
+# water in it drops an item that puts them back; and its two `titanium:augments`
+# slots take a speed and an efficiency addon whose arithmetic the bar reads.
 #
 # Every mod command is typed with `ctl chat "/cmd"` because `ctl command` runs
 # the console path and bypasses the native `perform_command` hook.
@@ -31,10 +32,12 @@
 # below (the machine item does not register), which is what makes the modded
 # run evidence.
 #
-# SELFTEST=1 flips leg B's 200 mB assertion (it must FAIL), proving the
-# scenario can fail. SELFTEST=contents does the same for leg L: it asserts
-# 5,001 mB come back from the broken machine's item, so the run must fail at
-# that assertion — the in-game counterfactual for the contents family.
+# SELFTEST=1 flips leg B's 200 mB assertion (it must FAIL), proving the scenario
+# can fail; a run that fails there never reaches the augment legs, so
+# SELFTEST=augments leaves leg B alone and flips leg O's four-a-tick fall
+# instead — the augment family's own counterfactual. SELFTEST=contents does the
+# same for leg L: it asserts 5,001 mB come back from the broken machine's item,
+# so the run must fail at that assertion — the contents family's.
 set -Eeuo pipefail
 export LC_ALL=C
 [ -z "${IF_DEBUG:-}" ] || set -x
@@ -386,5 +389,154 @@ if [ "$SELFTEST" = contents ]; then
 fi
 echo "  the broken machine came back with $ENERGY/$FE_CAP FE and $WATER/$WATER_CAP mB"
 
+echo "== M-Q: the augment slots (titanium:augments) =="
 
-echo "PASS: a placed machine is empty with no sources and faces its placer; two sources condense 200 mB for exactly 1,000 FE and one condenses nothing; without 1,000 FE two sources give half for free; three and six sources give 300 and 600 mB; a nearly full tank stops at 16,000 mB while still spending the FE; the declared tank drains 400 mB of water through the fluid handler; and left alone the machine keeps condensing on its own 10-tick bar; the carried recipe crafts one machine from its declared ingredients and consumes them, while a wrong grid stays empty; and a machine broken with 7,000 FE and 5,000 mB comes back with exactly those numbers on the item it dropped"
+# Stand two blocks west of the machine and aim at its face: a right-click is a
+# `use_item_on` there, which is where the addon's seating hook runs.
+aim_machine() {
+    ctl command "execute in minecraft:the_end run tp @s $((SX - 2)).5 101 0.5" >/dev/null
+    ctl wait 6 >/dev/null
+    ctl look-at-block "$SX" 101 0 >/dev/null 2>&1 || fail "cannot aim at the machine at $SX"
+    # The aim reaches the server a tick after the look: clicking at once would
+    # use the previous yaw and miss the block.
+    ctl wait 6 >/dev/null
+}
+
+# Give one addon, select it, aim at the machine and right-click it. COMPONENTS
+# is the item argument's own `[titanium:augments={…}]` or empty for the item's
+# declared default.
+seat_addon() { # seat_addon ITEM COMPONENTS
+    ctl command "give @s $1$2 1" >/dev/null
+    ctl wait 8 >/dev/null
+    ctl select "$1" >/dev/null 2>&1 || fail "the addon $1 is not in the hotbar"
+    aim_machine
+    ctl use-item >/dev/null || fail "the right-click with $1 on the machine failed"
+    ctl wait 8 >/dev/null
+}
+
+# The machine's readout, read back within a couple of ticks: `/industrialforegoing
+# info` answers at once, so a short wait is enough and the two reads of a rate
+# window stay well inside one 100-tick bar. Sets everything `info` sets.
+bar() { # bar X Y Z
+    say "industrialforegoing info $1 $2 $3"
+    ctl wait 2 >/dev/null
+    local line
+    line=$(ctl messages 6 | jq -r '.chat[]' | grep -m1 'Water Condensator at' || true)
+    [ -n "$line" ] || fail "no /industrialforegoing info reply"
+    eval "$(python3 "$PORT/tools/parse_info.py" "$line")"
+    [ "${ok:-0}" = 1 ] || fail "the info line did not parse: $line"
+    echo "  $line" >&2
+}
+
+# The bar's fall over a window the game itself measures: the readout carries the
+# game time it was read at (`t=`), so the two reads give the rate exactly — the
+# chat round trip cannot skew it. The window stays short so a bar finishing and
+# resetting mid-window (25 ticks at speed 4) cannot be mistaken for a rate.
+# Sets BAR_P1, BAR_T1, BAR_FELL and BAR_TICKS.
+rate() { # rate LABEL
+    say "industrialforegoing progress $SX 101 0 100"
+    ctl wait 2 >/dev/null
+    bar "$SX" 101 0
+    BAR_P1=$PROGRESS
+    BAR_T1=$T
+    ctl wait 4 >/dev/null
+    bar "$SX" 101 0
+    BAR_FELL=$((BAR_P1 - PROGRESS))
+    BAR_TICKS=$((T - BAR_T1))
+    echo "  $1: progress $BAR_P1 -> $PROGRESS over $BAR_TICKS ticks" >&2
+    [ "$BAR_TICKS" -gt 0 ] || fail "$1: the two reads carry the same game time"
+    [ "$BAR_TICKS" -lt 20 ] \
+        || fail "$1: a $BAR_TICKS-tick window can cross a finished bar and reset it"
+}
+
+held() { ctl inventory | jq -r --arg item "$1" '.counts[$item] // 0'; }
+
+# No sources anywhere while the bar's rate is measured: an idle attempt resets a
+# finished bar to 100, and a window shorter than the bar cannot reach zero.
+sources_n 0
+say "industrialforegoing energy $SX 101 0 0"
+
+echo "== M: with no augment the bar falls exactly one a tick =="
+info "$SX" 101 0
+expect "the speed with an empty slot" "$SPEED" 1
+expect "the efficiency with an empty slot" "$EFFICIENCY" "1.00"
+expect "the bar's maximum" "$PROGRESS_MAX" 100
+rate "empty slot"
+[ "$BAR_FELL" = "$BAR_TICKS" ] \
+    || fail "an empty slot fell $BAR_FELL over $BAR_TICKS ticks, expected one a tick"
+
+echo "== N: an efficiency addon shortens the bar to 80 and the cooldown to 8 =="
+# The parent's own tier 2 (`1 - tier * 0.1` = 0.8), seated into its declared slot.
+seat_addon industrialforegoing:efficiency_addon_tier_2 ""
+info "$SX" 101 0
+expect "the efficiency the seated augment reads" "$EFFICIENCY" "0.80"
+expect "the bar's scaled maximum" "$PROGRESS_MAX" 80
+expect "the addon the seat took from the hand" "$(held industrialforegoing:efficiency_addon_tier_2)" 0
+attempt 2 5000 200
+expect "the water of one scaled attempt" "$WATER" 400
+expect "the buffer one scaled attempt cost" "$ENERGY" 4000
+[ "$PROGRESS" -le 8 ] && [ "$PROGRESS" -ge 1 ] \
+    || fail "the scaled cooldown is $PROGRESS, expected 1..8 of 80"
+echo "  efficiency 0.80: +$WATER mB for $((5000 - ENERGY)) FE, bar $PROGRESS/$PROGRESS_MAX"
+
+echo "== O: a seated speed addon makes the bar fall four a tick (100 -> 60 in 10) =="
+# Speed 4.0 is the ecosystem's tier 3 (mifa's speed_addon_3, the parent's own
+# `1 + tier` at tier 3); the parent itself registers tiers 1 and 2 (2.0, 3.0).
+sources_n 0
+say "industrialforegoing energy $SX 101 0 0"
+seat_addon industrialforegoing:speed_addon_tier_2 "[titanium:augments={Speed:4.0f}]"
+info "$SX" 101 0
+expect "the speed the seated augment reads" "$SPEED" 4
+expect "the efficiency the other slot keeps" "$EFFICIENCY" "0.80"
+expect "the addon the seat took from the hand" "$(held industrialforegoing:speed_addon_tier_2)" 0
+# The brief's assertion, measured: four a tick is a full bar in 25 ticks and
+# 100 -> 60 in ten. The readout's own game time makes the window exact.
+rate "speed 4"
+EXPECTED=$((4 * BAR_TICKS))
+if [ "$SELFTEST" = 1 ] || [ "$SELFTEST" = augments ]; then
+    echo "(selftest: asserting a fall of $((EXPECTED + 1)))"
+    EXPECTED=$((EXPECTED + 1))
+fi
+[ "$BAR_FELL" = "$EXPECTED" ] \
+    || fail "speed 4 fell $BAR_FELL over $BAR_TICKS ticks, expected $EXPECTED (four a tick)"
+if [ "$BAR_P1" = 100 ] && [ "$BAR_TICKS" = 10 ]; then
+    [ "$PROGRESS" = 60 ] \
+        || fail "ten ticks of a full bar at speed 4 gave $PROGRESS, expected 60"
+fi
+
+echo "== P: a second speed addon is refused and stays in the hand =="
+ctl command "give @s industrialforegoing:speed_addon_tier_1 1" >/dev/null
+ctl wait 8 >/dev/null
+ctl select industrialforegoing:speed_addon_tier_1 >/dev/null 2>&1 \
+    || fail "the second addon is not in the hotbar"
+aim_machine
+ctl use-item >/dev/null || true
+ctl wait 8 >/dev/null
+info "$SX" 101 0
+expect "the speed after the refused second addon" "$SPEED" 4
+expect "the refused addon is still held" "$(held industrialforegoing:speed_addon_tier_1)" 1
+
+echo "== Q: the augments travel on the machine's item =="
+ctl command "gamemode survival @s" >/dev/null
+ctl command "clear @s" >/dev/null
+ctl command "item replace entity @s hotbar.0 with minecraft:iron_pickaxe 1" >/dev/null
+ctl wait 6 >/dev/null
+ctl select 1 >/dev/null
+ctl command "execute in minecraft:the_end run tp @s $((SX - 2)).5 101 0.5" >/dev/null
+ctl wait 8 >/dev/null
+BROKEN=$(ctl break "$SX" 101 0) || fail "breaking the machine with its augments failed"
+[ "$(echo "$BROKEN" | jq -r '.drops["industrialforegoing:water_condensator"] // 0')" -ge 1 ] \
+    || fail "the augmented machine dropped no item: $(echo "$BROKEN" | jq -c '.drops')"
+ctl command "execute in minecraft:the_end run tp @s $SX.5 101 0.5" >/dev/null
+ctl wait 20 >/dev/null
+ctl select industrialforegoing:water_condensator >/dev/null 2>&1 || ctl select 1 >/dev/null
+ctl wait 3 >/dev/null
+place_held "$SX" 101 0
+info "$SX" 101 0
+expect "the speed the item carried" "$SPEED" 4
+expect "the efficiency the item carried" "$EFFICIENCY" "0.80"
+expect "the scaled bar the item carried" "$PROGRESS_MAX" 80
+echo "  the broken machine came back with speed $SPEED and efficiency $EFFICIENCY"
+
+
+echo "PASS: a placed machine is empty with no sources and faces its placer; two sources condense 200 mB for exactly 1,000 FE and one condenses nothing; without 1,000 FE two sources give half for free; three and six sources give 300 and 600 mB; a nearly full tank stops at 16,000 mB while still spending the FE; the declared tank drains 400 mB of water through the fluid handler; and left alone the machine keeps condensing on its own 10-tick bar; the carried recipe crafts one machine from its declared ingredients and consumes them, while a wrong grid stays empty; a machine broken with 7,000 FE and 5,000 mB comes back with exactly those numbers on the item it dropped; a seated speed augment of 4 makes the bar fall four a tick where an empty slot falls one, a second speed augment is refused and stays in the hand, an efficiency augment of 0.8 shortens the bar to 80 with an 8-tick cooldown at the same 1,000 FE, and both augments travel on the machine's item"
