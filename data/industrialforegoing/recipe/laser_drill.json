@@ -1,0 +1,21 @@
+{
+  "category": "misc",
+  "key": {
+    "b": "minecraft:piston",
+    "f": "#c:gears/diamond",
+    "g": "#c:gears/gold",
+    "m": "#industrialforegoing:machine_frame/simple",
+    "p": "#c:plastics",
+    "r": "minecraft:redstone"
+  },
+  "pattern": [
+    "pfp",
+    "bmb",
+    "grg"
+  ],
+  "result": {
+    "count": 1,
+    "id": "industrialforegoing:laser_drill"
+  },
+  "type": "minecraft:crafting_shaped"
+}

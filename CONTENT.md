@@ -122,3 +122,24 @@ ends at the fluid, and a bucket would need a fluid-container item the pin has no
   not content.
 - Every other blockstate/model/texture in the jar (the mycelial generators, conveyors, laser
   drills, the refinery): the rest of the mod.
+
+## Slice 7 — the laser drill and its ore base (0.2.7, 2026-11-22)
+
+`tools/assemble_laser.py` is the slice's carry (`--check` compares the tree): 50 files, all from
+`industrialforegoing-1.21-3.6.39.jar`. The assets, models and item definitions are the jar's bytes;
+the data is re-spelled where 26.3 differs.
+
+| Files | From the jar | Change |
+|---|---|---|
+| `assets/industrialforegoing/blockstates/{laser_drill,ore_laser_base}.json` | the jar's | kept — the drill's six `facing` variants and the base's one |
+| `assets/industrialforegoing/models/block/{laser_drill,ore_laser_base}.json`, `models/item/*`, textures (`laser_drill_{front,top,bottom,back}.png` + `.mcmeta`, `laser_base_{side,bottom,top}.png`) | the jar's | kept; both models inherit `industrialforegoing:block/base_block` |
+| `assets/industrialforegoing/items/{laser_drill,ore_laser_base}.json` | — | written: 26.3's item definition, the block model |
+| `data/industrialforegoing/horizon/block/{laser_drill,ore_laser_base}.json` | — | written: the iron-block template, `requires_tool`, `sounds minecraft:iron_block`; the drill's `facing` enum (six values, default `north`) |
+| `data/industrialforegoing/loot_table/blocks/{laser_drill,ore_laser_base}.json` | the jar's | **re-spelled**: the jar's `"conditions": [{"condition": "minecraft:survives_explosion"}]` → the package's pool-level `"condition": {"type": "minecraft:survives_explosion"}` (the engine reads a condition's `type`; the jar's shape drops nothing) |
+| `data/industrialforegoing/recipe/{laser_drill,ore_laser_base}.json` | the jar's | **re-spelled**: object ingredients → bare strings / `#tags`; `neoforge:conditions` dropped |
+| `data/industrialforegoing/advancement/recipes/misc/{laser_drill,ore_laser_base}.json` | the jar's | `neoforge:conditions` dropped |
+| `data/industrialforegoing/recipe/laser_drill_ore/**` (10) | the jar's | `neoforge:conditions` dropped (the two raw-material files carried `neoforge:tag_empty`); the rest kept, including the `{"item"|"tag": …}` output the decode flattens |
+| `data/industrialforegoing/advancement/laser_drill_ore/**` (10) | the jar's | `neoforge:conditions` dropped from the two raw-material files (`unknown load conditions [neoforge:tag_empty]` left them out) |
+| `data/c/tags/item/{ores/iron,dusts/redstone,raw_materials/iron,raw_materials/gold}.json` | — | written: the convention values the two shaped recipes and the two tag outputs name |
+| `assets/industrialforegoing/lang/en_us.json` | — | the two block names merged (from the jar's lang) |
+| `data/minecraft/tags/block/mineable/pickaxe.json` | — | the two ids added (both are `requires_tool`) |

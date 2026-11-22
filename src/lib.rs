@@ -39,6 +39,8 @@
 pub mod chamber;
 pub mod dissolution;
 pub mod fluidchain;
+pub mod laser;
+pub mod laserdrill;
 pub mod latex;
 pub mod runtime;
 
@@ -172,6 +174,8 @@ impl Hooks for Mod {
         dissolution::declare(r);
         // The latex chain (slice 6): the fluid extractor and the latex processing unit.
         fluidchain::declare(r);
+        // The laser drill and its ore base (slice 7), and their own recipe type below.
+        laserdrill::declare(r);
         // Its own recipe type **and** the read-only serializer for it: the game refuses a file
         // whose type has no serializer ("unregistered recipe serializer
         // industrialforegoing:dissolution_chamber", measured in game), and API 36's machine route
@@ -184,6 +188,11 @@ impl Hooks for Mod {
         // through `recipes_of_type`.
         r.register_recipe_type(fluidchain::RECIPE_TYPE);
         r.register_raw_recipe_serializer("fluid_extractor", fluidchain::RECIPE_TYPE);
+        // The laser drill's ore recipes (slice 7): the type an add-on's own files load
+        // under (`industrialforegoingsouls` is blocked on it), kept by the same read-only
+        // serializer, so the base's table can decode every file of the type.
+        r.register_recipe_type(laserdrill::RECIPE_TYPE);
+        r.register_raw_recipe_serializer("laser_drill_ore", laserdrill::RECIPE_TYPE);
         // The fluids its recipes name, as declared fluid keys: 26.3 has no world fluid for them
         // (there is no latex/plastic machine in this port yet), but a declared key is what lets
         // a tank hold one and the readout resolve it.
@@ -264,6 +273,12 @@ impl Hooks for Mod {
                 fluidchain::item(id),
                 fluidchain::carried_patch(id, &saved),
             )
+        } else if block == laserdrill::DRILL_BLOCK || block == laserdrill::BASE_BLOCK {
+            (
+                laserdrill::has_contents(block, &saved),
+                laserdrill::item(block),
+                laserdrill::carried_patch(block, &saved),
+            )
         } else {
             return Flow::Continue;
         };
@@ -296,6 +311,7 @@ impl Hooks for Mod {
             "industrialforegoing fluid <pos:block_pos> <fluid:word> <amount:integer>",
             "industrialforegoing extraction <pos:block_pos> <hits:integer>",
             "industrialforegoing roll <pos:block_pos> <value:number>",
+            "industrialforegoing depth <pos:block_pos> <y:integer>",
         ] {
             event.commands.push(Command::op(usage, 2));
         }
@@ -329,6 +345,13 @@ impl Hooks for Mod {
             && (block == fluidchain::EXTRACTOR_BLOCK || block == fluidchain::UNIT_BLOCK)
         {
             latex_command(host, invocation, pos, &block, sub);
+            return Flow::Cancel;
+        }
+        // The laser drill and its ore base (slice 7): their own readouts and setters.
+        if let Some(block) = current_block(host, pos)
+            && (block == laserdrill::DRILL_BLOCK || block == laserdrill::BASE_BLOCK)
+        {
+            laser_command(host, invocation, pos, &block, sub);
             return Flow::Cancel;
         }
         if sub == "fluid" {
@@ -529,6 +552,19 @@ impl ItemPart for MachineItem {
     }
 }
 
+/// The `facing` a `SIX_WAY` block takes when a placer with `yaw`/`pitch` places it: Titanium's
+/// `getNearestLookingDirection().getOpposite()` — the block faces its placer, so a placer
+/// looking down gives `up`, and the horizontal quarters are [`facing_for_yaw`]'s.
+pub(crate) fn facing_for_placement(yaw: f32, pitch: f32) -> &'static str {
+    if pitch > 40.0 {
+        "up"
+    } else if pitch < -40.0 {
+        "down"
+    } else {
+        facing_for_yaw(yaw)
+    }
+}
+
 /// The water source blocks on the six sides of `pos` (`getWaterSources`: a `FluidState.isSource`,
 /// which for water is the still, non-falling state — the block registry's default `minecraft:water`
 /// state; flowing water and a waterlogged block's water are not).
@@ -572,6 +608,7 @@ fn usage(sub: &str) -> String {
         "fill" => "usage: /industrialforegoing fill <x> <y> <z> <fluid> <amount>".to_owned(),
         "extraction" => "usage: /industrialforegoing extraction <x> <y> <z> <hits>".to_owned(),
         "roll" => "usage: /industrialforegoing roll <x> <y> <z> <0..1>".to_owned(),
+        "depth" => "usage: /industrialforegoing depth <x> <y> <z> <mining y>".to_owned(),
         other => format!("usage: /industrialforegoing {other} <x> <y> <z> <amount>"),
     }
 }
@@ -811,6 +848,87 @@ fn latex_command(
     }
 }
 
+/// The harness commands of the laser drill and its ore base: the readouts, the FE and bar
+/// setters, and the base's `miningDepth` (upstream's GUI field).
+fn laser_command(
+    host: &mut dyn ServerHost,
+    invocation: &CommandInvocation,
+    pos: [i32; 3],
+    block: &str,
+    sub: &str,
+) {
+    let drill = block == laserdrill::DRILL_BLOCK;
+    let label = if drill {
+        "Laser Drill"
+    } else {
+        "Ore Laser Base"
+    };
+    match sub {
+        "info" => {
+            let line = if drill {
+                laserdrill::drill_readout(host, pos)
+            } else {
+                laserdrill::base_readout(host, pos)
+            };
+            say(host, &line);
+        }
+        "energy" if drill => {
+            let Some(value) = integer(invocation, "amount") else {
+                say(host, &usage(sub));
+                return;
+            };
+            let full = crate::laser::DRILL_CAPACITY_FE;
+            let value = value.clamp(0, full);
+            let changed = laserdrill::set_int(host, pos, block, KEY_ENERGY, value);
+            say(
+                host,
+                &if changed {
+                    format!("{label} at {pos:?}: {value}/{full} FE.")
+                } else {
+                    format!("{pos:?} is not a mod block entity.")
+                },
+            );
+        }
+        "progress" => {
+            let Some(value) = integer(invocation, "ticks") else {
+                say(host, &usage(sub));
+                return;
+            };
+            let (full, key) = if drill {
+                (crate::laser::DRILL_MAX_PROGRESS, KEY_PROGRESS)
+            } else {
+                (crate::laser::BASE_MAX_PROGRESS, KEY_PROGRESS)
+            };
+            let value = value.clamp(0, full);
+            let changed = laserdrill::set_int(host, pos, block, key, value);
+            say(
+                host,
+                &if changed {
+                    format!("{label} at {pos:?}: {value}/{full} ticks of bar.")
+                } else {
+                    format!("{pos:?} is not a mod block entity.")
+                },
+            );
+        }
+        "depth" if !drill => {
+            let Some(value) = integer(invocation, "y") else {
+                say(host, &usage(sub));
+                return;
+            };
+            let changed = laserdrill::set_depth(host, pos, block, value);
+            say(
+                host,
+                &if changed {
+                    format!("{label} at {pos:?}: its mining depth is {value}.")
+                } else {
+                    format!("{pos:?} is not a mod block entity.")
+                },
+            );
+        }
+        _ => say(host, &usage(sub)),
+    }
+}
+
 /// The machine's state, as `/industrialforegoing info` prints it.
 fn readout(host: &mut dyn ServerHost, pos: [i32; 3]) -> String {
     let Some(level) = host.level(host.dimension()) else {
@@ -1016,6 +1134,7 @@ fn is_our_entity_kind(host: &dyn Host, entity: BlockEntityRef) -> bool {
     MACHINE_KIND.get() == Some(&kind)
         || dissolution::kind() == Some(kind)
         || fluidchain::kind_of(entity, host)
+        || laserdrill::kind_of(entity, host)
 }
 
 /// The tank's amount, in the declaration's shape: one entry per tank under `fluids`.
@@ -1394,6 +1513,9 @@ mod content {
     /// The latex chain's two machines (slice 6).
     const LATEX: [&str; 2] = ["fluid_extractor", "latex_processing_unit"];
 
+    /// The laser drill and its ore base (slice 7).
+    const LASER: [&str; 2] = ["laser_drill", "ore_laser_base"];
+
     /// The port root, which is also the package root.
     fn root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -1523,6 +1645,8 @@ mod content {
                 "dissolution_chamber",
                 "fluid_extractor",
                 "latex_processing_unit",
+                "laser_drill",
+                "ore_laser_base",
                 "speed_addon_tier_1",
                 "speed_addon_tier_2",
                 "efficiency_addon_tier_1",
@@ -1561,20 +1685,27 @@ mod content {
                 );
             }
         }
-        for frame in FRAMES {
+        for block in FRAMES.iter().chain(LASER.iter()) {
             assert!(
                 has(&format!(
-                    "assets/industrialforegoing/blockstates/{frame}.json"
+                    "assets/industrialforegoing/blockstates/{block}.json"
                 )),
-                "{frame} has no blockstate"
+                "{block} has no blockstate"
             );
-            let model = format!("assets/industrialforegoing/models/block/{frame}.json");
+            let model = format!("assets/industrialforegoing/models/block/{block}.json");
             let text = read(&model);
             for texture in strings(&text)
                 .iter()
                 .filter(|s| s.starts_with("industrialforegoing:block/"))
             {
                 let file = texture.trim_start_matches("industrialforegoing:block/");
+                if has(&format!(
+                    "assets/industrialforegoing/models/block/{file}.json"
+                )) {
+                    // A model's `parent`, not a texture (the two lasers inherit
+                    // `base_block`, whose own textures this check reads).
+                    continue;
+                }
                 assert!(
                     has(&format!(
                         "assets/industrialforegoing/textures/block/{file}.png"
@@ -1589,7 +1720,7 @@ mod content {
     fn every_declared_id_has_a_name() {
         let lang = read("assets/industrialforegoing/lang/en_us.json");
         let names = strings(&lang);
-        for block in FRAMES.iter().chain(LATEX.iter()) {
+        for block in FRAMES.iter().chain(LATEX.iter()).chain(LASER.iter()) {
             let key = format!("block.industrialforegoing.{block}");
             assert!(
                 names.contains(&key),
@@ -1715,6 +1846,8 @@ mod content {
                         "industrialforegoing:latex",
                         "industrialforegoing:pink_slime",
                         "industrialforegoing:ether_gas",
+                        // Slice 7's recipe type: a `type` field, not an item.
+                        "industrialforegoing:laser_drill_ore",
                     ]
                     .contains(&id.as_str())
                     && !id.contains('/')
@@ -1825,6 +1958,153 @@ mod content {
                         recipe.display()
                     );
                 }
+            }
+        }
+    }
+
+    /// The ten ore recipes' unlock advancements must load: the two raw-material ones carried a
+    /// `neoforge:tag_empty` gate 26.3 does not know, and the game logged the files out.
+    #[test]
+    fn the_ore_advancements_carry_no_unknown_condition() {
+        let mut count = 0;
+        let dir = root().join("data/industrialforegoing/advancement/laser_drill_ore");
+        fn walk(dir: &std::path::Path, count: &mut usize) {
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    walk(&path, count);
+                } else if path.extension().is_some_and(|ext| ext == "json") {
+                    let text = std::fs::read_to_string(&path).unwrap_or_default();
+                    assert!(
+                        !text.contains("neoforge:"),
+                        "{} still carries a NeoForge condition 26.3 does not know",
+                        path.display()
+                    );
+                    *count += 1;
+                }
+            }
+        }
+        walk(&dir, &mut count);
+        assert_eq!(
+            count, 10,
+            "the ten ore recipes' unlock advancements are carried"
+        );
+    }
+
+    /// Slice 7: the laser drill and its ore base, their own recipe type and the ten recipes,
+    /// as **files**. Every ore recipe names the type, an output that resolves (a vanilla ore
+    /// or a `c:` tag this package declares), a catalyst this package ships, and a rarity with
+    /// a depth band.
+    #[test]
+    fn the_laser_drill_and_its_ore_recipes_are_carried() {
+        for name in [
+            "data/industrialforegoing/horizon/block/laser_drill.json",
+            "data/industrialforegoing/horizon/block/ore_laser_base.json",
+            "assets/industrialforegoing/blockstates/laser_drill.json",
+            "assets/industrialforegoing/blockstates/ore_laser_base.json",
+            "assets/industrialforegoing/models/block/laser_drill.json",
+            "assets/industrialforegoing/models/item/laser_drill.json",
+            "assets/industrialforegoing/items/laser_drill.json",
+            "assets/industrialforegoing/models/block/ore_laser_base.json",
+            "assets/industrialforegoing/models/item/ore_laser_base.json",
+            "assets/industrialforegoing/items/ore_laser_base.json",
+            "data/industrialforegoing/loot_table/blocks/laser_drill.json",
+            "data/industrialforegoing/loot_table/blocks/ore_laser_base.json",
+            "data/industrialforegoing/recipe/laser_drill.json",
+            "data/industrialforegoing/recipe/ore_laser_base.json",
+            "data/c/tags/item/ores/iron.json",
+            "data/c/tags/item/dusts/redstone.json",
+            "data/c/tags/item/raw_materials/iron.json",
+            "data/c/tags/item/raw_materials/gold.json",
+        ] {
+            assert!(has(name), "slice 7 ships {name}");
+        }
+        let drill = read("data/industrialforegoing/horizon/block/laser_drill.json");
+        for value in ["north", "south", "east", "west", "up", "down"] {
+            assert!(drill.contains(value), "the drill's facing lacks {value}");
+        }
+        assert!(
+            read("data/industrialforegoing/recipe/laser_drill.json")
+                .contains("#industrialforegoing:machine_frame/simple")
+        );
+        assert!(
+            read("data/industrialforegoing/recipe/ore_laser_base.json").contains("#c:ores/iron")
+        );
+        let pickaxe = read("data/minecraft/tags/block/mineable/pickaxe.json");
+        for id in LASER {
+            assert!(
+                pickaxe.contains(&format!("industrialforegoing:{id}")),
+                "{id} has requires_tool but no mineable/pickaxe entry"
+            );
+            // The jar's pool condition is `{"condition": …}`, which the engine reads as an
+            // empty kind and the block never drops; the package's shape names a `type`.
+            let loot = read(&format!(
+                "data/industrialforegoing/loot_table/blocks/{id}.json"
+            ));
+            assert!(
+                loot.contains("\"type\": \"minecraft:survives_explosion\""),
+                "{id}'s loot table does not use 26.3's condition shape, so it would drop nothing"
+            );
+        }
+
+        let declared = declared_ids();
+        let ore: Vec<_> = recipes()
+            .into_iter()
+            .filter(|path| path.to_string_lossy().contains("/recipe/laser_drill_ore/"))
+            .collect();
+        assert_eq!(
+            ore.len(),
+            10,
+            "the jar's ten ore recipes name outputs this package or vanilla has"
+        );
+        for recipe in &ore {
+            let text = std::fs::read_to_string(recipe).unwrap_or_default();
+            let values = strings(&text);
+            assert!(
+                values.contains(&"industrialforegoing:laser_drill_ore".to_owned()),
+                "{} is not a laser_drill_ore recipe",
+                recipe.display()
+            );
+            assert!(
+                !text.contains("neoforge:"),
+                "{} still carries a NeoForge condition 26.3 does not know",
+                recipe.display()
+            );
+            assert!(
+                values.iter().any(|value| value == "depth_min"),
+                "{} has no depth band",
+                recipe.display()
+            );
+            assert!(
+                values.iter().any(|value| value == "weight"),
+                "{} has no weight",
+                recipe.display()
+            );
+            for value in &values {
+                if value.starts_with("industrialforegoing:")
+                    && !value.contains('/')
+                    && value != "industrialforegoing:laser_drill_ore"
+                {
+                    assert!(
+                        declared.contains(value),
+                        "{} names {value}, which this package does not declare",
+                        recipe.display()
+                    );
+                }
+            }
+            // The output: either a vanilla `item`, or a `tag` this package declares.
+            if let Some(index) = values.iter().position(|value| value == "tag") {
+                let tag = &values[index + 1];
+                let (namespace, path) = tag.split_once(':').unwrap_or((tag, ""));
+                let file = format!("data/{namespace}/tags/item/{path}.json");
+                assert!(
+                    has(&file) && !strings(&read(&file)).is_empty(),
+                    "{} yields the tag {tag}, which resolves to nothing ({file})",
+                    recipe.display()
+                );
             }
         }
     }

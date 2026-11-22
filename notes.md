@@ -33,7 +33,10 @@ removes the redundant `block_part` call (see [The doubled Part](#the-doubled-par
 0.2.2 carries that repair **and never shipped before**; 0.2.3 is the same machine plus its
 augment slots; 0.2.4 adds the Core set beside it. See [Slice 2](#slice-2--contents-survive-the-break--the-recipe-crafts-022-2026-11-21),
 [Slice 3](#slice-3--the-augment-family-023-2026-11-21) and [Slice 4](#slice-4--the-modulecore-item-and-block-set-024-2026-11-21).
-slice 6 (0.2.6, 2026-11-22) adds the **latex chain** — the Fluid Extractor and the Latex
+slice 7 (0.2.7, 2026-11-22) adds the **laser drill and its ore base** with their own
+`industrialforegoing:laser_drill_ore` recipe type and ten of the jar's ore recipes — the parent
+surface `industrialforegoingsouls` is blocked on — so the family list is the rest of the mod. slice 6
+(0.2.6, 2026-11-22) adds the **latex chain** — the Fluid Extractor and the Latex
 Processing Unit with the extractor's own recipe type and its nine log recipes, `dryrubber` and the
 `smelting dryrubber -> plastic` recipe — so `plastic` finally has a source and the fluids slice 5
 declared are produced by a machine. The gap list at the end is the rest of the mod.
@@ -1179,19 +1182,247 @@ counterfactuals: the same machine with stone behind it and with a roll over its 
     the jar's own recipes do.
 
 
+## Slice 7 — the laser drill and its own ore recipe type (0.2.7, 2026-11-22)
+
+**The slice: gap 9's "the laser drills"** — the family the 0.2.6 report named as the next one, and
+the surface `industrialforegoingsouls` is blocked on (`blocked(missing-parent-recipe-type:
+industrialforegoing:laser_drill_ore)`, HANDOVER §9g/§9h). Its jar carries **one** `laser_drill_ore`
+file (echo shard), and it ships no recipe type: ours is what it loads under. The jar's own
+`recipe/laser_drill_ore/` holds 42 files; ten name an output this package or vanilla has (coal,
+diamond, emerald, lapis, nether quartz, redstone, glowstone, ancient debris, raw iron, raw gold) and
+the other 32 name other mods' ores. Tier **machines** (ledger): two block entities, one item
+container, one FE buffer, one recipe type and commands — no renderer, no entities.
+
+### Upstream (jar `industrialforegoing-1.21-3.6.39.jar`; source `Buuz135/Industrial-Foregoing`
+### `ce2852db`, Titanium `e53e869`, read for behaviour, clones deleted)
+
+| upstream | behaviour | what the port carries |
+|---|---|---|
+| `LaserDrillBlock` | `Properties.ofFullCopy(IRON_BLOCK)`, `RotationType.SIX_WAY`, `TAB_RESOURCE` | block + item, `facing` (six values), iron-block template |
+| `LaserDrillTile` (`IndustrialAreaWorkingTile(BEHIND)`) | a 50-tick bar counting **down**; at zero `work()`; `WorkAction(1, 1000)` when a laser base is in the cube two blocks along the opposite of `facing` and the buffer holds 1,000 FE, else `WorkAction(1, 0)`; the speed augment falls the bar faster (from the second tick), the efficiency one shortens it | the tick, the target scan, the queued advance, the buffer |
+| `OreLaserBaseBlock` | `ofFullCopy(IRON_BLOCK)`, no rotation, `TAB_RESOURCE` | block + item, state-free blockstate |
+| `OreLaserBaseTile` | a 100-tick bar **rising**, advanced only by the drill; at the top `onWork()`: every recipe whose **first** matching rarity passes depth + biome-tag + dimension-type filters is a weighted candidate; weight = rarity weight + 8 per lens slot holding the catalyst; `WeightedRandom` picks one; one stack into the 15 output slots; six lens slots, every face mode `NONE`; **no** FE of its own | the bar, the filters, the weighted pick, the six + fifteen slots |
+| `LaserDrillOreRecipe` (+ `ModuleCore.LASER_DRILL_TYPE`/`_SERIALIZER`) | `output` (`SizedIngredient`: item or `#tag` + count), `catalyst` (an `Ingredient`), `rarity[]` (`biome_filter`, `dimension_filter`, `depth_min/max`, `weight`), optional `entity_data` | the recipe type + read-only serializer (API 36, as the chamber's and the extractor's), the ten decoded rules |
+| `LaserDrillRarity.getValidRarity` | the **first** rarity whose depth band contains `miningDepth`, whose dimension-type filter passes and whose biome-tag filter passes | `laser::Rarity::matches`, `OreRecipe::rarity_for` |
+| configs | drill `maxProgress` 50, `powerPerOperation` 1000, `maxStoredPower` 10000; base `maxProgress` 100, `catalystModifier` 8 | the constants |
+
+The book (`patchouli …/ore_laser_base.json`) says it: *"Each ore that can be produced has a weight
+based in the biome the machine is placed in and the depth the machine is configured to mine in."*
+The pin expresses all three filters — `LevelRef::dimension_type`, `LevelRef::biome_at`,
+`LevelRef::biome_in_tag` — so the port implements the jar's rule, not a stand-in.
+
+### The brief's "the ore the base sits on", resolved
+
+The brief's assertion reads "the ore the base sits on"; the jar's rule is **biome + depth +
+dimension**, and the base *never* reads the block under it. The pin can read the biome's tags, so the
+faithful rule ships and the e2e's counterfactual is the **End's own biome** (no recipe valid), not
+the support block: the base sits on the same stone floor in both legs. Recorded here instead of
+quietly changing the mechanic.
+
+### TDD, in order
+
+1. **Red** (`src/laser.rs`, 14 rules as tests with `todo!()` bodies; `sdk-test-red-slice7.log`):
+   `test result: FAILED. 106 passed; 14 failed`, every failure `not yet implemented`, e.g.
+   `laser::tests::the_drill_bar_falls_one_a_tick_and_charges_the_base_at_zero … panicked at
+   src/laser.rs:231:9: not yet implemented: true Augments { speed: 1, efficiency: 1.0 }`.
+2. **The rules** (`src/laser.rs`, a fourth pure module — `runtime.rs` stays byte-identical, which
+   `verify-sdk-package.py` checks): `Filter` (the jar's empty-whitelist rule), `Rarity`, `OreRecipe`,
+   `candidates` (weights with the lens bonus), `pick` (the weighted draw), `Drill` (bar down, 1,000 FE
+   a charge, speed one tick late, efficiency bar), `Base` (bar up, `floor(100 × efficiency)`).
+3. **Glue red** (`src/laserdrill.rs`, 9 tests; `sdk-test-red-slice7-glue.log`): **122 passed, 9
+   failed** — `not yet implemented` in the declarations and shapes, plus the engine registration test
+   (the `todo!()` `declare` refused the package). Then the glue: declarations, the recipe table
+   (decoded once per table identity), the six-way placement, the tick, the pending advance queue, the
+   readouts, the setters, the carry/clamp. Green **131**.
+4. **Content** (50 files) with `tools/assemble_laser.py` (`--check`), and `verify_content.py`'s two
+   new families plus two selftest cases. Green **134**.
+
+### In game, phases BA–BH (`evidence/industrialforegoing-e2e/e2e-launcher.log`)
+
+| phase | what it asserts | the value it read |
+|---|---|---|
+| BA | the base and the drill are placed (the drill from its item while the placer looks down, `SIX_WAY`) and the drill's working area finds the base; the base reads its own table | `facing up`, `target [232, 101, 0]`, `recipes 10/10`, `depth 101`, `dimension minecraft:the_end`, `biome minecraft:the_end`, `recipe none` |
+| BB | a mountain biome makes the emerald recipe the only match | `biome minecraft:jagged_peaks`, `recipe industrialforegoing:laser_drill_ore/emerald_ore`, `weight 1` |
+| BC | a lime lens in a lens slot adds the catalyst modifier | `lens industrialforegoing:lime_laser_lens`, `weight 9`; back to `weight 1` after the lens is taken out |
+| BD | one completed base bar, fed 10,000 FE: the recipe's ore and the charge | `output minecraft:emerald_ore x1`, `9000/10000 FE`, base `progress 0/100` |
+| BE | **the counterfactual**: the same charge in the End's own biome | `recipe none`, the output unchanged, `8000/10000 FE` (the drill still pays) |
+| BF | a second drill placed from its item while looking east | `facing west` |
+| BG | **the add-on's own file and biome tag**, loaded as its package ships them | the pack `[file/if-souls-surface (world)]` enabled, `recipes 11/11`, then `biome minecraft:deep_dark`, `depth 0`, `recipe industrialforegoingsouls:laser_drill_ore/echo_shard`, and one operation yields `minecraft:echo_shard x1` |
+| BH | a broken base drops itself and its slots; its item keeps the bar and the depth | `drops {ore_laser_base: 1, emerald_ore: 1, echo_shard: 1}`; placed back at `progress 40/100`, `depth 7`, `output empty` |
+
+The transcript's own lines:
+
+```
+== BA: the ore base resolves no ore in the End's own biome, and the drill sees it ==
+  Laser Drill at [232, 102, 0]: 0/10000 FE, progress 44/50, target [232, 101, 0], augments speed 1 efficiency 1.00, facing up, t=4079
+  Ore Laser Base at [232, 101, 0]: progress 0/100, depth 101, biome minecraft:the_end, dimension minecraft:the_end, recipe none, weight 0, recipes 10/10, lens empty, output empty, augments speed 1 efficiency 1.00, t=4084
+== BB: a mountain biome makes the emerald recipe the only match ==
+  Ore Laser Base at [232, 101, 0]: progress 0/100, depth 101, biome minecraft:jagged_peaks, dimension minecraft:the_end, recipe industrialforegoing:laser_drill_ore/emerald_ore, weight 1, recipes 10/10, …
+== BC: a lime lens in a lens slot adds the catalyst modifier ==
+  … weight 9, recipes 10/10, lens industrialforegoing:lime_laser_lens, …
+  weight 1 -> 9 with a lime lens, back to 1 after
+== BD: one completed base bar makes the recipe's ore for the drill's 1,000 FE ==
+  … 9000/10000 FE, progress 43/50, target [232, 101, 0], …
+  … output minecraft:emerald_ore x1, …
+  9000 FE left, minecraft:emerald_ore x1, bar 0/100
+== BE: the counterfactual — the End's own biome, the same charge, nothing mined ==
+  … 8000/10000 FE … recipe none … output minecraft:emerald_ore x1 …
+== BF: a drill placed from its item while looking east faces west ==
+  Laser Drill at [236, 101, 0]: 0/10000 FE, progress 42/50, target none, …, facing west, t=4208
+== BG: the add-on's own laser_drill_ore recipe loads under this package's type ==
+  There are 2 data pack(s) enabled: [vanilla (built-in)], [file/if-souls-surface (world)] / There are no more data packs available
+  … recipe none, …, recipes 11/11, …
+  … recipe industrialforegoingsouls:laser_drill_ore/echo_shard, weight 1, recipes 11/11, …
+  … output minecraft:emerald_ore x1, minecraft:echo_shard x1, …
+  11/11 recipes; the add-on's industrialforegoingsouls:laser_drill_ore/echo_shard ran: minecraft:echo_shard x1
+== BH: a broken base drops itself and its slots, and its item keeps the bar ==
+  break: {"block":"minecraft:air","drops":{"industrialforegoing:ore_laser_base":1,"minecraft:echo_shard":1,"minecraft:emerald_ore":1},"picked_up":{}}
+  Ore Laser Base at [232, 101, 0]: progress 40/100, depth 7, …, output empty, …
+```
+
+**The add-on count: 1/1.** `industrialforegoingsouls` carries exactly one `laser_drill_ore` recipe
+(echo shard); its file loads under this package's type (the table moves 10 → 11) and it **runs** when
+its own biome tag says so — the surface its `blocked(missing-parent-recipe-type:
+industrialforegoing:laser_drill_ore)` row named.
+
+**Fail-capable, three ways, all `EXIT:1`:** the control leg (the same Nightly, no package) stops at
+its first `give` (`FAIL: the machine item did not register`); `SELFTEST=1` flips phase B
+(`FAIL: the water is 200, expected 201`); and **`SELFTEST=laser`** — this slice's own — flips BD's
+charge (`FAIL: the drill's buffer after one charge (10,000 - 1,000 FE) is 9001, expected 9000`).
+Phases BE (the End's own biome), BH (the drops) and the "recipe none" reads are in-run
+counterfactuals. `check-e2e-logs.py industrialforegoing-e2e --strict` reads **8/8**.
+
+### Upstream defects fixed
+
+1. **The two machines' loot tables could never drop them.** The jar's pool is
+   `"conditions": [{"condition": "minecraft:survives_explosion"}]`; the engine's condition parser
+   reads a condition object's `type` (26.3's shape), so the object's kind is empty and the pool is
+   skipped — measured: a base broken with two ores in it dropped the ores and **not itself**
+   (probe, 2026-11-22). The package's other eight machines already use a pool-level
+   `"condition": {"type": "minecraft:survives_explosion"}`, which the engine does not read (an
+   unconditional self-drop); the two new tables are written in that shape, and phase BH asserts the
+   drop. A user notices that an ore base or a laser drill can be picked up again.
+2. **The jar's `output` is an ingredient object** (`{"item": …}` / `{"tag": …}`), and the pin's
+   `Host::recipe_ingredient` reads an object only for a NeoForge kind. The decode flattens
+   `item`/`tag` to a bare id / `#tag` before asking (one in-game run showed `recipes 0/10` with ten
+   files kept — the diagnosis is the red→green of `the_ingredient_forms_the_recipe_files_use_are_all_read`).
+   This is what makes a **foreign** pack's ore file (`catalyst: {"item": …}`, exactly as the jar
+   writes it) load, which the add-on leg proves.
+
+### Deviations and gaps this slice adds
+
+27. **The ore is chosen by biome tags + depth + dimension, not by the support block** — the jar's own
+    rule (the book above), expressed with the pin's `biome_at`/`biome_in_tag`/`dimension_type`. The
+    brief's "the ore the base sits on" is read as the ore its place resolves; the counterfactual is
+    the End's own biome.
+28. **`entity_data` recipes are left out of the table.** `LaserDrillOreRecipe.entity_data` gates a
+    recipe on nearby entities of a kind (the jar uses it for mob-derived ores); this machine slice
+    does not port entity matching, so such a file is skipped and the readout counts it on the
+    `files` side (`recipes n/m`). None of the ten or the add-on's one uses it.
+29. **32 of the jar's 42 ore recipes are not carried**: their outputs are other mods' ores
+    (cinnabar, sodalite, fluorite, bitumen, ruby, niter, peridot, sapphire, draconium, yellorite,
+    sulfur, arcane) or raw-material tags of metals no package here ships. A pack with those mods
+    provides its own files and this type loads them.
+30. **A broken base's slots drop as items, not inside the machine.** The engine drops a mod
+    container's slots itself (`preRemoveSideEffects` → `Containers.dropContents`, measured), so the
+    item's `block_entity_data` **strips `Items`** — carrying both would duplicate the contents. The
+    bar, the depth and the augments still travel on the item (phase BH).
+31. **The base accepts only the Efficiency augment** (`OreLaserBaseTile.canAcceptAugment`); its bar
+    is advanced by the drill, so Speed has nothing to move. The drill takes both. The engineering of
+    the arithmetic is the shared `runtime::Augments`, and no phase seats one on either machine (the
+    condensator's M–Q cover the component and the seat).
+32. **`miningDepth` is set by `/industrialforegoing depth`** — upstream's GUI edit box. It starts at
+    the base's own Y (and the `-100` sentinel resets it there), as `setChanged` does.
+33. **No GUI screen or tooltip** (gap 1): the readouts are the commands, as for the other
+    machines. No comparator, redstone modes or config file (gaps 2, 7, 8).
+34. **The output choice prefers `minecraft:` first** (`TagConfig.ITEM_PREFERENCE` upstream; this
+    package ships no `TagConfig`), then the file's own order. Only matters for a tag output with
+    more than one item; the ten recipes' tags hold one item each.
+35. **The two new loot tables carry the package's `bonus_rolls`/`rolls` spelling.**
+    `check_261_dialect.py` flags `"bonus_rolls": 0.0` and `"rolls": 1.0` on them exactly as it flags
+    the eight tables carried before this slice; HANDOVER §9d.13 records those two fields as
+    **unverified** ("no game has shown them to change behaviour; a flag is not a defect"), and phase
+    BH reads the drop, so the slice keeps the package's shape rather than mixing two dialects.
+36. **The era's per-slot limit is not expressible** (`SidedInventoryComponent.setSlotLimit(1)`): as
+    with the chamber (deviation 20), the harness writes slots directly and a hopper could pile a
+    stack in one; the matcher counts occupied slots, as upstream's does.
+
+### Harness facts this slice paid for
+
+- **`ctl messages` can return an older readout; `ctl logs` is complete within a session but does
+  not carry a session after a relaunch** (measured with markers: both a before- and an
+  after-relaunch `/say` vanished from `ctl logs`, while `ctl messages` held only the new session's
+  chat). The readout helper therefore takes the live window after a relaunch and the log before it.
+- **`grep -m1` in a chat window reads the oldest line of the window**: the chamber's AC leg read a
+  stale 1,000 mB tank. Every helper now takes the newest matching line and waits for a *new* one.
+- **A one-cell `/fillbiome` does not move `LevelReader.getBiome`**: the biome zoom averages the
+  four surrounding cells, so the whole 16×16×16 box is filled. A single cell reads back
+  `minecraft:the_end`.
+- **`/reload` discovers and enables a datapack added while the game runs, but not its biome tag**:
+  the level's biome tag table is built at world load, so the add-on leg writes the pack and reopens
+  the world (its recipe would load either way; its tag needs the reload of the registry).
+- **`look-at-block` refuses beyond vanilla reach and the pitch threshold is 40 degrees**: a placer
+  five blocks up and one east aims steeply enough to place a `SIX_WAY` block `facing up` while
+  staying out of the block being placed (two runs were lost to a 40-degree aim and to landing on the
+  base).
+- **A readout is not a product**: BD reads the base's `info` and the container, and BH reads both
+  the drop set and the placed machine.
+
+### Coverage (families this slice adds)
+
+| family | coverage |
+|---|---|
+| `ore_laser_base` (block + item) | `tested` — BA places it from its item and reads it back; BH breaks it and reads `drops{ore_laser_base: 1}` |
+| `laser_drill` (block + item), `SIX_WAY` placement | `tested` — BA places it from its item while looking down (`facing up`, target found); BF places a second while looking east (`facing west`) |
+| `industrialforegoing:laser_drill_ore` (recipe type + serializer) | `tested` — BA reads `recipes 10/10`; BG loads a foreign file of the type and reads `11/11` |
+| the ten carried ore recipes | `tested` — BB/BD (emerald, matched and run); the content rules assert the other nine's outputs, catalysts and depth bands |
+| the biome-tag / depth / dimension-type filters | `tested` — BA (`none` in the End), BB (`emerald` in a mountain biome), BE (back to the End, `none`), BG (`deep_dark` at depth 0) |
+| the weighted pick | `unit-tested` (`the_weighted_pick_follows_the_total_weight`); with one valid recipe in game the pick is that recipe |
+| the lens catalyst weight (+8 a slot) | `tested` — BC: `weight 1` → `9` with a lime lens, back to `1` |
+| the six lens slots / fifteen output slots | `tested` — BC writes a lens through `container.0`; BD/BG read the product from `container.6`/`7`; the face modes are a unit test |
+| the drill's 1,000 FE a charge, bar and target | `tested` — BD: `9000/10000 FE`, base bar 0; BE: the same charge with no recipe still pays (`8000`) |
+| the base's 100-tick bar | `tested` — BD forces 99 and the charge completes it; the arithmetic is `laser::Base` |
+| the machines' items carrying their bar/depth | `tested` — BH: `progress 40/100`, `depth 7` on the placed base; the slots dropped separately |
+| the containers' contents on a break | `tested` — BH: the emerald and the echo shard drop as items (the engine's own contents drop) |
+| the augments on either machine | `ported, not exercised in game` — the base refuses Speed (glue), the drill seats both through the shared `use_item_on`; no phase seats one |
+| `entity_data` recipes | `not ported` — deviation 28, none of the carried files uses it |
+| the `fluid_laser_base` and the laser-drill fluid recipes | `not ported` — a later slice (a tank machine and its own fluid type) |
+| GUI screens, redstone modes, comparator, config | `not ported` — gaps 1, 2, 7, 8 |
+
+### The changelog for the 0.2.7 update
+
+> Supersedes the closed 0.2.6 PR of this entry. **New: the laser drill and its ore base**, with their
+> own recipe type `industrialforegoing:laser_drill_ore` (declared with its read-only serializer —
+> the id an add-on's own files load under; `industrialforegoingsouls` is blocked on it). The drill is
+> a `SIX_WAY` machine with a 10,000 FE buffer, a 50-tick bar and one charge of 1,000 FE per advance
+> of the base's bar; the ore base has a 100-tick bar, a `miningDepth` (its own Y until `/depth`
+> changes it), six lens slots and fifteen output slots, and picks a weighted ore by the biome tags
+> and dimension type at that depth, with +8 weight a matching lens slot. Ten of the jar's 42 ore
+> recipes ship (the ones whose ores vanilla or this package has); the other 32 name other mods'
+> ores. Proven in game: the drill placed above the base faces up and finds it, the table reads
+> 10/10 and resolves `none` in the End's biome and emerald at weight 1 in a mountain one, a lime
+> lens raises it to 9, one completed bar yields `emerald_ore x1` for exactly 1,000 FE (and nothing
+> when the biome does not match, while the FE is still spent), and the add-on's own
+> `echo_shard` recipe — installed as its package ships it — loads under this type (11/11) and runs
+> (`echo_shard x1`). Fixed: both machines' loot tables used the jar's condition shape, which the
+> engine reads as an empty kind, so a broken machine dropped its contents but not itself; they use
+> the package's 26.3 shape and BH reads the self-drop. A broken base drops its slots as items (the
+> engine's own contents drop) and its item carries the bar and the depth. `src/runtime.rs` is
+> unchanged, byte for byte; `src/laser.rs` is a fourth pure module.
+
 ## Skills
 
-Skills: superpowers/using-superpowers,brainstorming,writing-plans,test-driven-development,systematic-debugging,verification-before-completion; BeautifulRust/rust-best-practices,rust-review (slice 6: `brainstorming` to weigh the latex chain against the gap list, `writing-plans` for SLICE-6-PLAN.md, `test-driven-development` for the 17 red rules, `systematic-debugging` for the four in-game gates this slice cost — the stale `ctl messages` window, the truncated `lsay` argument, the list-replacing `merge_data` and the hopper eating a drop — and `verification-before-completion` before recording; `rust-best-practices` for the new pure module and the glue, `rust-review` for the after-the-fact audit of `src/fluidchain.rs`)
+Skills: superpowers/using-superpowers,brainstorming,writing-plans,test-driven-development,systematic-debugging,verification-before-completion; BeautifulRust/rust-best-practices,rust-review (slice 7: `brainstorming` to choose the laser drill from the gap list and weigh the brief's "the ore the base sits on" against the jar's biome/depth rule, `writing-plans` for SLICE-7-PLAN.md, `test-driven-development` for the 14 red rules and the 9 red glue tests, `systematic-debugging` for the six in-game gates this slice cost — the ingredient-object decode (`recipes 0/10`), the biome zoom, the datapack/tag reload, the placement aim, the message/log window, and the loot condition shape — and `verification-before-completion` before recording; `rust-best-practices` for the new pure module and the glue, `rust-review` for the after-the-fact audit of `src/laserdrill.rs`)
 
 `cargo fmt --package industrialforegoing --check`, `cargo clippy --all-targets -- -D warnings` and
-`cargo test` were run before hand-back (slice 6: `FMT-CLEAN`, 0 warnings, **105 passed**).
+`cargo test` were run before hand-back (slice 7: `FMT-CLEAN`, 0 warnings, **134 passed**).
 `#[allow(private_interfaces, reason = "…")]` marks the injected module's own private
 `Game`/`ModBlockEntity` parameters (the same exception `botanypots`, `powah`, `charginggadgets` and
 `mininggadgets` record).
 
 ## Verification
 
-**[`VALIDATION.md`](VALIDATION.md) is the ladder for the delivered 0.2.6 package** at the
+**[`VALIDATION.md`](VALIDATION.md) is the ladder for the delivered 0.2.7 package** at the
 campaign pin `0a875da…` (the red test run, fmt, clippy, 105 tests, two `cmp`-identical builds, `check`,
 both `fits` runs, the content verifier with its selftest, and the in-game legs — green, control and
 five selftests — with their exit statuses). The tables below are the earlier ladders, kept as
@@ -1290,6 +1521,7 @@ The current package (2026-11-21, SDK format) — one file, code and content toge
 
 | File | Size | SHA-256 | Entries |
 |---|---:|---|---:|
+| `industrialforegoing.hmod` (0.2.7) | 265,740 B | `68b63343357f9f9847bb5bf9be3cd44348aa0f90c98e449afbfc0af8ce5ec614` | 355 |
 | `industrialforegoing.hmod` (0.2.6) | 225,305 B | `d9dbb2316b701dab2bf7877bf2361772d3f634113dd75291ac9e6e172b4869a4` | 305 |
 | `industrialforegoing.hmod` (0.2.5) | 189,268 B | `0876ea235c4fd196113992cd743c116d513add5e408e723dc2ec7bf34c7b2bad` | 268 |
 | `industrialforegoing.hmod` (0.2.4) | 153,549 B | `dd43090d0f7a96b01f82d842cf42cd2f59f45e9d2763c524d65187c320b9508f` | 230 |

@@ -1,11 +1,13 @@
 {
   "block.industrialforegoing.dissolution_chamber": "Dissolution Chamber",
   "block.industrialforegoing.fluid_extractor": "Fluid Extractor",
+  "block.industrialforegoing.laser_drill": "Laser Drill",
   "block.industrialforegoing.latex_processing_unit": "Latex Processing Unit",
   "block.industrialforegoing.machine_frame_advanced": "Advanced Machine Frame",
   "block.industrialforegoing.machine_frame_pity": "Pity Machine Frame",
   "block.industrialforegoing.machine_frame_simple": "Simple Machine Frame",
   "block.industrialforegoing.machine_frame_supreme": "Supreme Machine Frame",
+  "block.industrialforegoing.ore_laser_base": "Ore Laser Base",
   "block.industrialforegoing.water_condensator": "Water Condensator",
   "item.industrialforegoing.black_laser_lens": "Black Laser Lens",
   "item.industrialforegoing.blue_laser_lens": "Blue Laser Lens",
