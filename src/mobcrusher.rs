@@ -33,6 +33,7 @@
 //! through [`Host::entity_type_in_tag`]. The wither's spawn invulnerability has no pin read, so
 //! `wither_spawning` is always false (deviation, recorded in `notes.md`).
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use mod_api::{
@@ -56,10 +57,12 @@ pub const ENTITY_ID: &str = "industrialforegoing:mob_crusher";
 pub const SUBFACING: &str = "subfacing";
 /// The jar's `IndustrialTags.EntityTypes.MOB_CRUSHER_INSTANT_KILL_BLACKLIST`.
 pub const BLACKLIST: &str = "industrialforegoing:mob_crusher_instant_kill_blacklist";
-/// The saved keys: the buffer, the bar and the last kill's experience (the readout's evidence).
+/// The saved keys: the buffer, the bar, the last kill's experience (the readout's evidence) and
+/// the machine's own instance id (what binds a pending reward to the machine that earned it).
 const KEY_ENERGY: &str = "energy";
 const KEY_PROGRESS: &str = "progress";
 const KEY_LAST_XP: &str = "last_xp";
+const KEY_MACHINE: &str = "machine";
 /// The one tank, in declaration order.
 /// The side the tank is read through (all six reach it).
 const READ_FACE: Direction = Direction::Up;
@@ -70,6 +73,34 @@ const ATTEMPT_TTL: i64 = 5;
 /// path run with a read-only host, which cannot name either.
 static KIND: OnceLock<mod_api::BlockEntityTypeKey> = OnceLock::new();
 static ITEM: OnceLock<ItemKey> = OnceLock::new();
+
+/// The next machine instance id. An id is written into the block entity's own compound on its
+/// first tick, so it travels with the machine's item and a reward queued for one machine is
+/// never delivered to another placed at the same position.
+static NEXT_MACHINE: AtomicU64 = AtomicU64::new(1);
+
+/// The machine's instance id, created on first use and saved in its own compound.
+fn machine_of(nbt: &mut Compound) -> u64 {
+    if let Some(id) = machine_in(nbt) {
+        return id;
+    }
+    let id = NEXT_MACHINE.fetch_add(1, Ordering::Relaxed);
+    let id = id.max(1);
+    nbt.insert(
+        KEY_MACHINE.into(),
+        Tag::Long(i64::try_from(id).unwrap_or(i64::MAX)),
+    );
+    id
+}
+
+/// The machine's instance id if its compound carries one (a broken machine's item does).
+pub(crate) fn machine_in(nbt: &Compound) -> Option<u64> {
+    match nbt.get(&KEY_MACHINE.into()) {
+        Some(Tag::Long(value)) if *value > 0 => u64::try_from(*value).ok(),
+        Some(Tag::Int(value)) if *value > 0 => u64::try_from(*value).ok(),
+        _ => None,
+    }
+}
 
 // ---------------------------------------------------------------------------
 // The declarations
@@ -146,26 +177,29 @@ pub fn container() -> ModContainer {
 // The attempts and the harvests
 // ---------------------------------------------------------------------------
 
-/// A kill the machine has just dealt: the victim, the machine, and when the attempt was made.
+/// A kill the machine has just dealt: the victim, the machine that dealt it, and when.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Attempt {
     entity: u32,
+    pub(crate) machine: u64,
     pub(crate) dimension: String,
     pub(crate) pos: [i32; 3],
     made: i64,
 }
 
-/// One kill's loot, waiting for the machine's next tick.
+/// One kill's loot, waiting for the machine that earned it.
 #[derive(Clone, Debug, PartialEq)]
 struct Harvest {
+    machine: u64,
     dimension: String,
     pos: [i32; 3],
     stacks: Vec<mod_api::ItemStack>,
 }
 
-/// One kill's experience, waiting for the machine's next tick.
+/// One kill's experience, waiting for the machine that earned it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Gain {
+    machine: u64,
     dimension: String,
     pos: [i32; 3],
     points: i32,
@@ -231,21 +265,26 @@ pub(crate) fn take_attempt(entity: u32) -> Option<Attempt> {
     Some(attempts.remove(index))
 }
 
-/// Queue one kill's loot for the machine at `pos` in `dimension`.
-pub(crate) fn queue_loot(dimension: &str, pos: [i32; 3], stacks: Vec<mod_api::ItemStack>) {
+/// Queue one kill's loot for the machine `machine`.
+pub(crate) fn queue_loot(
+    machine: u64,
+    dimension: &str,
+    pos: [i32; 3],
+    stacks: Vec<mod_api::ItemStack>,
+) {
     if stacks.is_empty() {
         return;
     }
-    if let Ok(mut harvests) = HARVESTS.lock()
-        && let Some(existing) = harvests
-            .iter_mut()
-            .find(|harvest| harvest.dimension == dimension && harvest.pos == pos)
-    {
-        existing.stacks.extend(stacks);
-        return;
-    }
     if let Ok(mut harvests) = HARVESTS.lock() {
+        if let Some(existing) = harvests
+            .iter_mut()
+            .find(|harvest| harvest.machine == machine)
+        {
+            existing.stacks.extend(stacks);
+            return;
+        }
         harvests.push(Harvest {
+            machine,
             dimension: dimension.to_owned(),
             pos,
             stacks,
@@ -253,56 +292,82 @@ pub(crate) fn queue_loot(dimension: &str, pos: [i32; 3], stacks: Vec<mod_api::It
     }
 }
 
-/// Queue one kill's experience for the machine at `pos` in `dimension`.
-pub(crate) fn queue_gain(dimension: &str, pos: [i32; 3], points: i32) {
+/// Queue one kill's experience for the machine `machine`.
+pub(crate) fn queue_gain(machine: u64, dimension: &str, pos: [i32; 3], points: i32) {
     if points <= 0 {
         return;
     }
-    let gain = Gain {
-        dimension: dimension.to_owned(),
-        pos,
-        points,
-    };
     if let Ok(mut gains) = GAINS.lock() {
-        gains.push(gain);
+        gains.push(Gain {
+            machine,
+            dimension: dimension.to_owned(),
+            pos,
+            points,
+        });
     }
 }
 
-/// The loot waiting for the machine at `pos`, and the experience points waiting for it.
-fn take_harvest(dimension: &str, pos: [i32; 3]) -> (Vec<mod_api::ItemStack>, Vec<Gain>) {
+/// The loot and the experience waiting for `machine`, taken together.
+fn take_harvest_for(machine: u64) -> (Vec<mod_api::ItemStack>, Vec<Gain>) {
     let stacks = HARVESTS
         .lock()
         .ok()
         .map(|mut harvests| {
-            let mut taken = Vec::new();
-            let mut index = 0;
-            while index < harvests.len() {
-                if harvests[index].dimension == dimension && harvests[index].pos == pos {
-                    taken.extend(harvests.remove(index).stacks);
-                } else {
-                    index += 1;
-                }
-            }
-            taken
+            harvests
+                .extract_if(.., |harvest| harvest.machine == machine)
+                .flat_map(|harvest| harvest.stacks)
+                .collect()
         })
         .unwrap_or_default();
     let gains = GAINS
         .lock()
         .ok()
         .map(|mut gains| {
-            let mut taken = Vec::new();
-            let mut index = 0;
-            while index < gains.len() {
-                if gains[index].dimension == dimension && gains[index].pos == pos {
-                    taken.push(gains.remove(index));
-                } else {
-                    index += 1;
-                }
-            }
-            taken
+            gains
+                .extract_if(.., |gain| gain.machine == machine)
+                .collect()
         })
         .unwrap_or_default();
     (stacks, gains)
+}
+
+/// The loot of a machine that is gone: everything queued for a **different** machine id at this
+/// position and dimension, so a break mid-death gives it back to the world rather than to
+/// whatever is placed there next.
+fn take_strangers(machine: u64, dimension: &str, pos: [i32; 3]) -> (Vec<mod_api::ItemStack>, i32) {
+    let stacks = HARVESTS
+        .lock()
+        .ok()
+        .map(|mut harvests| {
+            harvests
+                .extract_if(.., |harvest| {
+                    harvest.machine != machine
+                        && harvest.dimension == dimension
+                        && harvest.pos == pos
+                })
+                .flat_map(|harvest| harvest.stacks)
+                .collect()
+        })
+        .unwrap_or_default();
+    let points = GAINS
+        .lock()
+        .ok()
+        .map(|mut gains| {
+            gains
+                .extract_if(.., |gain| {
+                    gain.machine != machine && gain.dimension == dimension && gain.pos == pos
+                })
+                .map(|gain| gain.points)
+                .sum()
+        })
+        .unwrap_or_default();
+    (stacks, points)
+}
+
+/// Everything still queued for `machine`, for a broken machine's own drop list.
+pub(crate) fn take_pending(machine: u64) -> (Vec<mod_api::ItemStack>, i32) {
+    let (stacks, gains) = take_harvest_for(machine);
+    (stacks, gains.into_iter().map(|gain| gain.points).sum())
 }
 
 /// Forget this machine's attempts that no death answered (a mob whose hurt was refused, or a
@@ -368,19 +433,38 @@ impl BlockEntityPart for CrusherPart {
         if entity.items.len() < OUTPUT_SLOTS {
             entity.items.resize(OUTPUT_SLOTS, None);
         }
+        let machine = machine_of(&mut entity.nbt);
         let mut crusher = Crusher::from_saved(
             read_int(&entity.nbt, KEY_ENERGY),
             read_progress(&entity.nbt),
             read_tank(&entity.nbt),
         );
-        // What the last kill produced: the tank and the output container this machine owns.
-        let (stacks, gains) = take_harvest(&dimension, pos);
+        // What the last kill produced: the tank and the output container **this** machine owns.
+        let (stacks, gains) = take_harvest_for(machine);
+        let mut last_xp = None;
         for gain in gains {
-            crusher.deposit_essence(gain.points);
-            write_int(&mut entity.nbt, KEY_LAST_XP, gain.points);
+            let unaccepted = crusher.accept_essence(gain.points);
+            last_xp = Some(gain.points);
+            if unaccepted > 0 {
+                // The tank is full: the rest of the experience goes back to the world as orbs.
+                let points = unaccepted / crate::crusher::ESSENCE_PER_POINT;
+                return_rewards(host, pos, Vec::new(), points.max(0));
+            }
+        }
+        if let Some(points) = last_xp {
+            write_int(&mut entity.nbt, KEY_LAST_XP, points);
         }
         for stack in stacks {
-            crate::dissolution::put(&*host, &mut entity.items, stack);
+            let max = host.max_stack_size(stack.item()).unwrap_or(64);
+            if let Some(left) = crate::dissolution::insert(&mut entity.items, stack, max) {
+                // A full container does not keep the reward: it goes back to the world.
+                return_rewards(host, pos, vec![left], 0);
+            }
+        }
+        // A reward whose machine was broken before it could collect it belongs to no machine here.
+        let (strangers, stranger_points) = take_strangers(machine, &dimension, pos);
+        if !strangers.is_empty() || stranger_points > 0 {
+            return_rewards(host, pos, strangers, stranger_points);
         }
         let now = host
             .level(host.dimension())
@@ -388,14 +472,41 @@ impl BlockEntityPart for CrusherPart {
             .unwrap_or(0);
         prune_attempts(&dimension, pos, now);
         let augments = crate::read_augments(&entity.nbt);
-        let found = victim(host, pos);
-        let step = crusher.tick(augments, found.as_ref().map(|found| found.candidate));
+        let mut found: Option<Found> = None;
+        let step = crusher.tick_with(augments, || {
+            found = victim(host, pos);
+            found.as_ref().map(|found| found.candidate)
+        });
         if let (Step::Killed { path }, Some(found)) = (step, found) {
-            kill(host, pos, &dimension, now, found, path);
+            kill(host, pos, &dimension, machine, now, found, path);
         }
         write_int(&mut entity.nbt, KEY_ENERGY, crusher.energy);
         write_int(&mut entity.nbt, KEY_PROGRESS, crusher.progress);
         write_tank(&mut entity.nbt, crusher.essence_mb);
+    }
+}
+
+/// Give rewards back to the world: the stacks at the block's middle (vanilla's block-drop pickup
+/// delay) and the experience as orbs.
+fn return_rewards(
+    host: &mut dyn ServerHost,
+    pos: [i32; 3],
+    stacks: Vec<mod_api::ItemStack>,
+    points: i32,
+) {
+    let Some(level) = host.level(host.dimension()) else {
+        return;
+    };
+    let [x, y, z] = [
+        f64::from(pos[0]) + 0.5,
+        f64::from(pos[1]) + 0.5,
+        f64::from(pos[2]) + 0.5,
+    ];
+    for stack in stacks {
+        let _ = level.spawn_item(host, x, y, z, stack, 10);
+    }
+    if points > 0 {
+        let _ = level.award_experience(host, x, y, z, u32::try_from(points).unwrap_or(u32::MAX));
     }
 }
 
@@ -483,11 +594,14 @@ fn behind(facing: &str) -> Option<[i32; 3]> {
 /// Hit the victim as upstream does: the blacklist for 75 damage, anything else for its life.
 ///
 /// The record goes in **before** the hurt so the death's two hooks find the machine; a hurt the
-/// mob survives forgets it again.
+/// mob survives forgets it again. The fake actor is released right after the hurt: it exists for
+/// the credit the engine reads during that call, and keeping it would leave one connectionless
+/// player per kill in the server's list.
 fn kill(
     host: &mut dyn ServerHost,
     pos: [i32; 3],
     dimension: &str,
+    machine: u64,
     now: i64,
     found: Found,
     path: AttackPath,
@@ -504,6 +618,7 @@ fn kill(
     };
     record_attempt(Attempt {
         entity: found.entity.id(),
+        machine,
         dimension: dimension.to_owned(),
         pos,
         made: now,
@@ -518,6 +633,8 @@ fn kill(
             Some(fake.entity()),
         )
         .unwrap_or(false);
+    // The credit is spent: the connectionless player has no other purpose than this hurt.
+    let _ = fake.remove_fake(host);
     if !landed
         || host
             .living(found.entity)
@@ -617,21 +734,46 @@ fn write_tank(nbt: &mut Compound, mb: i32) {
     nbt.insert("fluids".into(), Tag::List(vec![Tag::Compound(entry)]));
 }
 
-/// Whether the crusher holds anything worth carrying on its item.
+/// Whether the crusher holds anything worth carrying on its item. Its container is **not** one of
+/// them: the engine spills a mod container's slots itself, so only the machine's own keys travel.
 pub(crate) fn has_contents(saved: &Compound) -> bool {
     let progress = read_progress(saved).unwrap_or(crate::crusher::MAX_PROGRESS);
     read_int(saved, KEY_ENERGY) > 0
         || progress < crate::crusher::MAX_PROGRESS
         || read_tank(saved) > 0
         || read_int(saved, KEY_LAST_XP) > 0
-        || saved.contains_key(&"Items".into())
         || crate::has_seated_augment(saved)
 }
 
-/// The `minecraft:block_entity_data` payload a broken crusher's item carries.
+/// The `minecraft:block_entity_data` payload a broken crusher's item carries: a **fresh
+/// allowlist** of the machine's own keys, never the snapshot. `§9m`: the engine spills the
+/// container's slots beside the block, so a payload holding `Items` would duplicate every stack.
 pub(crate) fn carried_patch(saved: &Compound) -> Compound {
-    let mut payload = saved.clone();
+    let mut payload = Compound::new();
     payload.insert("id".into(), Tag::String(ENTITY_ID.into()));
+    payload.insert(KEY_ENERGY.into(), Tag::Int(read_int(saved, KEY_ENERGY)));
+    payload.insert(
+        KEY_PROGRESS.into(),
+        Tag::Int(read_progress(saved).unwrap_or(crate::crusher::MAX_PROGRESS)),
+    );
+    payload.insert(KEY_LAST_XP.into(), Tag::Int(read_int(saved, KEY_LAST_XP)));
+    let mut tank = Compound::new();
+    let mb = read_tank(saved);
+    tank.insert(
+        "Fluid".into(),
+        Tag::String(if mb > 0 { ESSENCE } else { "minecraft:empty" }.into()),
+    );
+    tank.insert("Amount".into(), Tag::Int(mb));
+    payload.insert("fluids".into(), Tag::List(vec![Tag::Compound(tank)]));
+    if let Some(machine) = machine_in(saved) {
+        payload.insert(
+            KEY_MACHINE.into(),
+            Tag::Long(i64::try_from(machine).unwrap_or(i64::MAX)),
+        );
+    }
+    if let Some(augments) = crate::carried_augment_slots(saved) {
+        payload.insert("augments".into(), augments);
+    }
     let mut patch = Compound::new();
     patch.insert("minecraft:block_entity_data".into(), Tag::Compound(payload));
     patch
@@ -947,6 +1089,7 @@ mod tests {
     fn an_attempt_is_forgotten_and_a_harvest_is_taken() {
         record_attempt(Attempt {
             entity: 7,
+            machine: 1,
             dimension: "minecraft:the_end".into(),
             pos: [250, 101, 0],
             made: 1,
@@ -960,16 +1103,85 @@ mod tests {
             attempt_for(7).is_none(),
             "an attempt no death answered is pruned"
         );
-        queue_gain("minecraft:the_end", [250, 101, 0], 2);
-        queue_gain("minecraft:the_end", [9, 9, 9], 3);
-        let (_, gains) = take_harvest("minecraft:the_end", [250, 101, 0]);
+        queue_gain(1, "minecraft:the_end", [250, 101, 0], 2);
+        queue_gain(2, "minecraft:the_end", [250, 101, 0], 3);
+        let (_, gains) = take_harvest_for(1);
         assert_eq!(gains.len(), 1, "only this machine's gain is taken");
         assert_eq!(gains[0].points, 2);
-        let (_, left) = take_harvest("minecraft:the_end", [9, 9, 9]);
+        let (_, left) = take_harvest_for(2);
         assert_eq!(
             left.len(),
             1,
             "another machine's gain waits for its own tick"
+        );
+    }
+
+    /// A reward belongs to the machine instance that earned it, not to the position: breaking a
+    /// crusher with a kill still queued and placing a new one there must not hand it over.
+    #[test]
+    fn a_reward_is_bound_to_the_machine_that_earned_it() {
+        let (beef, _) = crate::tests::two_item_keys();
+        let loot = mod_api::ItemStack::new(beef, 2).expect("a nonzero stack");
+        queue_loot(41, "minecraft:the_end", [250, 101, 0], vec![loot]);
+        queue_gain(41, "minecraft:the_end", [250, 101, 0], 2);
+        let (stacks, gains) = take_harvest_for(42);
+        assert!(
+            stacks.is_empty() && gains.is_empty(),
+            "a machine placed at the same position inherited the other machine's rewards"
+        );
+        let (stacks, points) = take_pending(41);
+        assert_eq!(
+            stacks.len(),
+            1,
+            "the earning machine still collects its loot"
+        );
+        assert_eq!(points, 2, "and its experience");
+        let (_, after) = take_harvest_for(41);
+        assert!(after.is_empty(), "taking it consumes it");
+    }
+
+    /// `§9m`: the engine spills the container's slots itself, so the payload is a fresh allowlist.
+    #[test]
+    fn a_carried_crusher_payload_is_an_allowlist_without_its_container() {
+        let mut nbt = Compound::new();
+        write_int(&mut nbt, KEY_ENERGY, 4_600);
+        write_int(&mut nbt, KEY_PROGRESS, 10);
+        write_int(&mut nbt, KEY_LAST_XP, 2);
+        write_int(&mut nbt, KEY_MACHINE, 7);
+        write_tank(&mut nbt, 40);
+        let mut item = Compound::new();
+        item.insert("id".into(), Tag::String("minecraft:beef".into()));
+        nbt.insert("Items".into(), Tag::List(vec![Tag::Compound(item)]));
+        nbt.insert("Stray".into(), Tag::Int(3));
+        let mut augment = Compound::new();
+        augment.insert("Speed".into(), Tag::Int(2));
+        nbt.insert(
+            crate::KEY_AUGMENTS.into(),
+            Tag::List(vec![Tag::Compound(augment), Tag::Compound(Compound::new())]),
+        );
+        let patch = carried_patch(&nbt);
+        let Some(Tag::Compound(payload)) = patch.get(&"minecraft:block_entity_data".into()) else {
+            panic!("no block entity data in the patch");
+        };
+        assert!(
+            payload.get(&"Items".into()).is_none(),
+            "the container's slots are the engine's own spill, never a second copy"
+        );
+        assert!(
+            payload.get(&"Stray".into()).is_none(),
+            "an allowlist carries the machine's keys, not the snapshot's"
+        );
+        assert_eq!(read_int(payload, KEY_ENERGY), 4_600);
+        assert_eq!(read_int(payload, KEY_LAST_XP), 2);
+        assert_eq!(read_tank(payload), 40);
+        assert_eq!(
+            payload.get(&KEY_MACHINE.into()),
+            Some(&Tag::Long(7)),
+            "the instance id travels with its machine"
+        );
+        assert!(
+            crate::has_seated_augment(payload),
+            "the seating travels on the item"
         );
     }
 

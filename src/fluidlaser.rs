@@ -91,6 +91,39 @@ impl FluidRecipe {
     }
 }
 
+/// The recipes whose catalyst and first valid rarity pass, in file order.
+///
+/// These are the **eligibility** half of `onWork` — pure reads of the lens slot, the depth, the
+/// dimension type and the biome tags. The glue reads each candidate's optional entity gate only
+/// after it is on this list, which is what keeps a gate's damage from preceding eligibility: an
+/// ineligible recipe's gate is never looked at.
+#[must_use]
+pub fn place_candidates<'a>(
+    recipes: &'a [FluidRecipe],
+    dimension: &str,
+    depth: i32,
+    in_biome_tag: &dyn Fn(&str) -> bool,
+    catalyst: &str,
+) -> Vec<&'a FluidRecipe> {
+    recipes
+        .iter()
+        .filter(|recipe| {
+            recipe.catalyst_matches(catalyst)
+                && recipe.rarity_for(dimension, depth, in_biome_tag).is_some()
+        })
+        .collect()
+}
+
+/// The first candidate whose gate passes: the glue applies the gate (and its damage) here, so a
+/// recipe that failed eligibility is never asked.
+#[must_use]
+pub fn first_with_gate<'a>(
+    candidates: Vec<&'a FluidRecipe>,
+    gate: &mut dyn FnMut(&FluidRecipe) -> bool,
+) -> Option<&'a FluidRecipe> {
+    candidates.into_iter().find(|recipe| gate(recipe))
+}
+
 /// The recipe one completed bar produces: the **first** file-order recipe whose catalyst,
 /// first valid rarity and `gate` all pass (`FluidLaserBaseTile.onWork`). The glue's `gate`
 /// checks the recipe's optional nearby entity.
@@ -101,13 +134,12 @@ pub fn choice<'a>(
     depth: i32,
     in_biome_tag: &dyn Fn(&str) -> bool,
     catalyst: &str,
-    gate: &dyn Fn(&FluidRecipe) -> bool,
+    gate: &mut dyn FnMut(&FluidRecipe) -> bool,
 ) -> Option<&'a FluidRecipe> {
-    recipes.iter().find(|recipe| {
-        recipe.catalyst_matches(catalyst)
-            && recipe.rarity_for(dimension, depth, in_biome_tag).is_some()
-            && gate(recipe)
-    })
+    first_with_gate(
+        place_candidates(recipes, dimension, depth, in_biome_tag, catalyst),
+        gate,
+    )
 }
 
 /// One fluid in the base's tank.
@@ -317,7 +349,7 @@ mod tests {
     #[test]
     fn the_first_recipe_whose_catalyst_rarity_and_gate_pass_is_the_one_used() {
         let table = [ether(), lava()];
-        let wither = |recipe: &FluidRecipe| {
+        let mut wither = |recipe: &FluidRecipe| {
             recipe
                 .entity
                 .as_ref()
@@ -329,7 +361,7 @@ mod tests {
             101,
             &any_biome,
             "industrialforegoing:purple_laser_lens",
-            &wither,
+            &mut wither,
         );
         assert_eq!(
             found.map(|recipe| recipe.id.as_str()),
@@ -344,7 +376,7 @@ mod tests {
     #[test]
     fn a_recipe_without_its_catalyst_or_its_entity_is_skipped() {
         let table = [ether(), lava()];
-        let wither = |recipe: &FluidRecipe| {
+        let mut wither = |recipe: &FluidRecipe| {
             recipe
                 .entity
                 .as_ref()
@@ -357,7 +389,7 @@ mod tests {
                 101,
                 &any_biome,
                 "industrialforegoing:black_laser_lens",
-                &wither
+                &mut wither
             )
             .is_none(),
             "neither recipe names the black lens"
@@ -369,10 +401,57 @@ mod tests {
                 101,
                 &any_biome,
                 "industrialforegoing:purple_laser_lens",
-                &|_| false
+                &mut |_| false
             )
             .is_none(),
             "the ether recipe's wither is absent"
+        );
+    }
+
+    /// Eligibility comes before the gate: a recipe whose catalyst or rarity fails is never asked
+    /// its gate, so the damage `onWork` applies on a match cannot precede eligibility.
+    #[test]
+    fn an_ineligible_recipe_s_gate_is_never_asked() {
+        let table = [ether(), lava()];
+        let candidate = place_candidates(
+            &table,
+            "minecraft:the_end",
+            11,
+            &nether,
+            "industrialforegoing:orange_laser_lens",
+        );
+        assert!(
+            candidate.is_empty(),
+            "the lava recipe is the only orange-lens recipe and the End is not the Nether"
+        );
+        let mut asked = Vec::new();
+        let _ = first_with_gate(candidate, &mut |recipe| {
+            asked.push(recipe.id.clone());
+            true
+        });
+        assert!(
+            asked.is_empty(),
+            "an eligible-excluded recipe's gate was asked: {asked:?}"
+        );
+
+        // With the purple lens at a depth inside the band the ether recipe is the only candidate,
+        // so its gate is the only one asked.
+        let candidate = place_candidates(
+            &table,
+            "minecraft:the_end",
+            101,
+            &nether,
+            "industrialforegoing:purple_laser_lens",
+        );
+        let mut asked = Vec::new();
+        let found = first_with_gate(candidate, &mut |recipe| {
+            asked.push(recipe.id.clone());
+            true
+        });
+        assert_eq!(asked, vec![ether().id], "only the eligible recipe is asked");
+        assert_eq!(
+            found.map(|recipe| recipe.fluid.as_str()),
+            Some("industrialforegoing:ether_gas")
         );
     }
 

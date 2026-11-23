@@ -1,10 +1,17 @@
 # Licence notice — Industrial Foregoing
 
-- **Upstream:** Industrial Foregoing, https://github.com/Buuz135/Industrial-Foregoing.
-- **Licence as read:** MIT — the upstream repository's `LICENSE` is the MIT text, `Copyright (c) 2021 Buuz135` (already in
-  the port `LICENSE`).
-- **Complete licence text:** [`LICENSE`](LICENSE), which keeps the original
-  copyright notice beside the port's own.
+- **Upstream:** Industrial Foregoing, <https://github.com/InnovativeOnlineIndustries/Industrial-Foregoing>
+  (the `Buuz135/Industrial-Foregoing` URL redirects there).
+- **Licence as read:** MIT. The upstream `LICENSE` at commit
+  `ce2852db4b34af3ab1b9637cff0b327d4bb561d5` is the MIT text, and its copyright line — line 3 —
+  is reproduced **verbatim** in this port's `LICENSE`:
+
+  ```
+  Copyright (c) 2017 Buuz135
+  ```
+
+- **Complete licence text:** [`LICENSE`](LICENSE), which keeps the upstream copyright notice
+  beside the port's own (`Copyright (c) 2026 AdLf0208 (Horizon port)`).
 - **What travels with the artifact:** [`LICENSE`](LICENSE) and this notice sit at the root of the
   distributed `industrialforegoing.hmod` (one flat package since 2026-11-18; before that, inside the
   retired `.hnmod` and its embedded content archive), so an artifact-only download carries them

@@ -445,23 +445,38 @@ fn output_room(machine: &Machine, rule: &ChamberRecipe) -> bool {
 /// (`ItemHandlerHelper.insertItem`).
 pub(crate) fn put(host: &dyn Host, outputs: &mut [Option<ItemStack>], product: ItemStack) -> bool {
     let max = host.max_stack_size(product.item()).unwrap_or(64);
+    insert(outputs, product, max).is_none()
+}
+
+/// Put a product into the first slot that can take it, and return what did not fit.
+///
+/// A slot may take the product only when the two stacks are **stackable** — the same item,
+/// the same damage and the same component patch — and their counts fit the item's maximum.
+/// Growing the slot's own stack (instead of building a new one from the id and the count)
+/// is what keeps its damage and components. A product that fits nowhere comes back, so the
+/// caller gives it to the world instead of losing it.
+#[must_use]
+pub(crate) fn insert(
+    outputs: &mut [Option<ItemStack>],
+    product: ItemStack,
+    max: u32,
+) -> Option<ItemStack> {
     let same = outputs.iter().position(|slot| {
         slot.as_ref().is_some_and(|stack| {
-            stack.item() == product.item() && stack.count() + product.count() <= max
+            stack.is_stackable_with(&product) && stack.count() + product.count() <= max
         })
     });
     if let Some(index) = same
-        && let Some(stack) = outputs[index].as_ref()
-        && let Some(merged) = ItemStack::new(product.item(), stack.count() + product.count())
+        && let Some(stack) = outputs[index].as_mut()
+        && stack.grow(product.count()).is_ok()
     {
-        outputs[index] = Some(merged);
-        return true;
+        return None;
     }
     if let Some(index) = outputs.iter().position(Option::is_none) {
         outputs[index] = Some(product);
-        return true;
+        return None;
     }
-    false
+    Some(product)
 }
 
 /// The two tanks from the entity's `fluids`: the pin's shape (one `{Fluid, Amount}` per tank),
@@ -559,9 +574,29 @@ pub(crate) fn clamp_patch(saved: &Compound) -> Option<Compound> {
 }
 
 /// The `minecraft:block_entity_data` payload a broken chamber's item carries.
+/// The `minecraft:block_entity_data` payload a broken chamber's item carries: a **fresh
+/// allowlist** of the machine's own keys, never the snapshot. `§9m`: the engine spills the
+/// chamber's slots itself, so a payload holding `Items` would duplicate every stack.
 pub(crate) fn carried_patch(saved: &Compound) -> Compound {
-    let mut payload = saved.clone();
+    let [input, output] = read_tanks(saved);
+    let mut payload = Compound::new();
     payload.insert("id".into(), Tag::String(ENTITY_ID.into()));
+    payload.insert(
+        KEY_ENERGY.into(),
+        Tag::Int(read_int(saved, KEY_ENERGY).clamp(0, CAPACITY_FE)),
+    );
+    payload.insert(
+        KEY_PROGRESS.into(),
+        Tag::Int(read_int(saved, KEY_PROGRESS).max(0)),
+    );
+    let mut body = Compound::new();
+    write_tanks(&mut body, &[input, output]);
+    if let Some(Tag::List(fluids)) = body.get(&"fluids".into()) {
+        payload.insert("fluids".into(), Tag::List(fluids.clone()));
+    }
+    if let Some(augments) = crate::carried_augment_slots(saved) {
+        payload.insert("augments".into(), augments);
+    }
     let mut patch = Compound::new();
     patch.insert("minecraft:block_entity_data".into(), Tag::Compound(payload));
     patch
@@ -840,5 +875,110 @@ mod tests {
         assert_eq!(OUTPUT_SLOTS, 3);
         assert_eq!(INPUT_SLOTS + OUTPUT_SLOTS, SLOTS);
         assert_eq!(crate::chamber::Completion::default().consumed_fluid.mb, 0);
+    }
+
+    /// A component that survives only if the merge compares whole stacks.
+    struct Marker;
+
+    impl mod_api::Component for Marker {
+        type Value = i32;
+
+        fn id(&self) -> &str {
+            "industrialforegoing:test_marker"
+        }
+
+        fn decode(&self, value: &Tag) -> Option<i32> {
+            match value {
+                Tag::Int(value) => Some(*value),
+                _ => None,
+            }
+        }
+
+        fn encode(&self, value: i32) -> Tag {
+            Tag::Int(value)
+        }
+    }
+
+    /// Two of this package's own item keys: `ItemKey` has no public constructor, so the test
+    /// binary's one registration call mints them.
+    fn two_items() -> (mod_api::ItemKey, mod_api::ItemKey) {
+        crate::tests::two_item_keys()
+    }
+
+    fn marked(count: u32) -> ItemStack {
+        let (beef, _) = two_items();
+        let mut stack = ItemStack::new(beef, count).expect("a nonzero stack");
+        stack.set(&Marker, 7).expect("the marker encodes");
+        stack
+    }
+
+    #[test]
+    fn a_product_with_another_component_does_not_merge_into_the_same_item() {
+        let (beef, _) = two_items();
+        let mut outputs = vec![None; 3];
+        outputs[0] = Some(marked(1));
+        let leftover = insert(&mut outputs, ItemStack::new(beef, 1).unwrap(), 64);
+        assert!(leftover.is_none(), "the empty slot took it");
+        assert_eq!(
+            outputs[0].as_ref().map(ItemStack::count),
+            Some(1),
+            "the marked stack was not grown: a different patch is a different stack"
+        );
+        assert_eq!(
+            outputs[0].as_ref().and_then(|stack| stack.get(&Marker)),
+            Some(7),
+            "the component the slot carried is still there"
+        );
+        assert_eq!(
+            outputs[1].as_ref().map(ItemStack::count),
+            Some(1),
+            "the product landed in the next slot instead"
+        );
+    }
+
+    #[test]
+    fn a_product_with_the_same_components_and_damage_merges_and_keeps_them() {
+        let (beef, _) = two_items();
+        let mut plain = ItemStack::new(beef, 1).expect("a nonzero stack");
+        plain.set_damage(4);
+        let mut outputs = vec![None; 3];
+        outputs[0] = Some(plain);
+        let mut product = ItemStack::new(beef, 2).expect("a nonzero stack");
+        product.set_damage(4);
+        assert!(insert(&mut outputs, product, 64).is_none());
+        let merged = outputs[0].as_ref().expect("the slot still holds the stack");
+        assert_eq!(merged.count(), 3);
+        assert_eq!(merged.damage(), 4, "the damage survived the merge");
+    }
+
+    #[test]
+    fn a_product_that_fits_nowhere_comes_back() {
+        let (_, leather) = two_items();
+        let mut outputs = vec![None; 2];
+        outputs[0] = Some(ItemStack::new(leather, 64).unwrap());
+        outputs[1] = Some(ItemStack::new(leather, 64).unwrap());
+        let leftover = insert(&mut outputs, ItemStack::new(leather, 1).unwrap(), 64);
+        assert_eq!(
+            leftover.map(|stack| stack.count()),
+            Some(1),
+            "a full container gives the reward back instead of dropping it on the floor"
+        );
+    }
+
+    #[test]
+    fn a_carried_chamber_payload_is_an_allowlist_without_its_container() {
+        let mut nbt = Compound::new();
+        write_int(&mut nbt, KEY_ENERGY, 90);
+        write_int(&mut nbt, KEY_PROGRESS, 25);
+        write_tanks(&mut nbt, &[Tank::new(DECLARED_FLUIDS[0], 250), Tank::EMPTY]);
+        nbt.insert("Items".into(), Tag::List(Vec::new()));
+        let patch = carried_patch(&nbt);
+        let Some(Tag::Compound(payload)) = patch.get(&"minecraft:block_entity_data".into()) else {
+            panic!("no block entity data in the patch");
+        };
+        assert!(
+            payload.get(&"Items".into()).is_none(),
+            "a container's contents ride on the engine's own spill, never twice"
+        );
     }
 }

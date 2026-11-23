@@ -666,15 +666,69 @@ pub(crate) fn has_contents(block: &str, saved: &Compound) -> bool {
         || read_int(saved, KEY_PROGRESS) > 0
 }
 
-/// The `minecraft:block_entity_data` payload a broken machine's item carries.
+/// One tank's entry in the pin's shape (`{Fluid, Amount}`), `minecraft:empty` when it holds none.
+fn tank_entry(fluid: &str, mb: i32, capacity: i32) -> Tag {
+    let mb = mb.clamp(0, capacity);
+    let mut entry = Compound::new();
+    entry.insert(
+        "Fluid".into(),
+        Tag::String(if mb > 0 { fluid } else { "minecraft:empty" }.into()),
+    );
+    entry.insert("Amount".into(), Tag::Int(mb));
+    Tag::Compound(entry)
+}
+
+/// The `minecraft:block_entity_data` payload a broken machine's item carries: a **fresh
+/// allowlist** of the machine's own keys, never the snapshot. `§9m`: the engine spills a mod
+/// container's slots itself, so a payload that also held `Items` would duplicate every stack when
+/// the item is placed back.
 pub(crate) fn carried_patch(block: &str, saved: &Compound) -> Compound {
-    let mut payload = saved.clone();
-    let id = if block == EXTRACTOR_BLOCK {
-        EXTRACTOR_BLOCK
+    let mut payload = Compound::new();
+    let mut fluids = Vec::new();
+    if block == EXTRACTOR_BLOCK {
+        payload.insert("id".into(), Tag::String(EXTRACTOR_BLOCK.into()));
+        payload.insert(
+            KEY_ENERGY.into(),
+            Tag::Int(read_int(saved, KEY_ENERGY).clamp(0, EXTRACTOR_CAPACITY_FE)),
+        );
+        payload.insert(
+            KEY_PROGRESS.into(),
+            Tag::Int(
+                read_progress(saved)
+                    .unwrap_or(EXTRACTOR_MAX_PROGRESS)
+                    .clamp(0, EXTRACTOR_MAX_PROGRESS),
+            ),
+        );
+        fluids.push(tank_entry(
+            LATEX,
+            read_tank(saved, LATEX_TANK),
+            EXTRACTOR_TANK_MB,
+        ));
     } else {
-        UNIT_BLOCK
-    };
-    payload.insert("id".into(), Tag::String(id.into()));
+        payload.insert("id".into(), Tag::String(UNIT_BLOCK.into()));
+        payload.insert(
+            KEY_ENERGY.into(),
+            Tag::Int(read_int(saved, KEY_ENERGY).clamp(0, UNIT_CAPACITY_FE)),
+        );
+        payload.insert(
+            KEY_PROGRESS.into(),
+            Tag::Int(read_int(saved, KEY_PROGRESS).max(0)),
+        );
+        fluids.push(tank_entry(
+            LATEX,
+            read_tank(saved, LATEX_TANK),
+            UNIT_TANK_MB,
+        ));
+        fluids.push(tank_entry(
+            WATER,
+            read_tank(saved, WATER_TANK),
+            UNIT_TANK_MB,
+        ));
+    }
+    payload.insert("fluids".into(), Tag::List(fluids));
+    if let Some(augments) = crate::carried_augment_slots(saved) {
+        payload.insert("augments".into(), augments);
+    }
     let mut patch = Compound::new();
     patch.insert("minecraft:block_entity_data".into(), Tag::Compound(payload));
     patch
@@ -1262,5 +1316,35 @@ mod tests {
         assert_eq!(hits("minecraft:the_end", [201, 101, 0]), 0);
         set_hits("minecraft:the_end", [200, 101, 0], 0);
         assert_eq!(hits("minecraft:the_end", [200, 101, 0]), 0);
+    }
+
+    /// `§9m`: the engine spills a mod container's slots itself, so a carried payload that also
+    /// held `Items` would duplicate every stack when the item is placed back.
+    #[test]
+    fn a_carried_payload_is_an_allowlist_without_its_container() {
+        let mut nbt = Compound::new();
+        write_int(&mut nbt, KEY_ENERGY, 4_000);
+        write_int(&mut nbt, KEY_PROGRESS, 40);
+        write_tank(&mut nbt, LATEX_TANK, 750, UNIT_TANK_MB, LATEX);
+        write_tank(&mut nbt, WATER_TANK, 500, UNIT_TANK_MB, WATER);
+        nbt.insert("Items".into(), Tag::List(Vec::new()));
+        nbt.insert("Stray".into(), Tag::Int(9));
+        for block in [UNIT_BLOCK, EXTRACTOR_BLOCK] {
+            let patch = carried_patch(block, &nbt);
+            let Some(Tag::Compound(payload)) = patch.get(&"minecraft:block_entity_data".into())
+            else {
+                panic!("no block entity data in the patch");
+            };
+            assert!(
+                payload.get(&"Items".into()).is_none(),
+                "{block}: the container's contents ride on the engine's own spill, never twice"
+            );
+            assert!(
+                payload.get(&"Stray".into()).is_none(),
+                "{block}: an allowlist carries the machine's own keys, not the snapshot's"
+            );
+            assert_eq!(read_int(payload, KEY_ENERGY), 4_000);
+            assert_eq!(read_tank(payload, LATEX_TANK), 750);
+        }
     }
 }

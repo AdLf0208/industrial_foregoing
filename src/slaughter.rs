@@ -137,18 +137,39 @@ impl Factory {
     /// One server tick: fall the bar by this tick's step, and at zero run one attempt.
     ///
     /// `victim` is the mob the glue found in the working area, if any; the glue kills it when the
-    /// answer is [`Step::Killed`].
+    /// answer is [`Step::Killed`]. [`Self::tick_with`] is the seam the glue uses so the
+    /// working-area scan is deferred until a tick really attempts work.
     pub fn tick(&mut self, augments: Augments, victim: Option<Victim>) -> Step {
+        self.tick_with(augments, || victim)
+    }
+
+    /// One server tick with the working-area scan supplied as a closure.
+    ///
+    /// Upstream reaches `getBox()`/`entities` inside `work()`, and `onFinishWork` calls `work()`
+    /// only when the bar has reached zero **and** the buffer holds the operation's FE — so a
+    /// machine that is still counting down, or cannot pay, never touches the entity list.
+    pub fn tick_with<F>(&mut self, augments: Augments, scan: F) -> Step
+    where
+        F: FnOnce() -> Option<Victim>,
+    {
         let bar = Self::bar_length(augments);
-        self.progress = (self.progress - self.increase.max(1)).max(0);
+        let step = self.increase.max(1);
+        // `onFinishWork` reaches `work()` only at zero and only with the operation's FE, so this
+        // is the one tick that may look at the working area.
+        let attempt = self.progress - step <= 0 && self.energy >= POWER_PER_OPERATION;
+        self.progress = (self.progress - step).max(0);
         // `onTickWork` runs after the bar's own fall, so a speed augment shows from the second
         // tick — the same order the chamber and the latex chain reproduce.
         self.increase = augments.speed.max(1);
         if self.progress > 0 {
             return Step::Working;
         }
-        match victim {
-            Some(victim) if self.energy >= POWER_PER_OPERATION => {
+        if !attempt {
+            self.progress = bar;
+            return Step::Idle;
+        }
+        match scan() {
+            Some(victim) => {
                 self.energy -= POWER_PER_OPERATION;
                 let yields = yields_for(victim);
                 self.meat_mb = (self.meat_mb + yields.meat_mb).clamp(0, MEAT_TANK_MB);
@@ -401,5 +422,54 @@ mod tests {
         assert_eq!(saved.progress, 0);
         assert_eq!(saved.meat_mb, MEAT_TANK_MB);
         assert_eq!(saved.pink_slime_mb, PINK_SLIME_TANK_MB);
+    }
+
+    /// The working-area query is the expensive half of a tick, and upstream reaches it inside
+    /// `work()` — which runs only at zero with the FE in hand.
+    #[test]
+    fn the_working_area_is_queried_only_on_a_powered_attempt() {
+        let mut idle = Factory::default();
+        let mut scans = 0;
+        for _ in 0..5 {
+            assert_eq!(
+                idle.tick_with(Augments::NONE, || {
+                    scans += 1;
+                    None
+                }),
+                Step::Working
+            );
+        }
+        assert_eq!(
+            scans, 0,
+            "an unpowered machine must not query the working area"
+        );
+
+        let mut falling = Factory {
+            energy: 400,
+            progress: 50,
+            ..Factory::default()
+        };
+        let mut scans = 0;
+        assert_eq!(
+            falling.tick_with(Augments::NONE, || {
+                scans += 1;
+                None
+            }),
+            Step::Working
+        );
+        assert_eq!(scans, 0, "a bar still counting down does not query either");
+
+        let mut ready_factory = Factory {
+            energy: 400,
+            progress: 1,
+            ..Factory::default()
+        };
+        let mut scans = 0;
+        let step = ready_factory.tick_with(Augments::NONE, || {
+            scans += 1;
+            Some(cow())
+        });
+        assert_eq!(scans, 1, "the attempt ticks once");
+        assert!(matches!(step, Step::Killed(_)));
     }
 }

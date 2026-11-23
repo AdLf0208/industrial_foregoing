@@ -160,8 +160,11 @@ impl BlockEntityPart for FactoryPart {
         let [meat, slime] = read_tanks(&entity.nbt);
         let mut factory =
             Factory::from_saved(read_int(&entity.nbt, KEY_ENERGY), progress, meat, slime);
-        let found = victim(host, pos);
-        let step = factory.tick(augments, found.as_ref().map(|found| found.victim));
+        let mut found: Option<Found> = None;
+        let step = factory.tick_with(augments, || {
+            found = victim(host, pos);
+            found.as_ref().map(|found| found.victim)
+        });
         if let (Step::Killed(_), Some(found)) = (step, found) {
             let _ = found.entity.remove(host, RemovalReason::Killed);
         }

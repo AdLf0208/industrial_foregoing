@@ -154,18 +154,39 @@ impl Crusher {
     /// One server tick: fall the bar by this tick's step, and at zero run one attempt.
     ///
     /// `victim` is the eligible mob the glue found in the working area, if any; the glue hits it
-    /// when the answer is [`Step::Killed`].
+    /// when the answer is [`Step::Killed`]. [`Self::tick_with`] is the seam the glue uses so the
+    /// working-area scan can be deferred until a tick really attempts work.
     pub fn tick(&mut self, augments: Augments, victim: Option<Candidate>) -> Step {
+        self.tick_with(augments, || victim)
+    }
+
+    /// One server tick with the working-area scan supplied as a closure.
+    ///
+    /// Upstream reaches `getBox()`/`entities` inside `work()`, and `onFinishWork` calls `work()`
+    /// only when the bar has reached zero **and** the buffer holds the operation's FE — so a
+    /// machine that is still counting down, or cannot pay, never touches the entity list.
+    pub fn tick_with<F>(&mut self, augments: Augments, scan: F) -> Step
+    where
+        F: FnOnce() -> Option<Candidate>,
+    {
         let bar = Self::bar_length(augments);
-        self.progress = (self.progress - self.increase.max(1)).max(0);
+        let step = self.increase.max(1);
+        // `onFinishWork` reaches `work()` only at zero and only with the operation's FE, so this
+        // is the one tick that may look at the working area.
+        let attempt = self.progress - step <= 0 && self.energy >= POWER_PER_OPERATION;
+        self.progress = (self.progress - step).max(0);
         // `onTickWork` runs after the bar's own fall, so a speed augment shows from the second
         // tick — the same order the chamber, the latex chain and the slaughter factory reproduce.
         self.increase = augments.speed.max(1);
         if self.progress > 0 {
             return Step::Working;
         }
-        match victim {
-            Some(victim) if self.energy >= POWER_PER_OPERATION && eligible(victim) => {
+        if !attempt {
+            self.progress = bar;
+            return Step::Idle;
+        }
+        match scan() {
+            Some(victim) if eligible(victim) => {
                 self.energy -= POWER_PER_OPERATION;
                 self.progress = Self::rest(bar, KILL_WORK_AMOUNT);
                 Step::Killed {
@@ -186,9 +207,21 @@ impl Crusher {
     /// One harvested kill's experience: `experience * 20` mB into the tank, clamped at 32,000
     /// (`fillForced` clamps; a full tank still counts the kill).
     pub fn deposit_essence(&mut self, points: i32) -> i32 {
+        self.accept_essence_reporting(points).0
+    }
+
+    /// The same deposit, reporting what the tank could **not** take (0 unless it is nearly full),
+    /// so the glue can return that part to the world as experience instead of losing it.
+    pub fn accept_essence(&mut self, points: i32) -> i32 {
+        self.accept_essence_reporting(points).1
+    }
+
+    fn accept_essence_reporting(&mut self, points: i32) -> (i32, i32) {
         let gained = essence_for(points);
+        let before = self.essence_mb;
         self.essence_mb = (self.essence_mb + gained).clamp(0, TANK_MB);
-        gained
+        let accepted = self.essence_mb - before;
+        (gained, gained - accepted)
     }
 }
 
@@ -427,5 +460,51 @@ mod tests {
         assert_eq!(saved.energy, CAPACITY_FE);
         assert_eq!(saved.progress, 0);
         assert_eq!(saved.essence_mb, TANK_MB);
+    }
+
+    /// The working-area query is the expensive half of a tick, and upstream reaches it inside
+    /// `work()` — which runs only at zero with the FE in hand. The count, not the outcome, is the
+    /// assertion: an idle or unpowered machine must not look for a mob at all.
+    #[test]
+    fn the_working_area_is_queried_only_on_a_powered_attempt() {
+        let mut idle = Crusher::default();
+        let mut scans = 0;
+        for _ in 0..5 {
+            assert_eq!(
+                idle.tick_with(Augments::NONE, || {
+                    scans += 1;
+                    None
+                }),
+                Step::Working
+            );
+        }
+        assert_eq!(
+            scans, 0,
+            "an unpowered machine must not query the working area"
+        );
+
+        let mut falling = Crusher {
+            energy: 1_000,
+            progress: 50,
+            ..Crusher::default()
+        };
+        let mut scans = 0;
+        assert_eq!(
+            falling.tick_with(Augments::NONE, || {
+                scans += 1;
+                None
+            }),
+            Step::Working
+        );
+        assert_eq!(scans, 0, "a bar still counting down does not query either");
+
+        let mut ready_crusher = ready(1_000);
+        let mut scans = 0;
+        let step = ready_crusher.tick_with(Augments::NONE, || {
+            scans += 1;
+            Some(cow())
+        });
+        assert_eq!(scans, 1, "the attempt ticks once");
+        assert!(matches!(step, Step::Killed { .. }));
     }
 }

@@ -27,7 +27,6 @@
 //! output fluid the game does not know (the jar's `pneumaticcraft:oil` without that mod) is
 //! left out of the table and counted on the `files` side of `recipes n/m`.
 
-use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use mod_api::{
@@ -38,7 +37,7 @@ use mod_api::{
 
 use crate::fluidlaser::{
     Base, CATALYST_SLOTS, ENTITY_DAMAGE, ENTITY_MIN_HEALTH, EntityGate, FluidRecipe,
-    TANK_CAPACITY_MB, Tank, choice,
+    TANK_CAPACITY_MB, Tank,
 };
 
 /// The fluid laser base (`FluidLaserBaseBlock`).
@@ -276,8 +275,8 @@ impl BlockEntityPart for FluidBasePart {
 }
 
 /// One completed bar: the first matching recipe's fluid goes into the tank
-/// (`onWork`). The entity gate is applied (the matching entity takes
-/// [`ENTITY_DAMAGE`]).
+/// (`onWork`). Eligibility (catalyst, depth, dimension, biome) is decided **before** any entity
+/// gate is read, so a recipe that cannot run never damages the entity its gate names.
 fn on_work(
     host: &mut dyn ServerHost,
     stored: &mut Tank,
@@ -291,21 +290,18 @@ fn on_work(
         return false;
     };
     let biome = level.biome_at(&*host, pos).unwrap_or_default();
-    let gates: BTreeMap<String, bool> = table
-        .rules
-        .iter()
-        .map(|recipe| {
-            let passes = recipe
-                .entity
-                .as_ref()
-                .is_none_or(|gate| entity_matches(host, pos, gate, true));
-            (recipe.id.clone(), passes)
-        })
-        .collect();
-    let in_tag = |tag: &str| level.biome_in_tag(&*host, &biome, tag).unwrap_or(false);
-    let Some(chosen) = choice(&table.rules, dimension, depth, &in_tag, lens, &|recipe| {
-        gates.get(&recipe.id).copied().unwrap_or(false)
-    }) else {
+    let candidates = {
+        let in_tag = |tag: &str| level.biome_in_tag(&*host, &biome, tag).unwrap_or(false);
+        crate::fluidlaser::place_candidates(&table.rules, dimension, depth, &in_tag, lens)
+    };
+    let chosen = crate::fluidlaser::first_with_gate(candidates, &mut |recipe| {
+        // Only an eligible recipe's gate is read, and the match takes its 5 health.
+        recipe
+            .entity
+            .as_ref()
+            .is_none_or(|gate| entity_matches(host, pos, gate, true))
+    });
+    let Some(chosen) = chosen else {
         return false;
     };
     let (fluid, amount) = (chosen.fluid.clone(), chosen.amount);
@@ -589,22 +585,19 @@ pub(crate) fn readout(host: &mut dyn ServerHost, pos: [i32; 3]) -> String {
         .flatten()
         .map(|stack| stack.item().id(&*host));
     let recipe = lens.as_deref().and_then(|lens| {
-        let gates: BTreeMap<String, bool> = table
-            .rules
-            .iter()
-            .map(|recipe| {
-                let passes = recipe
+        let candidates = {
+            let in_tag = |tag: &str| level.biome_in_tag(&*host, &biome, tag).unwrap_or(false);
+            crate::fluidlaser::place_candidates(&table.rules, dimension, depth, &in_tag, lens)
+        };
+        candidates
+            .into_iter()
+            .find(|recipe| {
+                recipe
                     .entity
                     .as_ref()
-                    .is_none_or(|gate| entity_matches(host, pos, gate, false));
-                (recipe.id.clone(), passes)
+                    .is_none_or(|gate| entity_matches(host, pos, gate, false))
             })
-            .collect();
-        let in_tag = |tag: &str| level.biome_in_tag(&*host, &biome, tag).unwrap_or(false);
-        choice(&table.rules, dimension, depth, &in_tag, lens, &|recipe| {
-            gates.get(&recipe.id).copied().unwrap_or(false)
-        })
-        .map(|recipe| recipe.id.clone())
+            .map(|recipe| recipe.id.clone())
     });
     let time = level.game_time(host).unwrap_or(0);
     format!(

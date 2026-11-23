@@ -50,7 +50,7 @@ no packed file changed but the version string — and closes deviation 37 for th
 arms. slice 12 (0.2.11, 2026-11-23) adds the **Mob Duplicator and the Mob Imprisonment Tool**: the
 first consumer of `industrialforegoing:essence`, a 62-tick bar, a 50,000 FE buffer, an 8,000 mB
 fill-only tank, a one-slot tool input and `Host::summon`; the tool captures/releases a mob and is the
-parent item a future add-on can bind to. slice 13 (0.2.12, 2026-11-23) is the **Animal Rancher**, the
+parent item a future add-on can bind to. slice 14 (0.2.13, 2026-11-23) is the **review round two repair** — four accepted blockers (container `Items` in the carried payload, the crusher's reward merge and its world-return, the server work of the two mob machines and the laser's gate order, and the upstream copyright line) with no new content. slice 13 (0.2.12, 2026-11-23) is the **Animal Rancher**, the
 first of the animal machines: a 100-tick bar, a 10,000 FE buffer at 400 FE an operation, an 8,000 mB
 milk tank, a 15-slot output container and a **single-block** working area — a sheep's wool, a cow's or
 goat's milk and a squid's dye. The gap list at the end is the rest of the mod.
@@ -2622,9 +2622,176 @@ counterfactuals (no animal, 399 FE, a full container, four failing draws).
 > generators, the conveyors, the GUI) are the next slices.
 
 
+## Slice 14 — review round two: the four blockers (0.2.13, 2026-11-23)
+
+**This is a repair slice, not a new family.** The owner's review accepted four blockers against the
+delivered 0.2.12 package; each is answered here with a failing test first, a minimal repair, and an
+in-game assertion. No new machine, item or recipe is added, and `src/runtime.rs` is untouched.
+
+| # | the reviewer's sentence | what changed |
+|---|---|---|
+| 1 | *"Strip `Items` from both the Latex Processing Unit and Mob Crusher's carried data and exclude it from their carry conditions. Horizon already drops the inventories separately."* | both payloads are now **fresh allowlists** (`id`, `energy`, `progress`/`last_xp`, `fluids`, `augments`, the machine id) instead of a snapshot with `Items` removed late; `has_contents` no longer counts `Items`. The chamber's payload had the same `§9m` violation (its 11 slots), fixed the same way and recorded below. |
+| 2 | *"Compare full stack data when merging loot and preserve damage and components. Bind pending loot and XP to the machine instance, and return rewards to the world if that instance cannot accept them."* | `dissolution::insert` merges only `ItemStack::is_stackable_with` (item **and** damage/components) and grows the slot's own stack, so both survive; it returns the leftover. Pending loot and XP carry a per-machine instance id (written into the block entity, carried on its item); a full container → `LevelRef::spawn_item`, a full tank → `award_experience`, a machine broken with a reward still queued → its own drop list (`event.drops`) and its orbs (`event.experience`). |
+| 3 | *"Query mobs only on powered work attempts in both the Slaughter Factory and Mob Crusher. Bound or release the crusher's fake actors. Have the Fluid Laser check recipe eligibility before applying damage."* | `crusher::tick_with`/`slaughter::tick_with` take the working-area scan as a closure and call it **only** when the bar reaches zero and the buffer can pay; the crusher releases its fake actor (`PlayerRef::remove_fake`) right after the hurt; the fluid laser lists the catalyst+rarity candidates first and reads an entity gate only for one of them, so an ineligible recipe never damages its gate entity. |
+| 4 | *"Restore the upstream MIT copyright line in `LICENSE` and `LICENSE-NOTICE.md`."* | `LICENSE` line 3 is the upstream line **verbatim** (`Copyright (c) 2017 Buuz135`, read from `InnovativeOnlineIndustries/Industrial-Foregoing` at `ce2852db`); the notice quotes it with the commit. The port's own line stays on line 4. |
+
+### TDD, in order (the red first)
+
+The seven new rules and three new payload/harvest tests were written against the 0.2.12 tree.
+`evidence/industrialforegoing/sdk-test-red-slice14.log`:
+
+```
+thread 'crusher::tests::the_working_area_is_queried_only_on_a_powered_attempt' (3390776) panicked at src/crusher.rs:474:9:
+assertion `left == right` failed: an unpowered machine must not query the working area
+  left: 5
+ right: 0
+thread 'dissolution::tests::a_carried_chamber_payload_is_an_allowlist_without_its_container' (3390779) panicked at src/dissolution.rs:969:9:
+thread 'dissolution::tests::a_product_with_another_component_does_not_merge_into_the_same_item' (3390783) panicked at src/dissolution.rs:912:9:
+assertion `left == right` failed: the marked stack was not grown: a different patch is a different stack
+  left: Some(2)
+ right: Some(1)
+thread 'fluidchain::tests::a_carried_payload_is_an_allowlist_without_its_container' (3390808) panicked at src/fluidchain.rs:1284:13:
+thread 'mobcrusher::tests::a_carried_crusher_payload_is_an_allowlist_without_its_container' (3390875) panicked at src/mobcrusher.rs:1142:9:
+thread 'mobcrusher::tests::a_reward_is_bound_to_the_machine_that_earned_it' (3390879) panicked at src/mobcrusher.rs:309:5:
+thread 'slaughter::tests::the_working_area_is_queried_only_on_a_powered_attempt' (3390951) panicked at src/slaughter.rs:435:9:
+assertion `left == right` failed: an unpowered machine must not query the working area
+  left: 5
+ right: 0
+test result: FAILED. 233 passed; 8 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+```
+
+Green after the repair: **242 passed, 0 failed** (`sdk-test.log`, `Compiling industrialforegoing
+v0.2.13`), clippy 0 warnings (`sdk-clippy.log`), `cargo fmt --check` clean.
+
+The tests that pin the repairs: `crusher::tests::the_working_area_is_queried_only_on_a_powered_attempt`
+and its slaughter twin (a closure counts the scans: 0 while unpowered, 0 while the bar falls, 1 on the
+attempt); `slaughter::tests::the_working_area_is_queried_only_on_a_powered_attempt`;
+`dissolution::tests::a_product_with_another_component_does_not_merge_into_the_same_item`,
+`a_product_with_the_same_components_and_damage_merges_and_keeps_them`,
+`a_product_that_fits_nowhere_comes_back`; `fluidchain::tests::a_carried_payload_is_an_allowlist_without_its_container`,
+`mobcrusher::tests::a_carried_crusher_payload_is_an_allowlist_without_its_container`,
+`dissolution::tests::a_carried_chamber_payload_is_an_allowlist_without_its_container`;
+`mobcrusher::tests::a_reward_is_bound_to_the_machine_that_earned_it`;
+`fluidlaser::tests::an_ineligible_recipe_s_gate_is_never_asked`.
+
+### In game, phases DH–DK (and the previous package's four reds)
+
+`evidence/industrialforegoing-e2e/e2e-launcher.log` (green, `PASS` + `EXIT:0`):
+
+```
+== DH: a broken latex processing unit's item carries no Items ==
+  break: {"drops":{"industrialforegoing:dryrubber":5,"industrialforegoing:latex_processing_unit":1},...}
+  carried item: ... {components: {"minecraft:block_entity_data": {progress: 0, id: "industrialforegoing:latex_processing_unit", energy: 4000, fluids: [...500 mB latex...]}}, count: 1, ...}
+  the payload carries the machine's own keys and no Items; the five dryrubber dropped
+== DI: a named, damaged stack survives the crusher's output merge ==
+  the container: [{... "Named Beef" ..., count: 1, Slot: 0b, id: "minecraft:beef"}, {count: 2, Slot: 1b, id: "minecraft:leather"}, {count: 1, Slot: 2b, id: "minecraft:beef"}, {... "Named Sword", "minecraft:damage": 17 ...}]
+  the named stack kept its name and count, the plain beef went beside it, the damaged sword kept 17
+== DJ: a full output container gives the reward back to the world ==
+  the cow's loot on the floor: 2
+  the reward the container could not take is on the floor
+== DK: a fluid laser base at an ineligible depth applies no gate damage ==
+  the wither's health before: 100.0
+  the wither's health after one bar at depth 300: 100.0
+  depth 300: no recipe and no damage; the wither is still at 100.0
+```
+
+**The four reds are the delivered 0.2.12 package's own runs** (`tools/probe-review14.sh`, one leg each,
+`review14-before-*.log` in the evidence directory):
+
+| leg | 0.2.12's answer |
+|---|---|
+| DH | `FAIL: the carried payload still holds Items: … Items: [{count: 2, Slot: 0b, …}, {count: 3, Slot: 1b, …}]` |
+| DI | `FAIL: the named stack left the container (its name was lost in the merge)` — the cow's beef grew the named stack to `count: 3` and dropped the component |
+| DJ | `FAIL: a full output container lost the cow's loot (nothing on the floor)` |
+| DK | `FAIL: an ineligible base still damaged the gate entity (100.0 -> 95.0)` |
+
+and the same probe on the delivered 0.2.13 package is green (`review14-after.log`, `PROBE PASS`,
+`EXIT:0`). The control leg (the same Nightly without the package) stops at its first `give`
+(`FAIL: the machine item did not register`) → `EXIT:1`; `SELFTEST=1` still fails at phase B
+(`FAIL: the water is 200, expected 201`) → `EXIT:1`. `check-e2e-logs.py industrialforegoing-e2e
+--strict` reads **logs=24 ok=24**.
+
+### `§9m` applies to the chamber too (found while doing 1)
+
+The reviewer named two machines; the rule is *any* container this package spills. The chamber's
+payload was the same snapshot clone, so a chamber broken with the 11 slots full would have carried
+`Items` **and** the engine would have spilled them — a duplicated stack per slot on placement. It is
+the same three-line repair (an allowlist of `id`/`energy`/`progress`/`fluids`/`augments`) and the same
+test (`a_carried_chamber_payload_is_an_allowlist_without_its_container`). A user notices nothing except
+that a re-placed chamber no longer doubles its contents.
+
+### Deviations and notes this slice adds
+
+69. **A hurt may leave a blacklisted mob alive.** The instant path deals `health + 1`, so a mob with
+    damage reduction can survive one attempt and is hit again 10 ticks later (recorded for 0.2.10);
+    the fake actor is now released after **every** hurt, landed or not.
+70. **The reward's world-return is a spawned item at the block's middle (pickup delay 10) and
+    experience orbs at the same point.** The queue is in memory, so a server restart loses a reward
+    that was queued between a death and the machine's next tick — the same window upstream closes
+    synchronously inside `instantKill`; the window here is one tick.
+71. **`machine` is a saved key on the crusher.** It is minted on the machine's first tick and travels
+    on its item, so a broken-and-replaced crusher keeps its own pending rewards; an entry bound to a
+    machine id that is no longer there is given to the world by the next machine at that position.
+72. **The carried payloads are allowlists, not snapshots.** A key this package adds to a machine
+    later has to be added to its allowlist explicitly; the trade is that an engine-side key (such as
+    `Items`) can never ride along by accident.
+
+### Coverage (families this slice touches)
+
+| family | coverage |
+|---|---|
+| the latex processing unit's carried payload | `tested` — DH: no `Items` in the payload, the five dry rubber drop as items |
+| the mob crusher's carried payload | `unit-tested` (`a_carried_crusher_payload_is_an_allowlist_without_its_container`); CR reads the tank/buffer/`last xp` back after a break |
+| the chamber's carried payload | `unit-tested` (`a_carried_chamber_payload_is_an_allowlist_without_its_container`); AE reads the buffer and latex back |
+| the full-stack-data merge | `tested` — DI: a named stack keeps its name and count, the plain beef goes to its own slot, a damaged named sword keeps 17 |
+| a full container's reward | `tested` — DJ: the cow's loot is on the floor |
+| pending loot/XP bound to the machine | `unit-tested` (`a_reward_is_bound_to_the_machine_that_earned_it`); the one-tick window in which a broken machine flushes a queued reward to its own drop list is `ported, not exercised` — no ctl read reaches the queue, and the window is one tick |
+| the working-area query only on powered attempts | `tested` (count of scans) for both machines; in game the idle legs CB/CD/CN/CP still read `victims` unchanged and spend nothing |
+| the crusher's fake actor | `ported, not observable` — the kill still lands (CO and DJ both) while the handle is released after the hurt; the server's fake-player list has no ctl read |
+| the fluid laser's eligibility-before-damage | `tested` — DK: 100 → 100 health at depth 300; the ether leg BJ still takes 5 a bar at depth 101 |
+| the licence attribution | `tested` by reading the packed `LICENSE` (`Copyright (c) 2017 Buuz135`) |
+
+### The package (0.2.13)
+
+| | |
+|---|---|
+| version | `0.2.13` |
+| pin | `native-mod`, format `native-1/0a875da…/e59da90…`, for 26.3 |
+| size | **398,113 B**, 457 entries (992,499 B unpacked), no packed `Cargo.lock` |
+| SHA-256 | `a0c1d8cd75db5f24149f0c2362a73d79f5e8b79fa5136c34fa99ca23b35648b7` (two clean-lock builds `cmp`-identical) |
+| `check` | `industrialforegoing 0.2.13 (native-mod, format …)`, exit 0 |
+| `fits` | `0a875da  made for`, `0b14f8a  fits`, both exit 0 |
+| `check-recipe-types` | `industrialforegoing: ok` |
+| runtime | `src/runtime.rs` packed = tree |
+| launcher | `Compiling industrialforegoing (1 of 1)`, `native-0a875da-76ffa82b6863`, exported `version = "0.2.13"` |
+| gate | `verify-sdk-package.py industrialforegoing` **1/1** |
+| tests | 242 (was 232; +10: the scan counts ×2, the merge trio, the three payloads, the binding, the laser order, the chamber's payload) |
+
+### The changelog for the 0.2.13 update
+
+> Updates the entry this campaign already has (retaining its open PR). **Review repairs, no new
+> content.** The Latex Processing Unit's and Mob Crusher's carried `block_entity_data` are fresh
+> allowlists of the machines' own keys — the block inventory is never on the item, because the engine
+> spills it — and the Dissolution Chamber's payload gets the same repair (`§9m`). The crusher's loot
+> merge compares whole stacks, so a stack with a component or damage is never joined to one without,
+> and both survive a merge; pending loot and experience are bound to the machine instance that earned
+> them, a full output container gives the reward back to the world instead of dropping it, a full
+> essence tank returns the excess as experience, and a machine broken with a reward still queued puts
+> it on its own drop list. The Slaughter Factory and the Mob Crusher query their working area only on
+> a tick that actually attempts work (bar at zero **and** the FE in hand) instead of every tick, the
+> crusher releases its connectionless fake player after each hurt, and the Fluid Laser Base checks a
+> recipe's catalyst and rarity **before** its entity gate, so an ineligible recipe no longer damages
+> the entity the gate names. `LICENSE` carries the upstream copyright line verbatim
+> (`Copyright (c) 2017 Buuz135`), quoted with its commit in `LICENSE-NOTICE.md`. Proven in game: a
+> broken unit's item carries no `Items` while its five dry rubber drop; a named stack keeps its name
+> and count when a cow's plain beef arrives, and a damaged named sword beside it keeps its 17; a full
+> output container puts the cow's reward on the floor; and a base at depth 300 runs no recipe and
+> leaves the wither in its box at 100 health — each of those four failed on the delivered 0.2.12
+> package (`review14-before-*.log`). `src/runtime.rs` is unchanged, byte for byte.
+
 ## Skills
 
-Skills: superpowers/using-superpowers,brainstorming,writing-plans,test-driven-development,systematic-debugging,verification-before-completion; BeautifulRust/rust-best-practices,rust-review (slice 13: `brainstorming` to take the animal rancher from gap 9 and weigh the brief's "empty bucket in its input" against the jar's fake-player bucket and tank of milk — the artefact won, and the assertion became the tank's 1,000 mB plus the sheep's wool in the output; `writing-plans` for SLICE-13-PLAN.md; `test-driven-development` for the fifteen red rules and ten red glue tests (`206 passed, 15 failed`, every one `not yet implemented`) and then the in-game assertion before it was trusted; `systematic-debugging` for the two failures this slice cost — the craft harness could not place two non-stackable shears (a per-cell source fixed it), and the pinned draw was spent on the next *tick* instead of the next *attempt* (the sheep gave 3 wool for `draws 0 0`), which also stopped the tick burning the level's random stream — plus the squid that drowns on land; `verification-before-completion` before every claim; `rust-best-practices` for the ninth pure module, the `entity_nbt`/`entity_merge_nbt` sheep write and the attempt-scoped draws; `rust-review` for the after-the-fact audit of `src/rancher.rs` and `src/animalrancher.rs` — it removed the `increase` state (the glue rebuilds the machine each tick, so the speed addon modelled one tick late never worked in game; the bar now falls by the augment, the condensator's model since slice 1), kept `fill_milk` refusing a foreign fluid, and moved the random draws out of the tick; slice 12: `brainstorming` to take the duplicator from gap 9 and weigh the brief's "place it facing its placer" against the jar's state-free block (`MobDuplicatorBlock` has no `getRotationType`; the generated blockstate is `""`), `writing-plans` for SLICE-12-PLAN.md, `test-driven-development` for the twelve red rules and eight red glue tests (`192 passed, 14 failed`, every one `not yet implemented`) and then the in-game assertion before it was trusted, `systematic-debugging` for the four harness gates this slice cost (the 24-entity cramming limit that killed the cap counterfactual's own cows, a broken item picked into the main inventory, `ctl place --item` reaching the wrong stack, and a machine that spent its buffer during the break setup — 4,999 FE keeps it idle), and `verification-before-completion` before every claim; `rust-best-practices` for the eighth pure module, `Host::summon`, the tool's component and the item parts, `rust-review` for the after-the-fact audit of `src/duplicator.rs` and `src/mobduplicator.rs` — it shaped the pure/glue split (the random draw is an input, not a host call in the rules), the `Attempt`/`Step` types, and the no-`unwrap` saved-compound reads; slice 11: `brainstorming` to take the crusher from gap 9 and weigh the brief's per-health essence against the jar's `experience * 20`, `writing-plans` for SLICE-11-PLAN.md, `test-driven-development` for the ten red rules and the red glue/declaration tests (`173 passed, 13 failed`, every one `not yet implemented`) and then the in-game assertion before it was trusted, `systematic-debugging` for the two in-game gates this slice cost (the launcher's build lock held by another port, and the launcher's reuse of a same-version build — four `native-*` tags were removed before the rebuild) and for the creative-mode break flake in phase L, `verification-before-completion` before every claim; `rust-best-practices` for the seventh pure module, the fake-player kill and the two harvest hooks, `rust-review` for the after-the-fact audit of `src/mobcrusher.rs` and `src/crusher.rs` — it weighed clippy's `question_mark` finding on the first run, the `Candidate::blacklisted` field the pure filter correctly ignores, and the `Gain` type's needless `Copy`-by-hash (replaced with an owned dimension string); `rust-review`'s rules also shaped the code: no `unwrap` outside tests, an enum for the two kill paths (`AttackPath`) instead of a bool, and the harvest statics kept behind one module so no other machine can read them; slice 10: `brainstorming` to take the Nether leg from deviation 37 and weigh the brief's depth-0 counterfactual against the dimension arm the recipe actually names, `writing-plans` for SLICE-10-PLAN.md, `test-driven-development` for the in-game assertion written before the package was rebuilt — its red is `SELFTEST=nether`, because the family itself shipped in 0.2.8 — `systematic-debugging` for the harness flakes that cost four runs (`wait-ready` returning while the client still said "Loading terrain...", the game's `[CHAT]` log stopping while `ctl messages` answered, and a `ctl wait` loop exhausting itself before the server ticked), and `verification-before-completion` before recording; `rust-best-practices` loaded and the ladder run, no Rust change: 0.2.10 differs from 0.2.9 only in the version string; `rust-review`: none (no Rust diff); slice 9: `brainstorming` to choose the factory from deviations 19 and 21 and weigh the brief's "FE still spent" against `SlaughterFactoryTile.work()`, `writing-plans` for SLICE-9-PLAN.md, `test-driven-development` for the eight red rules and nine red glue tests (`149 passed, 17 failed`, every one `not yet implemented`), `systematic-debugging` for the chamber that stopped advancing its bar (seven probes in clean worlds, all green; the quirk and the padding fix are recorded in the slice 9 section) and for the two craft-script defects the game found (a stack of two `stacksTo(1)` items leaves the second cell empty; a chamber that has run a recipe is not ticked any more in that world), and `verification-before-completion` before recording; `rust-best-practices` for the sixth pure module and its glue, `rust-review` for the after-the-fact audit of `src/mobslaughter.rs`; slice 8: `brainstorming` to choose the fluid laser base from the port's own coverage row and weigh the brief's "a biome the ether recipe names" against the jar's empty whitelist, `writing-plans` for SLICE-8-PLAN.md, `test-driven-development` for the eight red rules and the five red glue tests, `systematic-debugging` for the two in-game gates this slice cost — the launcher's content-hash cache reporting "up to date" and the depth-band differential that replaced a biome counterfactual the artefact does not have — and `verification-before-completion` before recording; `rust-best-practices` for the fifth pure module and the glue, `rust-review` for the after-the-fact audit of `src/fluidbase.rs`; slice 7: `brainstorming` to choose the laser drill from the gap list and weigh the brief's "the ore the base sits on" against the jar's biome/depth rule, `writing-plans` for SLICE-7-PLAN.md, `test-driven-development` for the 14 red rules and the 9 red glue tests, `systematic-debugging` for the six in-game gates this slice cost — the ingredient-object decode (`recipes 0/10`), the biome zoom, the datapack/tag reload, the placement aim, the message/log window, and the loot condition shape — and `verification-before-completion` before recording; `rust-best-practices` for the new pure module and the glue, `rust-review` for the after-the-fact audit of `src/laserdrill.rs`)
+Skills: superpowers/using-superpowers,brainstorming,writing-plans,test-driven-development,systematic-debugging,verification-before-completion; BeautifulRust/rust-best-practices,rust-review (slice 14 — the review round two repairs: `test-driven-development` for the ten red tests, eight of them failing on the 0.2.12 tree (`233 passed; 8 failed`) and the two payload tests still red until the allowlists landed; `systematic-debugging` for the harness itself — `ctl container` carries no components, so the merge is read through `data get block … Items[i]`; the crusher's floor helper selected `.position` where the ctl emits `.pos`, which had made phase CO's "nothing on the floor" vacuous and made DJ impossible until it was fixed; and the laser arena is laid over the latex one, so DH places its own unit; `verification-before-completion` before each claim; `rust-best-practices` for the allowlist payloads, the `insert` core and the instance-bound queues; `rust-review` for the audit that found the chamber's payload carrying `Items` under the same `§9m` rule the reviewer named for two machines; slice 13: `brainstorming` to take the animal rancher from gap 9 and weigh the brief's "empty bucket in its input" against the jar's fake-player bucket and tank of milk — the artefact won, and the assertion became the tank's 1,000 mB plus the sheep's wool in the output; `writing-plans` for SLICE-13-PLAN.md; `test-driven-development` for the fifteen red rules and ten red glue tests (`206 passed, 15 failed`, every one `not yet implemented`) and then the in-game assertion before it was trusted; `systematic-debugging` for the two failures this slice cost — the craft harness could not place two non-stackable shears (a per-cell source fixed it), and the pinned draw was spent on the next *tick* instead of the next *attempt* (the sheep gave 3 wool for `draws 0 0`), which also stopped the tick burning the level's random stream — plus the squid that drowns on land; `verification-before-completion` before every claim; `rust-best-practices` for the ninth pure module, the `entity_nbt`/`entity_merge_nbt` sheep write and the attempt-scoped draws; `rust-review` for the after-the-fact audit of `src/rancher.rs` and `src/animalrancher.rs` — it removed the `increase` state (the glue rebuilds the machine each tick, so the speed addon modelled one tick late never worked in game; the bar now falls by the augment, the condensator's model since slice 1), kept `fill_milk` refusing a foreign fluid, and moved the random draws out of the tick; slice 12: `brainstorming` to take the duplicator from gap 9 and weigh the brief's "place it facing its placer" against the jar's state-free block (`MobDuplicatorBlock` has no `getRotationType`; the generated blockstate is `""`), `writing-plans` for SLICE-12-PLAN.md, `test-driven-development` for the twelve red rules and eight red glue tests (`192 passed, 14 failed`, every one `not yet implemented`) and then the in-game assertion before it was trusted, `systematic-debugging` for the four harness gates this slice cost (the 24-entity cramming limit that killed the cap counterfactual's own cows, a broken item picked into the main inventory, `ctl place --item` reaching the wrong stack, and a machine that spent its buffer during the break setup — 4,999 FE keeps it idle), and `verification-before-completion` before every claim; `rust-best-practices` for the eighth pure module, `Host::summon`, the tool's component and the item parts, `rust-review` for the after-the-fact audit of `src/duplicator.rs` and `src/mobduplicator.rs` — it shaped the pure/glue split (the random draw is an input, not a host call in the rules), the `Attempt`/`Step` types, and the no-`unwrap` saved-compound reads; slice 11: `brainstorming` to take the crusher from gap 9 and weigh the brief's per-health essence against the jar's `experience * 20`, `writing-plans` for SLICE-11-PLAN.md, `test-driven-development` for the ten red rules and the red glue/declaration tests (`173 passed, 13 failed`, every one `not yet implemented`) and then the in-game assertion before it was trusted, `systematic-debugging` for the two in-game gates this slice cost (the launcher's build lock held by another port, and the launcher's reuse of a same-version build — four `native-*` tags were removed before the rebuild) and for the creative-mode break flake in phase L, `verification-before-completion` before every claim; `rust-best-practices` for the seventh pure module, the fake-player kill and the two harvest hooks, `rust-review` for the after-the-fact audit of `src/mobcrusher.rs` and `src/crusher.rs` — it weighed clippy's `question_mark` finding on the first run, the `Candidate::blacklisted` field the pure filter correctly ignores, and the `Gain` type's needless `Copy`-by-hash (replaced with an owned dimension string); `rust-review`'s rules also shaped the code: no `unwrap` outside tests, an enum for the two kill paths (`AttackPath`) instead of a bool, and the harvest statics kept behind one module so no other machine can read them; slice 10: `brainstorming` to take the Nether leg from deviation 37 and weigh the brief's depth-0 counterfactual against the dimension arm the recipe actually names, `writing-plans` for SLICE-10-PLAN.md, `test-driven-development` for the in-game assertion written before the package was rebuilt — its red is `SELFTEST=nether`, because the family itself shipped in 0.2.8 — `systematic-debugging` for the harness flakes that cost four runs (`wait-ready` returning while the client still said "Loading terrain...", the game's `[CHAT]` log stopping while `ctl messages` answered, and a `ctl wait` loop exhausting itself before the server ticked), and `verification-before-completion` before recording; `rust-best-practices` loaded and the ladder run, no Rust change: 0.2.10 differs from 0.2.9 only in the version string; `rust-review`: none (no Rust diff); slice 9: `brainstorming` to choose the factory from deviations 19 and 21 and weigh the brief's "FE still spent" against `SlaughterFactoryTile.work()`, `writing-plans` for SLICE-9-PLAN.md, `test-driven-development` for the eight red rules and nine red glue tests (`149 passed, 17 failed`, every one `not yet implemented`), `systematic-debugging` for the chamber that stopped advancing its bar (seven probes in clean worlds, all green; the quirk and the padding fix are recorded in the slice 9 section) and for the two craft-script defects the game found (a stack of two `stacksTo(1)` items leaves the second cell empty; a chamber that has run a recipe is not ticked any more in that world), and `verification-before-completion` before recording; `rust-best-practices` for the sixth pure module and its glue, `rust-review` for the after-the-fact audit of `src/mobslaughter.rs`; slice 8: `brainstorming` to choose the fluid laser base from the port's own coverage row and weigh the brief's "a biome the ether recipe names" against the jar's empty whitelist, `writing-plans` for SLICE-8-PLAN.md, `test-driven-development` for the eight red rules and the five red glue tests, `systematic-debugging` for the two in-game gates this slice cost — the launcher's content-hash cache reporting "up to date" and the depth-band differential that replaced a biome counterfactual the artefact does not have — and `verification-before-completion` before recording; `rust-best-practices` for the fifth pure module and the glue, `rust-review` for the after-the-fact audit of `src/fluidbase.rs`; slice 7: `brainstorming` to choose the laser drill from the gap list and weigh the brief's "the ore the base sits on" against the jar's biome/depth rule, `writing-plans` for SLICE-7-PLAN.md, `test-driven-development` for the 14 red rules and the 9 red glue tests, `systematic-debugging` for the six in-game gates this slice cost — the ingredient-object decode (`recipes 0/10`), the biome zoom, the datapack/tag reload, the placement aim, the message/log window, and the loot condition shape — and `verification-before-completion` before recording; `rust-best-practices` for the new pure module and the glue, `rust-review` for the after-the-fact audit of `src/laserdrill.rs`)
 
 `cargo fmt --package industrialforegoing --check`, `cargo clippy --all-targets -- -D warnings` and
 `cargo test` were run before hand-back (slice 9: `FMT-CLEAN`, 0 warnings, **166 passed**).
@@ -2634,7 +2801,7 @@ Skills: superpowers/using-superpowers,brainstorming,writing-plans,test-driven-de
 
 ## Verification
 
-**[`VALIDATION.md`](VALIDATION.md) is the ladder for the delivered 0.2.8 package** at the
+**[`VALIDATION.md`](VALIDATION.md) is the ladder for the delivered 0.2.13 package** at the
 campaign pin `0a875da…` (the red test run, fmt, clippy, 148 tests, two `cmp`-identical builds,
 `check`, both `fits` runs, the content verifier with its selftest, and the in-game legs — green,
 control and five selftests — with their exit statuses). The tables below are the earlier ladders,
@@ -2733,6 +2900,8 @@ The current package (2026-11-23, SDK format) — one file, code and content toge
 
 | File | Size | SHA-256 | Entries |
 |---|---:|---|---:|
+| `industrialforegoing.hmod` (0.2.13) | 398,113 B | `a0c1d8cd75db5f24149f0c2362a73d79f5e8b79fa5136c34fa99ca23b35648b7` | 457 |
+| `industrialforegoing.hmod` (0.2.12) | 390,790 B | `28eef176332c277538d8fc5d23bf60aac8eb226407b6a5895cfa47cbd9618826` | 457 |
 | `industrialforegoing.hmod` (0.2.11) | 366,772 B | `f7154dc52f6c9a343a11d5b757b1c674bb924c92ba199f2d73a1ccc91fa962ad` | 444 |
 | `industrialforegoing.hmod` (0.2.10) | 318,730 B | `d69f820c312619d9c46f2011cb7a09dc36cb5fc497c3c35e3c3906047419f37f` | 409 |
 | `industrialforegoing.hmod` (0.2.9) | 318,727 B | `fa7300d371f22f81576f452d0c1994449d69ebaf0852c89a9491dcdc7479278d` | 409 |

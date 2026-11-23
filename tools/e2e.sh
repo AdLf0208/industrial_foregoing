@@ -246,6 +246,11 @@ sources_n() { # sources_n N
         fi
     done
     ctl wait 8 >/dev/null
+    if [ -n "${SRC_DEBUG:-}" ]; then
+        echo "  faces: east=$(block_name $((SX + 1)) 101 0) west=$(block_name $((SX - 1)) 101 0)" \
+             "north=$(block_name "$SX" 101 1) south=$(block_name "$SX" 101 -1)" \
+             "up=$(block_name "$SX" 102 0) down=$(block_name "$SX" 100 0)" >&2
+    fi
 }
 
 # One attempt with the given state: park the bar at 100 first (so no attempt can
@@ -2328,9 +2333,10 @@ summon_victim() { # summon_victim KIND
 crusher_ground_loot() {
     ctl entities 48 item 2>/dev/null | jq -r --argjson x0 $((CFX - 2)) --argjson x1 $((CFX + 4)) '
       [.entities[] | select(.kind == "item")
+       | select(.pos != null)
        | select((.item.item // "") | test("minecraft:(beef|leather)$"))
-       | select((.position[0] | floor) >= $x0 and (.position[0] | floor) <= $x1)
-       | select((.position[2] | floor) >= -4 and (.position[2] | floor) <= 4)
+       | select((.pos[0] | floor) >= $x0 and (.pos[0] | floor) <= $x1)
+       | select((.pos[2] | floor) >= -4 and (.pos[2] | floor) <= 4)
       ] | length' 2>/dev/null || echo 0
 }
 
@@ -3111,4 +3117,164 @@ expect "the buffer the item carried" "$CARRIED_RANCHER_ENERGY" "$BROKEN_ENERGY"
 expect "the milk the item carried" "$CARRIED_RANCHER_TANK" "$BROKEN_TANK"
 echo "  the item carries $CARRIED_RANCHER_ENERGY FE and $CARRIED_RANCHER_TANK mB of milk"
 
-echo "PASS: a placed machine is empty with no sources and faces its placer; two sources condense 200 mB for exactly 1,000 FE and one condenses nothing; without 1,000 FE two sources give half for free; three and six sources give 300 and 600 mB; a nearly full tank stops at 16,000 mB while still spending the FE; the declared tank drains 400 mB of water through the fluid handler; and left alone the machine keeps condensing on its own 10-tick bar; the Core ids of these slices register and read back, the four frames place and read back, an unregistered item and block id are refused, and a frame broken in survival drops itself; the condensator crafts from the tags (#c:plastics, #c:gears/iron, machine_frame/pity) with the grid empty afterwards while slice 2's stand-ins stay empty, the pity frame and the three gears craft, all 16 lens recolours craft from the lens tag and c:dyes with the player's counts before and after, the mob duplicator crafts from #c:plastics and machine_frame/advanced, and the Mob Imprisonment Tool crafts from plastic and a ghast tear; a machine broken with 7,000 FE and 5,000 mB comes back with exactly those numbers on the item it dropped; a seated speed augment of 4 makes the bar fall four a tick where an empty slot falls one, a second speed augment is refused and stays in the hand, an efficiency augment of 0.8 shortens the bar to 80 with an 8-tick cooldown at the same 1,000 FE, and both augments travel on the machine's item; the dissolution chamber places and faces its placer, reads its own recipe type from this package's data (25 files), holds its own fluids in a declared tank the capability reports back, runs the white lens recipe in exactly 100 ticks for 9,000 FE and 250 mB of latex, does nothing with an empty tank and starts when 250 mB arrive, empties its output into a hopper and a barrel, runs the simple machine frame's 300 ticks at exactly 90 FE a tick, makes the advanced frame from #c:plastics, the crafted #c:gears/diamond gear and the simple frame, and a broken chamber carries its buffer and latex back on its item; and the latex chain: a fluid extractor works on the oak log behind it, giving 2 mB for free and 6 mB for 500 FE, nothing at all when the block behind it is stone, and — on its eighth hit — consuming the log into a stripped one and bursting 400 mB that drain back out of its declared tank, where a roll over its break chance moves nothing; a latex processing unit takes 1,000 mB of latex through the command path and 1,000 mB of water through the declared capability (which refuses the mod fluid, so no fluid move can fill it), turns 750 mB of latex and 500 mB of water into one dry rubber for 2,000 FE, a hopper feeds that rubber into a furnace which smelts it into one plastic, and a broken unit carries its latex, water and buffer back on its item; and the laser drill: placed above its ore base it faces up and finds it, reads the base's own ten-recipe table, resolves no ore in the End's biome and the emerald recipe at weight 1 in a mountain one, a lime lens raises that weight to 9, one completed base bar yields the recipe's emerald ore for exactly 1,000 FE while the same charge in the End's own biome yields nothing, and — with the add-on's own laser_drill_ore file and biome tag installed as its package ships them — the base's table reads 11/11 and that recipe runs, yielding one echo shard; a broken base carries its output slots back on its item; and the fluid laser base, under its own drill, answers no recipe without the wither its ether file names and leaves the tank empty while the drill still pays 1,000 FE, then with a wither in its box one completed bar yields 10 mB of industrialforegoing:ether_gas into the tank the declared capability reports, a second bar adds ten more, the tank drains through that capability, and the dissolution chamber runs its one carried recipe naming ether gas (supreme_machine_frame, 135 mB) to the product; and the mob slaughter factory: placed facing its placer it is empty, a bar with no mob in the working area kills nothing and spends no FE, a cow in the box is killed for 10 mB of meat and 200 mB of pink slime for exactly 400 FE (both tanks reported back by the declared capability), the same box with no FE leaves a villager alive and adds nothing, 5,000 FE then kills the villager for 400 mB of meat and 20 mB of pink slime, both tanks drain through the capability, the factory's own shaped recipe crafts from #c:plastics, #c:gears/gold and machine_frame/pity, the pink slime block crafts from nine pink slime and gives them back shapeless and drops itself, a broken factory carries both tanks and its buffer back on its item, and the dissolution chamber runs the jar's only outputFluid recipe — 300 mB of pink slime and a glass pane for one pink slime ball and 150 mB of minecraft:water in its output tank; and the fluid laser base's dimension-and-depth pair: the lava recipe's band at depth 11 answers no recipe in the End (the dimension filter), in the Nether at depth 0 it answers none and leaves an empty tank, and at depth 11 in the Nether one completed bar of the drill fills the tank with 100 mB of minecraft:lava, reported by the declared capability, for 1,000 FE; and the mob crusher: placed facing its placer it is empty, a bar with no mob spends nothing, a cow in its box is killed for its own experience at 20 mB a point (1-3 points, so 20, 40 or 60 mB) for exactly 50 FE, its loot lands in the machine's 18-slot output instead of the floor and a hopper under it pulls that loot into a barrel, the same box with no FE leaves the cow alive and adds nothing, the crusher's own shaped recipe crafts from #c:plastics, #c:gears/gold and machine_frame/advanced, and a broken crusher carries its essence, its buffer and its last kill's experience back on its item; and the mob duplicator: its tool captures a cow and the machine reads its type and 120 mB cost, one operation with 120 mB in the tank spawns exactly one cow for 5,000 FE, the same box with 0 essence spawns nothing and spends no FE, 33 cows in the working area refuse the attempt while holding both the charge and the essence, the tool releases its cow on a block face and empties itself, and a broken duplicator's item carries its buffer and tank while its tool drops beside it; and the Mob Imprisonment Tool crafts from #c:plastics and a ghast tear; and the animal rancher: placed facing its placer it is empty with its working area the single block behind it, a cow there fills its 8,000 mB tank with 1,000 mB of industrialforegoing:milk and the declared capability reports it, for exactly 400 FE; a red sheep there gives one wool of its colour into the 15-slot output (the pinned nextInt(3) of 0) and is left with Sheared: 1b, so the same box again produces nothing and spends nothing; an empty box spends nothing and rests the bar full; 399 FE refuses a cow it could otherwise milk; a squid's black dye needs a free output slot, four passing draws and 400 FE (a full container and four failing draws each refuse it); the tank drains 1,000 mB of milk through the declared capability; and a broken rancher's item carries its buffer and tank while its output drops beside it; and the Animal Rancher crafts from #c:plastics, a bucket, shears, #c:gears/gold and machine_frame/pity"
+# ---------------------------------------------------------------------------
+# Review round two (0.2.13): the four repairs, asserted in game
+# ---------------------------------------------------------------------------
+
+echo "== DH: a broken latex processing unit's item carries no Items =="
+# `§9m`: the engine spills a mod container's slots itself, so a carried payload that also held
+# `Items` would duplicate every stack when the item is placed back. The unit is the machine this
+# leg breaks; the machine needs its own state so the item carries a payload at all.
+# The laser arena is laid over the latex one (they share x 232..248), so this leg places its own
+# unit on a floor it sets itself — as the chamber's `outputFluid` leg does.
+ctl command "execute in minecraft:the_end run setblock $LXU 100 0 minecraft:stone" >/dev/null
+ctl command "execute in minecraft:the_end run setblock $LXU 101 0 minecraft:air" >/dev/null
+ctl wait 6 >/dev/null
+place_any "$LXU" 101 0 "$UNIT_ID"
+say "industrialforegoing energy $LXU 101 0 4000"
+say "industrialforegoing fluid $LXU 101 0 latex 500"
+ctl wait 4 >/dev/null
+ctl command "item replace block $LXU 101 0 container.0 with industrialforegoing:dryrubber 2" >/dev/null
+ctl command "item replace block $LXU 101 0 container.1 with industrialforegoing:dryrubber 3" >/dev/null
+ctl wait 4 >/dev/null
+ctl command "execute in minecraft:the_end run tp @s $((LXU - 2)).5 101 0.5" >/dev/null
+ctl wait 6 >/dev/null
+ensure_survival
+ctl command "clear @s" >/dev/null
+ctl command "item replace entity @s hotbar.0 with minecraft:iron_pickaxe 1" >/dev/null
+ctl wait 6
+ctl select 1 >/dev/null
+ctl wait 3
+UNIT_SPILL=$(ctl break "$LXU" 101 0) || fail "breaking the unit failed"
+echo "  break: $(echo "$UNIT_SPILL" | jq -c '{drops, picked_up}')"
+[ "$(echo "$UNIT_SPILL" | jq -r ".drops[\"$UNIT_ID\"] // 0")" -ge 1 ] \
+    || fail "the unit dropped no item: $(echo "$UNIT_SPILL" | jq -c '.drops')"
+[ "$(echo "$UNIT_SPILL" | jq -r '.drops["industrialforegoing:dryrubber"] // 0')" -ge 5 ] \
+    || fail "the engine did not spill the unit's slots: $(echo "$UNIT_SPILL" | jq -c '.drops')"
+ctl command "execute in minecraft:the_end run tp @s $LXU.5 101 0.5" >/dev/null
+ctl wait 20
+ctl command "gamemode creative @s" >/dev/null
+ctl wait 4
+ctl select "$UNIT_ID" >/dev/null 2>&1 || ctl select 1 >/dev/null
+ctl wait 4
+UNIT_ITEM=$(ctl command "data get entity @s SelectedItem" | jq -r '.chat[0] // empty')
+echo "  carried item: $UNIT_ITEM"
+case "$UNIT_ITEM" in
+    *'"minecraft:block_entity_data"'*) ;;
+    *) fail "the item carried no block entity data: $UNIT_ITEM" ;;
+esac
+case "$UNIT_ITEM" in
+    *Items*) fail "the carried payload still holds Items: $UNIT_ITEM" ;;
+esac
+echo "  the payload carries the machine's own keys and no Items; the five dryrubber dropped"
+
+echo "== DI: a named, damaged stack survives the crusher's output merge =="
+# The merge compares whole stacks: a slot takes a product only when item, damage and components
+# all match. The plain beef a cow drops must not join the named stack, and the named, damaged
+# sword beside it must come through untouched.
+crusher_arena
+place_any "$CFX" 101 0 "$CRUSHER_ID"
+for slot in $(seq 0 17); do
+    ctl command "item replace block $CFX 101 0 container.$slot with minecraft:air" >/dev/null
+done
+ctl wait 4
+ctl command "item replace block $CFX 101 0 container.0 with minecraft:beef[minecraft:custom_name='\"Named Beef\"',minecraft:damage=0] 1" >/dev/null
+ctl command "item replace block $CFX 101 0 container.5 with minecraft:iron_sword[minecraft:custom_name='\"Named Sword\"',minecraft:damage=17] 1" >/dev/null
+ctl wait 6
+crush progress 100
+crush energy 5000
+ctl wait 2 >/dev/null
+summon_victim cow
+ctl wait 8 >/dev/null
+crush progress 1
+ctl wait 8 >/dev/null
+MERGED=$(ctl command "data get block $CFX 101 0 Items" | jq -r '.chat[0] // empty')
+echo "  the container: $MERGED"
+[ -n "$MERGED" ] || fail "the crusher's container read back empty"
+MERGED_COUNT=$(grep -o 'Slot: [0-9]*b' <<<"$MERGED" | wc -l)
+NAMED=0
+NAMED_COUNT=0
+SWORD=0
+SWORD_DAMAGE=0
+PLAIN=0
+for i in $(seq 0 $((MERGED_COUNT - 1))); do
+    ENTRY=$(ctl command "data get block $CFX 101 0 Items[$i]" | jq -r '.chat[0] // empty')
+    echo "  Items[$i]: $ENTRY"
+    case "$ENTRY" in
+        *'"Named Beef"'*)
+            NAMED=1
+            NAMED_COUNT=$(sed -n 's/.*count: \([0-9][0-9]*\).*/\1/p' <<<"$ENTRY")
+            ;;
+        *'"Named Sword"'*)
+            SWORD=1
+            SWORD_DAMAGE=$(sed -n 's/.*"minecraft:damage": \([0-9][0-9]*\).*/\1/p' <<<"$ENTRY")
+            ;;
+        *'id: "minecraft:beef"'*)
+            PLAIN=$((PLAIN + 1))
+            ;;
+    esac
+done
+[ "$NAMED" = 1 ] || fail "the named stack lost its name in the merge"
+expect "the named stack's count (the plain beef did not join it)" "$NAMED_COUNT" 1
+[ "$PLAIN" -ge 1 ] || fail "the cow's beef landed nowhere beside the named stack"
+[ "$SWORD" = 1 ] || fail "the damaged named sword left the container"
+expect "the damaged named sword's damage" "$SWORD_DAMAGE" 17
+echo "  the named stack kept its name and count, the plain beef went beside it, the damaged sword kept 17"
+
+echo "== DJ: a full output container gives the reward back to the world =="
+# A reward the instance cannot accept is not silently lost: the leftover goes back to the world.
+ctl command "execute in minecraft:the_end run kill @e[type=minecraft:item]" >/dev/null
+ctl command "execute in minecraft:the_end run kill @e[type=minecraft:cow]" >/dev/null
+# The DI machine still stands here: clear it (and the floor under the new one) before placing.
+ctl command "execute in minecraft:the_end run setblock $CFX 101 0 minecraft:air" >/dev/null
+ctl command "execute in minecraft:the_end run setblock $CFX 100 0 minecraft:stone" >/dev/null
+ctl wait 6 >/dev/null
+place_any "$CFX" 101 0 "$CRUSHER_ID"
+for slot in $(seq 0 17); do
+    ctl command "item replace block $CFX 101 0 container.$slot with minecraft:netherrack 64" >/dev/null
+done
+ctl wait 6
+crush progress 100
+crush energy 5000
+ctl wait 2 >/dev/null
+summon_victim cow
+ctl wait 8 >/dev/null
+crush progress 1
+ctl wait 10 >/dev/null
+GROUND_AFTER=$(crusher_ground_loot)
+echo "  the cow's loot on the floor: $GROUND_AFTER"
+[ "$GROUND_AFTER" -ge 1 ] || fail "a full output container lost the cow's loot"
+echo "  the reward the container could not take is on the floor"
+
+echo "== DK: a fluid laser base at an ineligible depth applies no gate damage =="
+# Eligibility first: with the base at depth 300 the ether recipe is outside its band, so its entity
+# gate is never read and the wither in the box takes no damage.
+ctl command "difficulty easy" >/dev/null
+ctl command "execute in minecraft:the_end run kill @e[type=minecraft:wither]" >/dev/null
+ctl command "execute in minecraft:the_end run kill @e[type=minecraft:item]" >/dev/null
+say "industrialforegoing depth $FLX 101 0 300"
+ctl wait 4 >/dev/null
+ctl command "execute in minecraft:the_end run summon minecraft:wither $((FLX + 1)) 102 0 {NoAI:1b,Silent:1b,PersistenceRequired:1b,Health:100.0f}" >/dev/null
+ctl wait 8 >/dev/null
+wither_health() {
+    ctl command "data get entity @e[type=minecraft:wither,limit=1,sort=nearest] Health" \
+        | jq -r '.chat[0] // empty' | sed -n 's/.*data: \([0-9.]*\)f*.*/\1/p'
+}
+WITHER_BEFORE=$(wither_health)
+echo "  the wither's health before: $WITHER_BEFORE"
+[ -n "$WITHER_BEFORE" ] || fail "the wither has no readable health"
+lasay "$FLX" 101 0 progress 19
+lasay "$FLX" 102 0 progress 1
+lasay "$FLX" 102 0 energy 10000
+ctl wait 8 >/dev/null
+WITHER_AFTER=$(wither_health)
+echo "  the wither's health after one bar at depth 300: $WITHER_AFTER"
+[ -n "$WITHER_AFTER" ] || fail "the wither's health did not read back"
+expect "the wither's health (an ineligible recipe's gate takes none)" "$WITHER_AFTER" "$WITHER_BEFORE"
+laser_info "$FLX" 101 0 fluid
+expect "the recipe at depth 300" "$LF_RECIPE" none
+echo "  depth 300: no recipe and no damage; the wither is still at $WITHER_AFTER"
+ctl command "execute in minecraft:the_end run kill @e[type=minecraft:wither]" >/dev/null
+ctl command "difficulty peaceful" >/dev/null
+
+echo "PASS: a placed machine is empty with no sources and faces its placer; two sources condense 200 mB for exactly 1,000 FE and one condenses nothing; without 1,000 FE two sources give half for free; three and six sources give 300 and 600 mB; a nearly full tank stops at 16,000 mB while still spending the FE; the declared tank drains 400 mB of water through the fluid handler; and left alone the machine keeps condensing on its own 10-tick bar; the Core ids of these slices register and read back, the four frames place and read back, an unregistered item and block id are refused, and a frame broken in survival drops itself; the condensator crafts from the tags (#c:plastics, #c:gears/iron, machine_frame/pity) with the grid empty afterwards while slice 2's stand-ins stay empty, the pity frame and the three gears craft, all 16 lens recolours craft from the lens tag and c:dyes with the player's counts before and after, the mob duplicator crafts from #c:plastics and machine_frame/advanced, and the Mob Imprisonment Tool crafts from plastic and a ghast tear; a machine broken with 7,000 FE and 5,000 mB comes back with exactly those numbers on the item it dropped; a seated speed augment of 4 makes the bar fall four a tick where an empty slot falls one, a second speed augment is refused and stays in the hand, an efficiency augment of 0.8 shortens the bar to 80 with an 8-tick cooldown at the same 1,000 FE, and both augments travel on the machine's item; the dissolution chamber places and faces its placer, reads its own recipe type from this package's data (25 files), holds its own fluids in a declared tank the capability reports back, runs the white lens recipe in exactly 100 ticks for 9,000 FE and 250 mB of latex, does nothing with an empty tank and starts when 250 mB arrive, empties its output into a hopper and a barrel, runs the simple machine frame's 300 ticks at exactly 90 FE a tick, makes the advanced frame from #c:plastics, the crafted #c:gears/diamond gear and the simple frame, and a broken chamber carries its buffer and latex back on its item; and the latex chain: a fluid extractor works on the oak log behind it, giving 2 mB for free and 6 mB for 500 FE, nothing at all when the block behind it is stone, and — on its eighth hit — consuming the log into a stripped one and bursting 400 mB that drain back out of its declared tank, where a roll over its break chance moves nothing; a latex processing unit takes 1,000 mB of latex through the command path and 1,000 mB of water through the declared capability (which refuses the mod fluid, so no fluid move can fill it), turns 750 mB of latex and 500 mB of water into one dry rubber for 2,000 FE, a hopper feeds that rubber into a furnace which smelts it into one plastic, and a broken unit carries its latex, water and buffer back on its item; and the laser drill: placed above its ore base it faces up and finds it, reads the base's own ten-recipe table, resolves no ore in the End's biome and the emerald recipe at weight 1 in a mountain one, a lime lens raises that weight to 9, one completed base bar yields the recipe's emerald ore for exactly 1,000 FE while the same charge in the End's own biome yields nothing, and — with the add-on's own laser_drill_ore file and biome tag installed as its package ships them — the base's table reads 11/11 and that recipe runs, yielding one echo shard; a broken base carries its output slots back on its item; and the fluid laser base, under its own drill, answers no recipe without the wither its ether file names and leaves the tank empty while the drill still pays 1,000 FE, then with a wither in its box one completed bar yields 10 mB of industrialforegoing:ether_gas into the tank the declared capability reports, a second bar adds ten more, the tank drains through that capability, and the dissolution chamber runs its one carried recipe naming ether gas (supreme_machine_frame, 135 mB) to the product; and the mob slaughter factory: placed facing its placer it is empty, a bar with no mob in the working area kills nothing and spends no FE, a cow in the box is killed for 10 mB of meat and 200 mB of pink slime for exactly 400 FE (both tanks reported back by the declared capability), the same box with no FE leaves a villager alive and adds nothing, 5,000 FE then kills the villager for 400 mB of meat and 20 mB of pink slime, both tanks drain through the capability, the factory's own shaped recipe crafts from #c:plastics, #c:gears/gold and machine_frame/pity, the pink slime block crafts from nine pink slime and gives them back shapeless and drops itself, a broken factory carries both tanks and its buffer back on its item, and the dissolution chamber runs the jar's only outputFluid recipe — 300 mB of pink slime and a glass pane for one pink slime ball and 150 mB of minecraft:water in its output tank; and the fluid laser base's dimension-and-depth pair: the lava recipe's band at depth 11 answers no recipe in the End (the dimension filter), in the Nether at depth 0 it answers none and leaves an empty tank, and at depth 11 in the Nether one completed bar of the drill fills the tank with 100 mB of minecraft:lava, reported by the declared capability, for 1,000 FE; and the mob crusher: placed facing its placer it is empty, a bar with no mob spends nothing, a cow in its box is killed for its own experience at 20 mB a point (1-3 points, so 20, 40 or 60 mB) for exactly 50 FE, its loot lands in the machine's 18-slot output instead of the floor and a hopper under it pulls that loot into a barrel, the same box with no FE leaves the cow alive and adds nothing, the crusher's own shaped recipe crafts from #c:plastics, #c:gears/gold and machine_frame/advanced, and a broken crusher carries its essence, its buffer and its last kill's experience back on its item; and the mob duplicator: its tool captures a cow and the machine reads its type and 120 mB cost, one operation with 120 mB in the tank spawns exactly one cow for 5,000 FE, the same box with 0 essence spawns nothing and spends no FE, 33 cows in the working area refuse the attempt while holding both the charge and the essence, the tool releases its cow on a block face and empties itself, and a broken duplicator's item carries its buffer and tank while its tool drops beside it; and the Mob Imprisonment Tool crafts from #c:plastics and a ghast tear; and the animal rancher: placed facing its placer it is empty with its working area the single block behind it, a cow there fills its 8,000 mB tank with 1,000 mB of industrialforegoing:milk and the declared capability reports it, for exactly 400 FE; a red sheep there gives one wool of its colour into the 15-slot output (the pinned nextInt(3) of 0) and is left with Sheared: 1b, so the same box again produces nothing and spends nothing; an empty box spends nothing and rests the bar full; 399 FE refuses a cow it could otherwise milk; a squid's black dye needs a free output slot, four passing draws and 400 FE (a full container and four failing draws each refuse it); the tank drains 1,000 mB of milk through the declared capability; and a broken rancher's item carries its buffer and tank while its output drops beside it; and the Animal Rancher crafts from #c:plastics, a bucket, shears, #c:gears/gold and machine_frame/pity; and the review's four: a broken latex processing unit's item carries its own machine data and no Items while the five dry rubber in its slots drop themselves, a named stack keeps its name and its count when a cow's plain beef arrives (and a named, damaged sword beside it keeps its 17), a full output container puts the cow's reward on the floor instead of losing it, and a fluid laser base at depth 300 runs no recipe and leaves the wither in its box at full health"

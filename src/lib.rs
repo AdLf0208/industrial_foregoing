@@ -338,6 +338,29 @@ impl Hooks for Mod {
         } else {
             return Flow::Continue;
         };
+        // A kill whose reward is still queued when its machine breaks belongs to no machine any
+        // more: the loot rides on this break's drop list and the experience on its orbs, rather
+        // than waiting for whatever is placed here next.
+        if block == mobcrusher::BLOCK
+            && let Some(machine) = mobcrusher::machine_in(&saved)
+        {
+            let (stacks, points) = mobcrusher::take_pending(machine);
+            let position = [
+                f64::from(event.pos.x) + 0.5,
+                f64::from(event.pos.y) + 0.5,
+                f64::from(event.pos.z) + 0.5,
+            ];
+            for stack in stacks {
+                event
+                    .drops
+                    .push(mod_api::ItemDrop::new(stack, position, [0.0, 0.0, 0.0], 10));
+            }
+            if points > 0 {
+                event.experience = event
+                    .experience
+                    .saturating_add(u32::try_from(points).unwrap_or(u32::MAX));
+            }
+        }
         if !carries {
             return Flow::Continue;
         }
@@ -365,7 +388,7 @@ impl Hooks for Mod {
             .into_iter()
             .map(|drop| drop.stack)
             .collect();
-        mobcrusher::queue_loot(&attempt.dimension, attempt.pos, stacks);
+        mobcrusher::queue_loot(attempt.machine, &attempt.dimension, attempt.pos, stacks);
         Flow::Cancel
     }
 
@@ -383,7 +406,12 @@ impl Hooks for Mod {
         if event.amount <= 0 {
             return Flow::Continue;
         }
-        mobcrusher::queue_gain(&attempt.dimension, attempt.pos, event.amount);
+        mobcrusher::queue_gain(
+            attempt.machine,
+            &attempt.dimension,
+            attempt.pos,
+            event.amount,
+        );
         Flow::Cancel
     }
 
@@ -1377,6 +1405,15 @@ pub(crate) fn has_seated_augment(nbt: &Compound) -> bool {
     augment_slots(nbt).iter().any(Option::is_some)
 }
 
+/// The saved augment slots, for a carried payload that is an allowlist: the key is this package's
+/// own, so it travels with the machine's item and nowhere else.
+pub(crate) fn carried_augment_slots(nbt: &Compound) -> Option<Tag> {
+    match nbt.get(&KEY_AUGMENTS.into()) {
+        Some(Tag::List(entries)) => Some(Tag::List(entries.clone())),
+        _ => None,
+    }
+}
+
 /// The augment an item's `titanium:augments` component names, speed first as
 /// `canAcceptAugment` asks; `None` for a component this machine does not read.
 pub(crate) fn decode_augment(component: &Compound) -> Option<Augment> {
@@ -1591,6 +1628,27 @@ fn write_tank(nbt: &mut Compound, mb: i32) {
 mod tests {
     use super::*;
 
+    /// The port's own `register`, run **once** for the whole test binary through the SDK's
+    /// registration path. It is what mints this package's `ItemKey`s — the type has no public
+    /// constructor, and a unit test that needs an `ItemStack` reads them from the module statics
+    /// after this call — and its `Result` is the engine's own verdict.
+    pub(crate) fn register_once() -> &'static Result<(), Vec<String>> {
+        static RESULT: std::sync::OnceLock<Result<(), Vec<String>>> = std::sync::OnceLock::new();
+        RESULT.get_or_init(|| {
+            let category = |_: &str| false;
+            let position = |_: &str| None;
+            let schema = mod_api::__private::RuleSchema {
+                category: &category,
+                position: &position,
+                rule_count: 0,
+            };
+            let mods = vec![mod_api::ModEntry::new("industrialforegoing", Box::new(Mod))];
+            mod_api::__private::install_parts(&mods, &schema, |_: &mod_api::DimensionSettings| {
+                false
+            })
+        })
+    }
+
     /// The engine refuses a package that attaches one Part type to one block twice, and
     /// [`mod_api::Registrar::block_entity_part`] already puts the block half of a block-entity part
     /// on every block of its declared type (`expand_block_entity_parts`). This runs the port's own
@@ -1599,22 +1657,20 @@ mod tests {
     /// industrialforegoing:water_condensator twice`.
     #[test]
     fn the_engine_accepts_every_part_of_this_package() {
-        let category = |_: &str| false;
-        let position = |_: &str| None;
-        let schema = mod_api::__private::RuleSchema {
-            category: &category,
-            position: &position,
-            rule_count: 0,
-        };
-        let mods = vec![mod_api::ModEntry::new("industrialforegoing", Box::new(Mod))];
-        let refused =
-            mod_api::__private::install_parts(&mods, &schema, |_: &mod_api::DimensionSettings| {
-                false
-            });
+        let refused = register_once();
         assert!(
             refused.is_ok(),
             "the engine refuses this package: {refused:?}"
         );
+    }
+
+    /// Two of this package's own item keys, for the rules that take an `ItemStack`.
+    pub(crate) fn two_item_keys() -> (mod_api::ItemKey, mod_api::ItemKey) {
+        let _ = register_once();
+        (
+            mobcrusher::item().expect("the crusher's item key"),
+            fluidbase::item().expect("the fluid base's item key"),
+        )
     }
 
     #[test]
