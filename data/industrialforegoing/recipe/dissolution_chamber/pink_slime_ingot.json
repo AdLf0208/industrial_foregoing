@@ -1,0 +1,18 @@
+{
+  "input": [
+    "#c:ingots/iron",
+    "#c:ingots/iron",
+    "#c:ingots/gold",
+    "#c:ingots/gold"
+  ],
+  "inputFluid": {
+    "amount": 1000,
+    "fluid": "industrialforegoing:pink_slime"
+  },
+  "output": {
+    "count": 1,
+    "id": "industrialforegoing:pink_slime_ingot"
+  },
+  "processingTime": 300,
+  "type": "industrialforegoing:dissolution_chamber"
+}

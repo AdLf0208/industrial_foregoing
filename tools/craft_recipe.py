@@ -56,11 +56,12 @@ def condenser_grid(fill: dict[str, str]) -> list[tuple[str, int, list[str]]]:
     return [(item, len(where), where) for item, where in merged.items()]
 
 
-# (label, expected result id or None for the control, ingredients)
+# (label, expected result id or None for the control, expected count, ingredients)
 CASES = [
     (
         "the condensator from the tags (#c:plastics, #c:gears/iron, machine_frame/pity)",
         MACHINE,
+        1,
         condenser_grid(
             {
                 "P": "industrialforegoing:plastic",
@@ -72,6 +73,7 @@ CASES = [
     (
         "the control: slice 2's vanilla stand-ins leave the result empty",
         None,
+        0,
         condenser_grid(
             {
                 "P": "minecraft:slime_ball",
@@ -82,6 +84,7 @@ CASES = [
     ),    (
         "the pity machine frame (WIW/IRI/WIW)",
         FRAME,
+        1,
         [
             ("minecraft:oak_log", 4, ["100", "102", "106", "108"]),
             ("minecraft:iron_ingot", 4, ["101", "103", "105", "107"]),
@@ -91,17 +94,49 @@ CASES = [
     (
         "the iron gear",
         "industrialforegoing:iron_gear",
+        1,
         [("minecraft:iron_ingot", 4, ["101", "103", "105", "107"])],
     ),
     (
         "the gold gear",
         "industrialforegoing:gold_gear",
+        1,
         [("minecraft:gold_ingot", 4, ["101", "103", "105", "107"])],
     ),
     (
         "the diamond gear",
         "industrialforegoing:diamond_gear",
+        1,
         [("minecraft:diamond", 4, ["101", "103", "105", "107"])],
+    ),
+    (
+        "the mob slaughter factory (PDP/SMS/ARA, #c:gears/gold + machine_frame/pity)",
+        "industrialforegoing:mob_slaughter_factory",
+        1,
+        [
+            ("industrialforegoing:plastic", 2, ["100", "102"]),
+            ("industrialforegoing:gold_gear", 1, ["101"]),
+            # A sword and an axe stack to one, so each cell gets its own `give` (a single
+            # stack of two leaves the second right-click with an empty cursor).
+            ("minecraft:iron_sword", 1, ["103"]),
+            ("minecraft:iron_sword", 1, ["105"]),
+            ("industrialforegoing:machine_frame_pity", 1, ["104"]),
+            ("minecraft:iron_axe", 1, ["106"]),
+            ("minecraft:iron_axe", 1, ["108"]),
+            ("minecraft:redstone", 1, ["107"]),
+        ],
+    ),
+    (
+        "the pink slime block from nine pink slime",
+        "industrialforegoing:pink_slime_block",
+        1,
+        [("industrialforegoing:pink_slime", 9, GRID)],
+    ),
+    (
+        "nine pink slime back out of the block (shapeless)",
+        "industrialforegoing:pink_slime",
+        9,
+        [("industrialforegoing:pink_slime_block", 1, ["100"])],
     ),
 ]
 
@@ -200,7 +235,7 @@ def main():
         open_table()
 
     failures = []
-    for label, expected, ingredients in CASES:
+    for label, expected, expected_count, ingredients in CASES:
         setup(ingredients)
         for item, count, cells in ingredients:
             place(item, count, cells)
@@ -211,13 +246,13 @@ def main():
                 dump(label)
                 failures.append(f"{label}: a grid of stand-ins crafted {got['item']}")
             continue
-        if not got or got.get("item") != expected or got.get("count") != 1:
+        if not got or got.get("item") != expected or got.get("count") != expected_count:
             dump(label)
-            failures.append(f"{label}: expected one {expected}, got {got}")
+            failures.append(f"{label}: expected {expected_count} x {expected}, got {got}")
             continue
         take_result()
         counts = run("inventory")["counts"]
-        if counts.get(expected, 0) != 1:
+        if counts.get(expected, 0) != expected_count:
             failures.append(f"{label}: the crafted {expected} did not reach the inventory ({counts.get(expected)})")
         for item, _, _ in ingredients:
             if counts.get(item, 0) != 0:

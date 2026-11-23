@@ -1,0 +1,7 @@
+{
+  "properties": {
+    "friction": 0.8,
+    "occludes": false
+  },
+  "template": "minecraft:slime_block"
+}

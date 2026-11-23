@@ -53,11 +53,12 @@ pub const SUBFACING: &str = "subfacing";
 const KEY_ENERGY: &str = "energy";
 const KEY_PROGRESS: &str = "progress";
 /// The fluids this machine's carried recipes name, declared as fluid keys
-/// (`ModuleCore.LATEX`/`PINK_SLIME`/`ETHER_GAS`).
-pub const DECLARED_FLUIDS: [&str; 3] = [
+/// (`ModuleCore.LATEX`/`PINK_SLIME`/`ETHER_GAS`/`MEAT`).
+pub const DECLARED_FLUIDS: [&str; 4] = [
     "industrialforegoing:latex",
     "industrialforegoing:pink_slime",
     "industrialforegoing:ether_gas",
+    "industrialforegoing:meat",
 ];
 /// The side the tanks are read through (all six reach them).
 const READ_FACE: Direction = Direction::Up;
@@ -333,8 +334,12 @@ impl BlockEntityPart for Chamber {
     /// the default `Changed` reply keeps it and marks the chunk.
     fn block_entity_tick(&self, host: &mut dyn ServerHost, event: &mut BlockEntityTickEvent<'_>) {
         let entity = &mut *event.entity;
+        // The view's slot list follows the saved `Items` list, so a container a break-and-replace
+        // or a `/item replace … with air` left shorter than the declaration comes back short: pad
+        // it instead of skipping the machine (measured 2026-11-23 — a chamber that had completed
+        // one recipe stopped working because `items` held fewer slots than it declares).
         if entity.items.len() < SLOTS {
-            return;
+            entity.items.resize(SLOTS, None);
         }
         let stored = read_tanks(&entity.nbt);
         let mut machine = Machine::from_saved(
@@ -817,7 +822,8 @@ mod tests {
             [
                 "industrialforegoing:latex",
                 "industrialforegoing:pink_slime",
-                "industrialforegoing:ether_gas"
+                "industrialforegoing:ether_gas",
+                "industrialforegoing:meat"
             ]
         );
     }

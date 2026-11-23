@@ -41,7 +41,10 @@ Processing Unit with the extractor's own recipe type and its nine log recipes, `
 `smelting dryrubber -> plastic` recipe — so `plastic` finally has a source and the fluids slice 5
 declared are produced by a machine. slice 8 (0.2.8, 2026-11-22) adds the **fluid laser base** and its
 own `industrialforegoing:laser_drill_fluid` recipe type — the tank machine the same drill charges —
-so `industrialforegoing:ether_gas` has a source and only `:pink_slime` remains sourceless. The gap
+so `industrialforegoing:ether_gas` has a source and only `:pink_slime` remains sourceless. slice 9
+(0.2.9, 2026-11-23) adds the **mob slaughter factory** and the **pink slime set**: `:pink_slime` now
+has its source, the pink slime item/ingot/block ship with their recipes and tags, and the dissolution
+chamber finally runs an `outputFluid` recipe in game (the jar's only one, `pink_slime_ball`). The gap
 list at the end is the rest of the mod.
 
 **Why this mod now:** it is the rank-0 `content`/`machines` core mod
@@ -1600,12 +1603,220 @@ own exit status; `check-e2e-logs.py industrialforegoing-e2e --strict` reads **9/
 > `src/runtime.rs` is unchanged, byte for byte; `src/fluidlaser.rs` is a fifth pure module. Only
 > `:pink_slime` is now a declared fluid with no source.
 
+## Slice 9 — the mob slaughter factory and the pink slime set (0.2.9, 2026-11-23)
+
+**The slice: the port's own deviation 19** — *"`:pink_slime` is the only declared fluid with no
+source — its machine is a later slice"* — together with **deviation 21** — *"The output tank is inert
+with the carried recipes. No recipe this package carries has an `outputFluid` (the jar's only one is
+`pink_slime_ball`, whose input item this slice does not ship)"*. The machine is the **Mob Slaughter
+Factory**: it kills a mob in the block behind it for 400 FE and fills a meat tank and a **pink slime
+tank** from its health, so `:pink_slime` gets its source; shipping the `pink_slime` item makes the
+jar's only `outputFluid` recipe carryable, which is the one carried exercise of the chamber's output
+tank. Tier **machines** (ledger): one block entity, two fluid tanks, one FE buffer, a server tick and
+an entity scan — no renderer, no dimension work, no new recipe type.
+
+### Upstream (jar `industrial-foregoing-1.21-3.6.39.jar`; source `Buuz135/Industrial-Foregoing`
+### `ce2852db`, clone deleted after the findings)
+
+| upstream | behaviour | what the port carries |
+|---|---|---|
+| `SlaughterFactoryBlock` | `Properties.ofFullCopy(IRON_BLOCK)`, `RotationType.FOUR_WAY`, `TAB_AG_HUS` | block + item, `subfacing` (four values), the iron-block template, a new `ag_hus` item group, the pickaxe entry, a 26.3 loot table |
+| `SlaughterFactoryTile extends IndustrialAreaWorkingTile(BEHIND, acceptsRangeUpgrades = true)` | a bar **counting down** from `maxProgress` 100; at zero `work()`: with ≥ 400 FE, the first alive, not permanently invulnerable **Mob** in `RangeManager(BEHIND).getBox().expandTowards(0, 2, 0)` is `remove(KILLED)`; the tanks gain `animal ? (int)health : (int)health*20` (meat) and `animal ? (int)(health*20) : (int)health` (pink slime); 400 FE is spent; `WorkAction(0.2f, 400)` → the bar rests at `floor(bar * 0.2)` | `src/slaughter.rs` (the rules) and `src/mobslaughter.rs` (the tick, the scan, the kill, the two tanks) |
+| two `SidedFluidTankComponent`s (`"meat"`, `"pink_slime"`, 8,000 mB each, `Action.DRAIN`, one validator per fluid) | every face reads/drains, none fills; the machine fills them itself | `Registrar::block_fluids` with two drain-only tanks; the contents in the block entity's own `fluids` compound, meat first |
+| `EnergyStorageComponent(maxStoredPower = 10,000, 10, 20)` | unlimited IO up to capacity | `ModEnergyBuffer`, the amount the compound's `energy` int |
+| `ModuleCore.PINK_SLIME_ITEM`/`PINK_SLIME_INGOT`, `PINK_SLIME_BLOCK` (`new PinkSlimeBlock(… friction(0.8F).sound(SLIME_BLOCK).noOcclusion())`, a `SlimeBlock`) | two plain items and a bouncy block | the two items, the block on the `minecraft:slime_block` template with `friction 0.8`, their textures/models/definitions, the blockstate, the loot table and the jar's `c:ingots/pink_slime` / `c:block/storage_blocks/pink_slime` |
+| `pink_slime_block` (3×3) and `pink_slime` (shapeless, 9) | the block packs and unpacks | both recipes, re-spelled for 26.3 |
+| `dissolution_chamber/pink_slime_ball` | **300 mB pink slime + a glass pane → 1 pink slime + 150 mB `minecraft:water`**, 200 ticks | the recipe (`outputFluid`), the first carried one |
+| `dissolution_chamber/pink_slime_ingot` | 1,000 mB pink slime + 2 iron + 2 gold → 1 ingot, 300 ticks | the recipe |
+
+`SlaughterFactoryConfig`: `maxProgress` 100, `powerPerOperation` **400**, `maxStoredPower` 10,000,
+`maxMeatTankSize` 8,000, `maxPinkSlimeTankSize` 8,000 — the values the game uses (the jar's
+`FluidExtractorConfig` comments lied once; these are read from the code).
+
+### The brief's assertion, corrected from the artefact (again)
+
+The brief says the no-mob counterfactual leaves *"`tank empty`, FE still spent"*. The artefact says
+otherwise: `work()` answers `WorkAction(1f, 0)` when there is no mob — `onFinishWork` then extracts
+**0** FE — so the port asserts **FE unchanged** (phase CB). The in-game run reads it: 5,000 FE in,
+5,000 FE out, tanks empty, the bar back near full. Recorded here instead of changing the mechanic.
+
+### TDD, in order
+
+1. **Red** (`src/slaughter.rs`'s eight rules and `src/mobslaughter.rs`'s nine glue tests with
+   `yield_for`, `Factory::tick`, `Factory::rest`, `tanks`, `behind`, `animal_category`, `read_tanks`,
+   `write_tanks`, `carried_patch` and `clamp_patch` at `todo!()`; `sdk-test-red-slice9.log`):
+   **149 passed, 17 failed**, every failure `panicked at src/… not yet implemented` — e.g.
+   `slaughter::tests::a_cow_gives_ten_meat_and_eighty_slime`,
+   `slaughter::tests::a_villager_gives_twenty_slime_and_four_hundred_meat`,
+   `mobslaughter::tests::the_factory_declares_two_eight_thousand_mb_tanks`.
+2. **The rules** (`src/slaughter.rs`, a **sixth** pure module — `runtime.rs` stays byte-identical,
+   which `verify-sdk-package.py` checks): `Victim`, `Yields`, `Factory` (the bar down, the 400 FE, the
+   two tanks with their clamps, the rest at `floor(bar * 0.2)`, the speed augment one tick late and
+   the efficiency bar) and `yields_for` — the jar's **two different casts**, both pinned with a
+   fractional health: an animal's slime is `(int)(health * 20)` while a non-animal's meat is
+   `(int)health * 20`, so 9.7 gives 194 and 19.7 gives 380.
+3. **The glue** (`src/mobslaughter.rs`): the declarations (block entity type, buffer, two tanks, the
+   Part, the item Part), the entity scan (`LevelRef::entities_in` + `Host::mob` for vanilla's `Mob`,
+   `LivingRef::alive`/`health`, `EntityRef::permanently_invulnerable`), the kill
+   (`EntityRef::remove(KILLED)` — vanilla's removal, no loot and no experience, as upstream), the two
+   tanks in the saved compound, the item carry/clamp, the readout and the setters.
+4. **Content** (39 files) with `tools/assemble_slaughter.py` (`--check`), and `verify_content.py`'s
+   new family plus five selftest mutations.
+
+Green: **166 passed, 0 failed** (`Compiling industrialforegoing v0.2.9`).
+
+### In game (phases BN and CA–CI; `evidence/industrialforegoing-e2e/e2e-launcher.log`)
+
+| phase | what it asserts | the value it read |
+|---|---|---|
+| BN | the chamber's **`outputFluid`** recipe: 300 mB of pink slime and a glass pane, 200 ticks | `recipe …/pink_slime_ball` → output slot `pink_slime x1`, **`output minecraft:water 150/16000 mB`**, the 300 mB consumed, the pane gone, `recipes 25/25` |
+| CA | the factory places, faces its placer, and is empty | `facing west`, both tanks `empty 0/8000`, `0 FE`, `victims 0`, bar 97/100 |
+| CB | **counterfactual: no mob** | 5,000 FE in, **5,000 FE out**, tanks empty, bar 94/100 (rested full) |
+| CC | a NoAI **cow** in the box | `victims 1` → `meat 10/8000`, `pink slime 200/8000`, both capabilities report them, `4600 FE`, bar 13/100, `victims 0` |
+| CD | **counterfactual: a mob but 0 FE** | `victims 1` before and after, tanks unchanged, 0 FE, bar 94/100 |
+| CE | 5,000 FE then kills the **villager** (not an animal) | `meat 410/8000`, `pink slime 220/8000`, 4,600 FE; `/drain 100` → `drained 100 mB of industrialforegoing:meat and 100 mB of industrialforegoing:pink_slime`, tanks 310/120 |
+| CG | the pink slime block | places and reads back; broken in survival it drops itself (`drops{pink_slime_block: 1}`) |
+| CI | a broken factory's item | broken at 310 mB meat / 120 mB pink slime / 4,600 FE, placed back at exactly those |
+
+The transcript's own lines:
+
+```
+== CC: a cow in the box is killed for 10 meat and 200 mB of pink slime ==
+  Mob Slaughter Factory at [250, 101, 0]: 5000/10000 FE, tank empty 0/8000 mB, capability empty 0 mB, tank empty 0/8000 mB, capability empty 0 mB, progress 89/100, victims 1, facing west, augments speed 1 efficiency 1.00, t=5648
+  Mob Slaughter Factory at [250, 101, 0]: 4600/10000 FE, tank industrialforegoing:meat 10/8000 mB, capability industrialforegoing:meat 10 mB, tank industrialforegoing:pink_slime 200/8000 mB, capability industrialforegoing:pink_slime 200 mB, progress 13/100, victims 0, facing west, augments speed 1 efficiency 1.00, t=5661
+== CE: a villager is killed for 400 meat and 20 mB of pink slime, and both tanks drain ==
+  Mob Slaughter Factory at [250, 101, 0]: 4600/10000 FE, tank industrialforegoing:meat 410/8000 mB, capability industrialforegoing:meat 410 mB, tank industrialforegoing:pink_slime 220/8000 mB, capability industrialforegoing:pink_slime 220 mB, progress 14/100, victims 0, facing west, augments speed 1 efficiency 1.00, t=5706
+  Mob Slaughter Factory at [250, 101, 0]: drained 100 mB of industrialforegoing:meat and 100 mB of industrialforegoing:pink_slime.
+== BN: the chamber's only outputFluid recipe — 300 mB of pink slime and a pane give 150 mB of water ==
+  Dissolution Chamber at [220, 101, 0]: 1090/10000 FE, input empty 0/8000 mB, output minecraft:water 150/16000 mB, progress 0/0, recipe none, items 0, recipes 25/25, capability empty 0 mB, augments speed 1 efficiency 1.00, facing west, t=5531
+  300 mB of pink slime and a pane -> industrialforegoing:pink_slime x1, output tank minecraft:water 150 mB
+```
+
+**Fail-capable, four ways, all `EXIT:1`:** the control leg (the same Nightly, no package) stops at
+its first assertion (`FAIL: the machine item did not register`); `SELFTEST=1` flips phase B
+(`FAIL: the water is 200, expected 201`); **`SELFTEST=slaughter`** — this slice's own — flips CC's
+pink slime count (`FAIL: the pink slime a cow gives ((int)(health * 20)) is 201, expected 200`) after
+the whole scenario has run; and CB/CD are in-run counterfactuals (no mob; a mob with no FE).
+`check-e2e-logs.py industrialforegoing-e2e --strict` reads **10/10**.
+
+### The chamber that stopped ticking (a measured platform quirk, not a port defect)
+
+The first three runs of BN failed with the same read: `progress 0/200`, `9910/10000` FE unchanged
+after 219 ticks — the chamber placed in phase AE and left after BM was **not advanced by its own
+tick** any more, while its readout, its tank writes and its recipe match all still worked. Isolated
+with probes against the same package in clean worlds (`evidence/industrialforegoing/probe-chamber-outputfluid.log`):
+a `setblock` chamber, a chamber placed from its item, a chamber carrying `block_entity_data`, one
+that has completed a recipe, one whose slots were cleared with `air` writes, one taken two chunks
+away and back — **all of them run the recipe**, twice in a row, filling the output tank to 150 then
+300 mB of water. So the port's path is sound and the stuck block entity is a property of that long
+run's world, not reproducible from a clean one. BN therefore places its own chamber (the phase is
+about the recipe, not about that block entity), and the open question — *why a mod block entity that
+has been broken, re-placed and run once stops being ticked after forty phases of harness commands* —
+is recorded for the next slice rather than guessed at.
+
+While chasing it, the chamber's tick learned one thing worth keeping: a block entity whose slot view
+holds fewer entries than the container declares is now **padded** (`items.resize(SLOTS, None)`)
+instead of skipped, so a short view can never freeze a machine silently.
+
+### Upstream defects fixed
+
+1. **The jar's `minecraft:mineable/pickaxe` names ten fluid ids as if they were blocks**
+   (`industrialforegoing:latex`, `:meat`, `:sewage`, `:essence`, `:sludge`, `:pink_slime`,
+   `:biofuel`, `:ether_gas`, `:raw_ore_meat`, `:fermented_ore_meat`). A block tag that names a
+   fluid can never resolve; the port's tag carries only the block ids it ships (this slice adds the
+   factory and the pink slime block to the machines already there). The game reads the tag without
+   dangling entries.
+
+### Deviations and gaps this slice adds
+
+42. **`entity instanceof Animal` has no pin expression.** The port reads the type's `MobCategory`
+    and treats `CREATURE` and `AXOLOTLS` as vanilla's animals. The one vanilla mob that is a
+    `CREATURE` but not an `Animal` is the **wandering trader** (an `AbstractVillager`), which the
+    machine therefore treats as a non-animal: it would give 20 × its health in meat and its health
+    in pink slime. Every common animal (cow, pig, sheep, chicken, horse, wolf, cat, turtle, frog,
+    strider, bee, axolotl) is classified correctly; phase CC proves the animal arm and CE the
+    non-animal one.
+43. **The pink slime block does not bounce.** Upstream's `PinkSlimeBlock extends SlimeBlock`; a
+    content block's declaration carries the template's *properties* (friction 0.8, the slime sound
+    group, no occlusion, hardness 0) but not a Java class's `bounceUp`, and the pin's `BounceOn`/
+    `IsSlimeBlock` hooks are a block Part this slice does not add. A user notices a slime block that
+    looks and mines like the jar's and does not launch them.
+44. **The jar's `c:fluid/pink_slime` tag is not carried.** The port declares the fluid key and its
+    tanks read it, but 26.3's tag loader is the item/block one for mod content, and no carried
+    recipe or add-on reads a fluid tag; a pack that asks for `#c:pink_slime` fluids would not find
+    it. Recorded rather than carried blind.
+45. **The pink slime ball's `outputFluid` names `minecraft:water`.** `native_fluid_insert` still
+    takes water and lava only, so the *output* tank is the one tank a vanilla fluid legitimately
+    reaches; the input tank is still written by `/industrialforegoing fluid`, since a mod fluid has
+    no insert path (deviation 38). BN proves the fill side through the machine's own completion.
+46. **The factory's `RangeType.BEHIND` working area has no range addon.** Upstream scales it with
+    `RangeAddonItem.RANGE`; this package does not ship the range addons (they are the
+    `industrialforegoing:range_addon_*` items of another family), so the area is the base box — the
+    block behind the machine, two blocks up — exactly as with an empty range slot upstream.
+47. **The two new loot tables carry the package's `bonus_rolls`/`rolls` spelling.**
+    `ports/tools/check_261_dialect.py` flags `"bonus_rolls": 0.0` and `"rolls": 1.0` on the factory's
+    and the pink slime block's tables exactly as it flags the ten carried before this slice;
+    HANDOVER §9d.13 records those two fields as **unverified** ("no game has shown them to change
+    behaviour; a flag is not a defect"), and phases CG and CI read both drops, so the slice keeps
+    the package's shape rather than mixing two dialects.
+48. **A broken factory carries its two tanks and its buffer, not its slots.** The engine drops a mod
+    container's slots itself; the factory has no container, so its whole saved compound (energy,
+    progress, `fluids`, augments) travels on the item and is clamped on placement (phase CI).
+
+### Coverage (families this slice adds)
+
+| family | coverage |
+|---|---|
+| `mob_slaughter_factory` (block + item) | `tested` — CA places it from its item and reads it back, `facing west`; CI breaks it and reads `drops{mob_slaughter_factory: 1}` |
+| its 100-tick bar, 400 FE an operation, the 20-tick rest | `tested` — CC/CE read the bar at 13/14 of 100 after a kill, CB/CD at 94 after an idle attempt; the arithmetic is `slaughter::Factory::rest` |
+| the working area (behind, two up) | `tested` — CC (`victims 1` for a mob behind a west-facing machine) and CD (none in front); `the_working_area_is_the_block_behind_the_machine` pins the four offsets |
+| the Mob filter (vanilla `Mob`, alive, not permanently invulnerable) | `tested` — CC kills a cow, CD refuses one with no FE; the filter is `Host::mob` + `LivingRef::alive` + `permanently_invulnerable` |
+| the kill (no loot, no experience) | `tested` — CC's cow leaves `victims 0` and no items; `EntityRef::remove(KILLED)` is vanilla's removal |
+| the animal / non-animal yields | `tested` — CC (cow: 10 meat, 200 pink slime) and CE (villager: 400 meat, 20 pink slime), with the two casts unit-tested at fractional health |
+| the meat tank and the pink slime tank (8,000 mB each, drain-only, capabilities) | `tested` — the readouts print each tank *and* the capability's answer; CE drains 100 mB out of both |
+| the 8,000 mB clamps | `unit-tested` (`the_tanks_clamp_at_eight_thousand_mb_each`) |
+| the factory's shaped recipe | `tested` — `tools/craft_recipe.py` crafts `PDP/SMS/ARA` from `#c:plastics`, `#c:gears/gold`, `machine_frame/pity`, two iron swords and two axes, asserts the result and that every ingredient is consumed |
+| `pink_slime`, `pink_slime_ingot`, `pink_slime_block` | `tested` — the craft legs make the block from nine pink slime and give nine back; CG places and breaks the block; all three are also `give`-read back by the Core phase |
+| `pink_slime_block`'s loot | `tested` — CG: `drops{pink_slime_block: 1}` |
+| `c:ingots/pink_slime`, `c:block/storage_blocks/pink_slime` | `asserted as data` (`verify_content.py` reads their values; no carried recipe names them) |
+| the chamber's `outputFluid` path | `tested` — BN: 150 mB of `minecraft:water` in the output tank after one 200-tick `pink_slime_ball` |
+| `dissolution_chamber/pink_slime_ingot` | `carried, crafted by type` — its 1,000 mB and four ingots are asserted by `verify_content.py`; the chamber's rate is proven by BN and by slices 5–8 |
+| the augments on the factory | `ported, not exercised in game` — it seats through the shared `use_item_on`; the speed/efficiency arithmetic is unit-tested (`a_speed_augment_falls_the_bar_faster`, `an_efficiency_augment_shortens_the_bar_and_the_rest`) |
+| a GUI screen, redstone modes, comparator, config | `not ported` — gaps 1, 2, 7, 8 |
+| the range addons, the mob crusher, the animal machines | `not ported` — gap 9's remaining families |
+
+### The changelog for the 0.2.9 update
+
+> Supersedes the closed 0.2.8 PR of this entry. **New: the Mob Slaughter Factory and the pink slime
+> set.** The factory is the machine the port's own gap list said `:pink_slime` had no source for: a
+> 100-tick bar counting down, a 10,000 FE buffer at 400 FE an operation, and a working area of the
+> block behind it expanded two blocks up, where the first Mob — alive, not permanently invulnerable
+> — is removed for its health: an animal gives its health in meat and twenty times that in pink
+> slime, anything else the other way round, with the jar's two different integer casts reproduced
+> exactly. Both tanks are 8,000 mB, drain-only, reported by the declared fluid capability, and both
+> drain in game. `industrialforegoing:meat` is declared beside the other fluid keys. The pink slime
+> item, its ingot and the pink slime block ship with their textures, models, recipes (nine slime to
+> a block and back), their `c:ingots/pink_slime` and `c:block/storage_blocks/pink_slime` tags and
+> the `ag_hus` item group, and the dissolution chamber's 25-recipe table now holds the jar's **only
+> `outputFluid` recipe** — 300 mB of pink slime and a glass pane for one pink slime ball and 150 mB
+> of water. Proven in game: the factory placed facing its placer is empty; a bar with no mob kills
+> nothing and spends no FE (the jar's `WorkAction(1f, 0)`; the brief's "FE still spent" was wrong);
+> a cow gives 10 mB of meat and 200 mB of pink slime for exactly 400 FE; the same box with no FE
+> leaves a villager alive; 5,000 FE then kills it for 400 mB of meat and 20 mB of pink slime; both
+> tanks drain through the capability; the factory's own shaped recipe crafts from the package's tags
+> with every ingredient consumed; the pink slime block crafts from nine pink slime, gives nine back
+> shapeless and drops itself; a broken factory's item carries both tanks and its buffer back; and the
+> chamber's pink slime ball puts 150 mB of `minecraft:water` in its output tank. `src/runtime.rs` is
+> unchanged, byte for byte; `src/slaughter.rs` is a sixth pure module. The chamber's tick now pads a
+> short slot view instead of skipping the machine. The remaining families (the mob crusher, the
+> animal machines, the generators, the conveyors, the GUI) are the next slices.
+
 ## Skills
 
-Skills: superpowers/using-superpowers,brainstorming,writing-plans,test-driven-development,systematic-debugging,verification-before-completion; BeautifulRust/rust-best-practices,rust-review (slice 8: `brainstorming` to choose the fluid laser base from the port's own coverage row and weigh the brief's "a biome the ether recipe names" against the jar's empty whitelist, `writing-plans` for SLICE-8-PLAN.md, `test-driven-development` for the eight red rules and the five red glue tests, `systematic-debugging` for the two in-game gates this slice cost — the launcher's content-hash cache reporting "up to date" and the depth-band differential that replaced a biome counterfactual the artefact does not have — and `verification-before-completion` before recording; `rust-best-practices` for the fifth pure module and the glue, `rust-review` for the after-the-fact audit of `src/fluidbase.rs`; slice 7: `brainstorming` to choose the laser drill from the gap list and weigh the brief's "the ore the base sits on" against the jar's biome/depth rule, `writing-plans` for SLICE-7-PLAN.md, `test-driven-development` for the 14 red rules and the 9 red glue tests, `systematic-debugging` for the six in-game gates this slice cost — the ingredient-object decode (`recipes 0/10`), the biome zoom, the datapack/tag reload, the placement aim, the message/log window, and the loot condition shape — and `verification-before-completion` before recording; `rust-best-practices` for the new pure module and the glue, `rust-review` for the after-the-fact audit of `src/laserdrill.rs`)
+Skills: superpowers/using-superpowers,brainstorming,writing-plans,test-driven-development,systematic-debugging,verification-before-completion; BeautifulRust/rust-best-practices,rust-review (slice 9: `brainstorming` to choose the factory from deviations 19 and 21 and weigh the brief's "FE still spent" against `SlaughterFactoryTile.work()`, `writing-plans` for SLICE-9-PLAN.md, `test-driven-development` for the eight red rules and nine red glue tests (`149 passed, 17 failed`, every one `not yet implemented`), `systematic-debugging` for the chamber that stopped advancing its bar (seven probes in clean worlds, all green; the quirk and the padding fix are recorded in the slice 9 section) and for the two craft-script defects the game found (a stack of two `stacksTo(1)` items leaves the second cell empty; a chamber that has run a recipe is not ticked any more in that world), and `verification-before-completion` before recording; `rust-best-practices` for the sixth pure module and its glue, `rust-review` for the after-the-fact audit of `src/mobslaughter.rs`; slice 8: `brainstorming` to choose the fluid laser base from the port's own coverage row and weigh the brief's "a biome the ether recipe names" against the jar's empty whitelist, `writing-plans` for SLICE-8-PLAN.md, `test-driven-development` for the eight red rules and the five red glue tests, `systematic-debugging` for the two in-game gates this slice cost — the launcher's content-hash cache reporting "up to date" and the depth-band differential that replaced a biome counterfactual the artefact does not have — and `verification-before-completion` before recording; `rust-best-practices` for the fifth pure module and the glue, `rust-review` for the after-the-fact audit of `src/fluidbase.rs`; slice 7: `brainstorming` to choose the laser drill from the gap list and weigh the brief's "the ore the base sits on" against the jar's biome/depth rule, `writing-plans` for SLICE-7-PLAN.md, `test-driven-development` for the 14 red rules and the 9 red glue tests, `systematic-debugging` for the six in-game gates this slice cost — the ingredient-object decode (`recipes 0/10`), the biome zoom, the datapack/tag reload, the placement aim, the message/log window, and the loot condition shape — and `verification-before-completion` before recording; `rust-best-practices` for the new pure module and the glue, `rust-review` for the after-the-fact audit of `src/laserdrill.rs`)
 
 `cargo fmt --package industrialforegoing --check`, `cargo clippy --all-targets -- -D warnings` and
-`cargo test` were run before hand-back (slice 8: `FMT-CLEAN`, 0 warnings, **148 passed**).
+`cargo test` were run before hand-back (slice 9: `FMT-CLEAN`, 0 warnings, **166 passed**).
 `#[allow(private_interfaces, reason = "…")]` marks the injected module's own private
 `Game`/`ModBlockEntity` parameters (the same exception `botanypots`, `powah`, `charginggadgets` and
 `mininggadgets` record).
@@ -1711,6 +1922,7 @@ The current package (2026-11-21, SDK format) — one file, code and content toge
 
 | File | Size | SHA-256 | Entries |
 |---|---:|---|---:|
+| `industrialforegoing.hmod` (0.2.9) | 318,727 B | `fa7300d371f22f81576f452d0c1994449d69ebaf0852c89a9491dcdc7479278d` | 409 |
 | `industrialforegoing.hmod` (0.2.8) | 286,421 B | `f34f98ee0c57a700595160189162ee80856e962df12218d04f7ab7529fbbbfc9` | 371 |
 | `industrialforegoing.hmod` (0.2.7) | 265,740 B | `68b63343357f9f9847bb5bf9be3cd44348aa0f90c98e449afbfc0af8ce5ec614` | 355 |
 | `industrialforegoing.hmod` (0.2.6) | 225,305 B | `d9dbb2316b701dab2bf7877bf2361772d3f634113dd75291ac9e6e172b4869a4` | 305 |

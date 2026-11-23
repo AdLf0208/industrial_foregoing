@@ -44,7 +44,9 @@ pub mod fluidlaser;
 pub mod laser;
 pub mod laserdrill;
 pub mod latex;
+pub mod mobslaughter;
 pub mod runtime;
+pub mod slaughter;
 
 use std::array;
 use std::sync::{Mutex, OnceLock};
@@ -180,6 +182,8 @@ impl Hooks for Mod {
         laserdrill::declare(r);
         // The fluid laser base (slice 8): its tank, lens slot and tick.
         fluidbase::declare(r);
+        // The mob slaughter factory (slice 9): its two tanks, its buffer and its tick.
+        mobslaughter::declare(r);
         // Its own recipe type **and** the read-only serializer for it: the game refuses a file
         // whose type has no serializer ("unregistered recipe serializer
         // industrialforegoing:dissolution_chamber", measured in game), and API 36's machine route
@@ -293,6 +297,12 @@ impl Hooks for Mod {
                 fluidbase::item(),
                 fluidbase::carried_patch(&saved),
             )
+        } else if block == mobslaughter::BLOCK {
+            (
+                mobslaughter::has_contents(&saved),
+                mobslaughter::item(),
+                mobslaughter::carried_patch(&saved),
+            )
         } else {
             return Flow::Continue;
         };
@@ -368,6 +378,11 @@ impl Hooks for Mod {
                 || block == fluidbase::BLOCK)
         {
             laser_command(host, invocation, pos, &block, sub);
+            return Flow::Cancel;
+        }
+        // The mob slaughter factory (slice 9): its own readout, setters and drain.
+        if current_block(host, pos).as_deref() == Some(mobslaughter::BLOCK) {
+            slaughter_command(host, invocation, pos, sub);
             return Flow::Cancel;
         }
         if sub == "fluid" {
@@ -964,6 +979,53 @@ fn laser_command(
     }
 }
 
+/// The harness commands of the mob slaughter factory: the readout, the FE and bar setters, and the
+/// drain of both declared tanks. Upstream's GUI is the only control it has.
+fn slaughter_command(
+    host: &mut dyn ServerHost,
+    invocation: &CommandInvocation,
+    pos: [i32; 3],
+    sub: &str,
+) {
+    match sub {
+        "info" => {
+            let line = mobslaughter::readout(host, pos);
+            say(host, &line);
+        }
+        "energy" | "progress" => {
+            let (argument, full, unit, key) = if sub == "energy" {
+                ("amount", crate::slaughter::CAPACITY_FE, "FE", KEY_ENERGY)
+            } else {
+                (
+                    "ticks",
+                    crate::slaughter::MAX_PROGRESS,
+                    "ticks of bar",
+                    KEY_PROGRESS,
+                )
+            };
+            let Some(value) = integer(invocation, argument) else {
+                say(host, &usage(sub));
+                return;
+            };
+            let value = value.clamp(0, full);
+            let changed = mobslaughter::set_int(host, pos, key, value);
+            say(
+                host,
+                &if changed {
+                    format!("Mob Slaughter Factory at {pos:?}: {value}/{full} {unit}.")
+                } else {
+                    format!("{pos:?} is not a mob slaughter factory.")
+                },
+            );
+        }
+        "drain" => {
+            let amount = integer(invocation, "amount").unwrap_or(0).max(0);
+            mobslaughter::drain(host, pos, amount);
+        }
+        _ => say(host, &usage(sub)),
+    }
+}
+
 /// The machine's state, as `/industrialforegoing info` prints it.
 fn readout(host: &mut dyn ServerHost, pos: [i32; 3]) -> String {
     let Some(level) = host.level(host.dimension()) else {
@@ -1171,6 +1233,7 @@ fn is_our_entity_kind(host: &dyn Host, entity: BlockEntityRef) -> bool {
         || fluidchain::kind_of(entity, host)
         || laserdrill::kind_of(entity, host)
         || fluidbase::kind_of(entity, host)
+        || mobslaughter::kind_of(entity, host)
 }
 
 /// The tank's amount, in the declaration's shape: one entry per tank under `fluids`.
@@ -1546,6 +1609,11 @@ mod content {
         "dryrubber",
     ];
 
+    /// The mob slaughter factory and the pink slime set (slice 9).
+    const SLAUGHTER: [&str; 1] = ["mob_slaughter_factory"];
+    const PINK_ITEMS: [&str; 2] = ["pink_slime", "pink_slime_ingot"];
+    const PINK_BLOCK: &str = "pink_slime_block";
+
     /// The latex chain's two machines (slice 6).
     const LATEX: [&str; 2] = ["fluid_extractor", "latex_processing_unit"];
 
@@ -1687,6 +1755,10 @@ mod content {
                 "laser_drill",
                 "ore_laser_base",
                 "fluid_laser_base",
+                "mob_slaughter_factory",
+                "pink_slime",
+                "pink_slime_ingot",
+                "pink_slime_block",
                 "speed_addon_tier_1",
                 "speed_addon_tier_2",
                 "efficiency_addon_tier_1",
@@ -1725,7 +1797,13 @@ mod content {
                 );
             }
         }
-        for block in FRAMES.iter().chain(LASER.iter()) {
+        for block in FRAMES
+            .iter()
+            .copied()
+            .chain(LASER.iter().copied())
+            .chain(SLAUGHTER.iter().copied())
+            .chain(std::iter::once(PINK_BLOCK))
+        {
             assert!(
                 has(&format!(
                     "assets/industrialforegoing/blockstates/{block}.json"
@@ -1760,7 +1838,14 @@ mod content {
     fn every_declared_id_has_a_name() {
         let lang = read("assets/industrialforegoing/lang/en_us.json");
         let names = strings(&lang);
-        for block in FRAMES.iter().chain(LATEX.iter()).chain(LASER.iter()) {
+        for block in FRAMES
+            .iter()
+            .copied()
+            .chain(LATEX.iter().copied())
+            .chain(LASER.iter().copied())
+            .chain(SLAUGHTER.iter().copied())
+            .chain(std::iter::once(PINK_BLOCK))
+        {
             let key = format!("block.industrialforegoing.{block}");
             assert!(
                 names.contains(&key),
@@ -1769,6 +1854,7 @@ mod content {
         }
         let mut items: Vec<String> = PLAIN_ITEMS.iter().map(|item| (*item).to_owned()).collect();
         items.extend(COLOURS.map(|colour| format!("{colour}_laser_lens")));
+        items.extend(PINK_ITEMS.map(str::to_owned));
         for item in items {
             let key = format!("item.industrialforegoing.{item}");
             assert!(
@@ -2275,6 +2361,128 @@ mod content {
                 "{advancement} still carries a NeoForge condition"
             );
         }
+    }
+
+    /// Slice 9: the mob slaughter factory and the pink slime set, as **files**. The machine is
+    /// declared on the iron-block template with `subfacing`, has a 26.3 loot table and a shaped
+    /// recipe naming the package's tags; the pink slime block is the jar's slime block; and the
+    /// chamber's one `outputFluid` recipe — the jar's `pink_slime_ball` — is carried.
+    #[test]
+    fn the_mob_slaughter_factory_and_the_pink_slime_set_are_carried() {
+        for name in [
+            "data/industrialforegoing/horizon/block/mob_slaughter_factory.json",
+            "assets/industrialforegoing/blockstates/mob_slaughter_factory.json",
+            "assets/industrialforegoing/models/block/mob_slaughter_factory.json",
+            "assets/industrialforegoing/models/item/mob_slaughter_factory.json",
+            "assets/industrialforegoing/items/mob_slaughter_factory.json",
+            "assets/industrialforegoing/textures/block/mob_slaughter_factory_back.png",
+            "assets/industrialforegoing/textures/block/mob_slaughter_factory_side.png",
+            "data/industrialforegoing/loot_table/blocks/mob_slaughter_factory.json",
+            "data/industrialforegoing/recipe/mob_slaughter_factory.json",
+            "data/industrialforegoing/horizon/block/pink_slime_block.json",
+            "assets/industrialforegoing/blockstates/pink_slime_block.json",
+            "assets/industrialforegoing/models/block/pink_slime_block.json",
+            "assets/industrialforegoing/models/item/pink_slime_block.json",
+            "assets/industrialforegoing/items/pink_slime_block.json",
+            "assets/industrialforegoing/textures/block/pink_slime_block.png",
+            "data/industrialforegoing/loot_table/blocks/pink_slime_block.json",
+            "data/industrialforegoing/recipe/pink_slime_block.json",
+            "data/industrialforegoing/recipe/pink_slime.json",
+            "data/industrialforegoing/recipe/dissolution_chamber/pink_slime_ball.json",
+            "data/industrialforegoing/recipe/dissolution_chamber/pink_slime_ingot.json",
+            "data/c/tags/item/ingots/pink_slime.json",
+            "data/c/tags/block/storage_blocks/pink_slime.json",
+            "data/industrialforegoing/horizon/creative_tab/ag_hus.json",
+        ] {
+            assert!(has(name), "slice 9 ships {name}");
+        }
+        for item in PINK_ITEMS {
+            for name in [
+                format!("assets/industrialforegoing/items/{item}.json"),
+                format!("assets/industrialforegoing/models/item/{item}.json"),
+                format!("assets/industrialforegoing/textures/item/{item}.png"),
+                format!("data/industrialforegoing/horizon/item/{item}.json"),
+            ] {
+                assert!(has(&name), "slice 9 ships {name}");
+            }
+        }
+        // The machine: the iron-block template, Titanium's `FOUR_WAY` state and a 26.3 loot table.
+        let declaration = read("data/industrialforegoing/horizon/block/mob_slaughter_factory.json");
+        for value in ["minecraft:iron_block", "subfacing", "north"] {
+            assert!(
+                declaration.contains(value),
+                "the factory's declaration lacks {value}"
+            );
+        }
+        let loot = read("data/industrialforegoing/loot_table/blocks/mob_slaughter_factory.json");
+        assert!(
+            loot.contains("\"type\": \"minecraft:survives_explosion\""),
+            "the factory's loot table does not use 26.3's condition shape, so it would drop nothing"
+        );
+        // Its shaped recipe (`PDP/SMS/ARA`) names the package's own tags.
+        let recipe = read("data/industrialforegoing/recipe/mob_slaughter_factory.json");
+        for tag in [
+            "#c:plastics",
+            "#c:gears/gold",
+            "#industrialforegoing:machine_frame/pity",
+        ] {
+            assert!(
+                recipe.contains(tag),
+                "the factory's recipe does not name {tag}"
+            );
+        }
+        assert!(
+            recipe.contains("\"industrialforegoing:mob_slaughter_factory\""),
+            "the factory's recipe does not result in the machine"
+        );
+        // The pink slime block is the jar's `SlimeBlock`: slime template, 0.8 friction.
+        let slime = read("data/industrialforegoing/horizon/block/pink_slime_block.json");
+        for value in ["minecraft:slime_block", "\"friction\": 0.8"] {
+            assert!(slime.contains(value), "the pink slime block lacks {value}");
+        }
+        let nine = read("data/industrialforegoing/recipe/pink_slime.json");
+        assert!(
+            nine.contains("crafting_shapeless") && nine.contains("\"count\": 9"),
+            "nine pink slime come out of one pink slime block"
+        );
+        // The tags: `c:ingots/pink_slime` and `c:block/storage_blocks/pink_slime`.
+        assert!(
+            read("data/c/tags/item/ingots/pink_slime.json")
+                .contains("industrialforegoing:pink_slime_ingot")
+        );
+        assert!(
+            read("data/c/tags/block/storage_blocks/pink_slime.json")
+                .contains("industrialforegoing:pink_slime_block")
+        );
+        // The pickaxe entries.
+        let pickaxe = read("data/minecraft/tags/block/mineable/pickaxe.json");
+        for id in SLAUGHTER.iter().copied().chain(std::iter::once(PINK_BLOCK)) {
+            assert!(
+                pickaxe.contains(&format!("industrialforegoing:{id}")),
+                "{id} has requires_tool but no mineable/pickaxe entry"
+            );
+        }
+        // The chamber's only `outputFluid` recipe: 300 mB of pink slime in, 150 mB of water out.
+        let ball = read("data/industrialforegoing/recipe/dissolution_chamber/pink_slime_ball.json");
+        for value in [
+            "\"outputFluid\"",
+            "minecraft:water",
+            "\"amount\": 150",
+            "\"amount\": 300",
+            "industrialforegoing:pink_slime",
+            "\"processingTime\": 200",
+        ] {
+            assert!(
+                ball.contains(value),
+                "the pink slime ball recipe lacks {value}"
+            );
+        }
+        // The item group upstream puts the machine in.
+        assert!(
+            read("data/industrialforegoing/horizon/creative_tab/ag_hus.json")
+                .contains("industrialforegoing:mob_slaughter_factory"),
+            "the ag_hus item group does not list the factory"
+        );
     }
 
     #[test]

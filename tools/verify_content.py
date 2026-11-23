@@ -65,6 +65,10 @@ FLUID_RECIPES = 3
 FLUID_OUTPUTS = {"minecraft:lava", "industrialforegoing:ether_gas", "pneumaticcraft:oil"}
 BRAND_FLUIDS = {"industrialforegoing:latex", "industrialforegoing:pink_slime",
                 "industrialforegoing:ether_gas"}
+# Slice 9: the mob slaughter factory and the pink slime set.
+SLAUGHTER = ["mob_slaughter_factory"]
+PINK_ITEMS = ["pink_slime", "pink_slime_ingot"]
+PINK_BLOCK = "pink_slime_block"
 
 
 class Files:
@@ -168,6 +172,9 @@ def check(files: Files) -> list[str]:
         [f"{MOD}:{CHAMBER}"]
         + [f"{MOD}:{machine}" for machine in LATEX]
         + [f"{MOD}:{machine}" for machine in LASER]
+        + [f"{MOD}:{machine}" for machine in SLAUGHTER]
+        + [f"{MOD}:{PINK_BLOCK}"]
+        + [f"{MOD}:{item}" for item in PINK_ITEMS]
         + [f"{MOD}:{frame}" for frame in FRAMES]
         + [f"{MOD}:{item}" for item in PLAIN_ITEMS]
         + [f"{MOD}:{colour}_laser_lens" for colour in COLOURS]
@@ -252,8 +259,102 @@ def check(files: Files) -> list[str]:
             failures.append(f"{name} needs the fluid {fluid}, which the port does not declare")
         for key in ("outputFluid",):
             out = recipe.get(key)
-            if out and out.get("id", out.get("fluid")) not in brand_fluids:
-                failures.append(f"{name} {key} names an undeclared fluid")
+            if out:
+                fluid = out.get("id", out.get("fluid"))
+                # A recipe's *output* may be a vanilla fluid (the pink slime ball drains water);
+                # only what the tank is *filled* with has to be a key this port declares.
+                if fluid not in brand_fluids and namespace(fluid or "minecraft:x") != "minecraft":
+                    failures.append(f"{name} {key} names an undeclared fluid")
+
+    # Slice 9: the mob slaughter factory — declared, named, modelled, with a blockstate, a
+    # declaration, a loot table that drops it and a pickaxe entry; its shaped recipe names the
+    # package's tags and results in the machine.
+    for machine in SLAUGHTER:
+        item_id = f"{MOD}:{machine}"
+        if item_id not in blocks:
+            failures.append(f"the {machine} is not declared as a block")
+        for name in (
+            f"assets/{MOD}/blockstates/{machine}.json",
+            f"assets/{MOD}/models/block/{machine}.json",
+            f"assets/{MOD}/items/{machine}.json",
+            f"data/{MOD}/horizon/block/{machine}.json",
+        ):
+            if not files.has(name):
+                failures.append(f"the {machine} has no {name}")
+        loot = f"data/{MOD}/loot_table/blocks/{machine}.json"
+        if not files.has(loot):
+            failures.append(f"the {machine} has no loot table")
+        elif "\"type\": \"minecraft:survives_explosion\"" not in json.dumps(files.json(loot)):
+            failures.append(f"{loot} is not in 26.3's condition shape, so it drops nothing")
+        if item_id not in pickaxe_values(files):
+            failures.append(f"the {machine} has requires_tool but no mineable/pickaxe entry")
+    shaped = files.json(f"data/{MOD}/recipe/mob_slaughter_factory.json")
+    keys = set(shaped.get("key", {}).values())
+    for tag in ("#c:plastics", "#c:gears/gold", f"#{MOD}:machine_frame/pity"):
+        if tag not in keys:
+            failures.append(f"the mob slaughter factory recipe does not name {tag}")
+    if shaped.get("result", {}).get("id") != f"{MOD}:mob_slaughter_factory":
+        failures.append("the mob slaughter factory recipe does not result in the machine")
+
+    # The pink slime set: the block (declared, modelled, drops itself) and the two items, their
+    # recipes, the tags and the item group.
+    if f"{MOD}:{PINK_BLOCK}" not in blocks:
+        failures.append(f"{PINK_BLOCK} is not declared as a block")
+    for name in (
+        f"assets/{MOD}/blockstates/{PINK_BLOCK}.json",
+        f"data/{MOD}/horizon/block/{PINK_BLOCK}.json",
+        f"data/{MOD}/loot_table/blocks/{PINK_BLOCK}.json",
+        f"assets/{MOD}/models/item/{PINK_BLOCK}.json",
+    ):
+        if not files.has(name):
+            failures.append(f"the pink slime block has no {name}")
+    declaration = files.json(f"data/{MOD}/horizon/block/{PINK_BLOCK}.json")
+    if declaration.get("template") != "minecraft:slime_block":
+        failures.append("the pink slime block is not declared on the slime block template")
+    if declaration.get("properties", {}).get("friction") != 0.8:
+        failures.append("the pink slime block is not declared with the jar's 0.8 friction")
+    nine = files.json(f"data/{MOD}/recipe/pink_slime.json")
+    if nine.get("type") != "minecraft:crafting_shapeless":
+        failures.append("pink_slime.json is not shapeless")
+    if nine.get("result") != {"count": 9, "id": f"{MOD}:pink_slime"}:
+        failures.append("the pink slime block no longer gives nine pink slime")
+    if nine.get("ingredients") != [f"{MOD}:{PINK_BLOCK}"]:
+        failures.append("the nine pink slime recipe no longer takes the block")
+    packed = files.json(f"data/{MOD}/recipe/{PINK_BLOCK}.json")
+    if packed.get("result", {}).get("id") != f"{MOD}:{PINK_BLOCK}":
+        failures.append("the pink slime block recipe does not result in the block")
+    if set(packed.get("key", {}).values()) != {f"{MOD}:pink_slime"}:
+        failures.append("the pink slime block recipe is not nine pink slime")
+    for tag, value in (
+        ("data/c/tags/item/ingots/pink_slime.json", f"{MOD}:pink_slime_ingot"),
+        ("data/c/tags/block/storage_blocks/pink_slime.json", f"{MOD}:{PINK_BLOCK}"),
+    ):
+        if not files.has(tag):
+            failures.append(f"the pink slime set has no {tag}")
+        elif value not in files.json(tag).get("values", []):
+            failures.append(f"{tag} does not name {value}")
+    table = f"data/{MOD}/horizon/creative_tab/ag_hus.json"
+    if not files.has(table):
+        failures.append("the mob slaughter factory has no item group (ag_hus)")
+    elif f"{MOD}:mob_slaughter_factory" not in files.json(table).get("items", []):
+        failures.append("the ag_hus item group does not list the machine")
+
+    # The chamber's own `outputFluid` path: the jar's only such recipe is the pink slime ball.
+    ball = files.json(f"data/{MOD}/recipe/dissolution_chamber/pink_slime_ball.json")
+    if balls := ball.get("outputFluid"):
+        if balls.get("id") != "minecraft:water" or balls.get("amount") != 150:
+            failures.append("the pink slime ball no longer drains 150 mB of water")
+    else:
+        failures.append("the pink slime ball lost its outputFluid, the only one carried")
+    if ball.get("inputFluid", {}).get("fluid") != f"{MOD}:pink_slime":
+        failures.append("the pink slime ball does not take this mod's pink slime")
+    if ball.get("processingTime") != 200:
+        failures.append("the pink slime ball is not the jar's 200-tick recipe")
+    ingot = files.json(f"data/{MOD}/recipe/dissolution_chamber/pink_slime_ingot.json")
+    if ingot.get("output", {}).get("id") != f"{MOD}:pink_slime_ingot":
+        failures.append("the pink slime ingot recipe does not result in the ingot")
+    if ingot.get("inputFluid", {}).get("amount") != 1000:
+        failures.append("the pink slime ingot recipe is not the jar's 1,000 mB")
 
     # The latex chain: both machines declared, named, modelled, with a blockstate and a loot
     # table that drops them; the plastic's smelting recipe names a shipped item; and the
@@ -500,6 +601,35 @@ def selftest() -> int:
                 f"data/{MOD}/advancement/laser_drill_ore/raw_materials/iron.json":
                     lambda value: value
                     | {"neoforge:conditions": [{"type": "neoforge:tag_empty"}]}
+            },
+        ),
+        ("the slaughter factory's declaration",
+         f"data/{MOD}/horizon/block/mob_slaughter_factory.json", {}),
+        ("the pink slime ingot tag", "data/c/tags/item/ingots/pink_slime.json", {}),
+        (
+            "the pink slime block's eight-for-one",
+            None,
+            {
+                f"data/{MOD}/recipe/pink_slime.json":
+                    lambda value: value
+                    | {"result": {"count": 8, "id": f"{MOD}:pink_slime"}}
+            },
+        ),
+        (
+            "the pink slime ball's outputFluid",
+            None,
+            {
+                f"data/{MOD}/recipe/dissolution_chamber/pink_slime_ball.json":
+                    lambda value: {k: v for k, v in value.items() if k != "outputFluid"}
+            },
+        ),
+        (
+            "the pink slime block's friction",
+            None,
+            {
+                f"data/{MOD}/horizon/block/pink_slime_block.json":
+                    lambda value: value
+                    | {"properties": {"friction": 0.6, "occludes": False}}
             },
         ),
     ]
