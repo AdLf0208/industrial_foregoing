@@ -1,0 +1,20 @@
+{
+  "category": "misc",
+  "key": {
+    "B": "minecraft:bucket",
+    "G": "#c:gears/gold",
+    "M": "#industrialforegoing:machine_frame/pity",
+    "P": "#c:plastics",
+    "S": "minecraft:shears"
+  },
+  "pattern": [
+    "PPP",
+    "SBS",
+    "GMG"
+  ],
+  "result": {
+    "count": 1,
+    "id": "industrialforegoing:animal_rancher"
+  },
+  "type": "minecraft:crafting_shaped"
+}

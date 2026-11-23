@@ -163,6 +163,18 @@ CASES = [
         ],
     ),
     (
+        "the animal rancher (PPP/SBS/GMG, #c:plastics + a bucket, shears, a gold gear and a pity frame)",
+        "industrialforegoing:animal_rancher",
+        1,
+        [
+            ("industrialforegoing:plastic", 3, ["100", "101", "102"]),
+            ("minecraft:shears", 2, ["103", "105"]),
+            ("minecraft:bucket", 1, ["104"]),
+            ("industrialforegoing:gold_gear", 2, ["106", "108"]),
+            ("industrialforegoing:machine_frame_pity", 1, ["107"]),
+        ],
+    ),
+    (
         "the pink slime block from nine pink slime",
         "industrialforegoing:pink_slime_block",
         1,
@@ -241,21 +253,26 @@ def main():
         wait(6)
 
     def place(item, count, cells):
-        """Put `item` into `cells`: one per cell, or the whole stack when it is
-        a single item (a bucket, a frame, a redstone block)."""
-        targets = cells
-        source = find(item)
-        run("click-slot", str(source))
-        wait(1)
-        if len(targets) == 1 and count == 1:
-            run("click-slot", targets[0])
+        """Put `item` into `cells`, one per cell.
+
+        A source stack is picked up **per cell**: an item that does not stack (shears, a bucket)
+        arrives as several one-item stacks, and picking the same slot for both cells would leave
+        the second one in the inventory (measured by the animal rancher's `PPP/SBS/GMG`, whose two
+        shears are two stacks). A stackable item's single stack is picked once and returned after
+        each cell, which is the same sequence the earlier recipes used.
+        """
+        for target in cells:
+            source = find(item)
+            run("click-slot", str(source))
             wait(1)
-        else:
-            for target in targets:
+            if len(cells) == 1 and count == 1:
+                run("click-slot", target)
+                wait(1)
+            else:
                 run("click-slot", target, "right")
                 wait(1)
-        run("click-slot", str(source))
-        wait(2)
+            run("click-slot", str(source))
+            wait(2)
 
     def setup(ingredients):
         try:

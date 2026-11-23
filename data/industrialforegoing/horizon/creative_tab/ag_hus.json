@@ -1,6 +1,7 @@
 {
   "icon": "industrialforegoing:mob_slaughter_factory",
   "items": [
+    "industrialforegoing:animal_rancher",
     "industrialforegoing:mob_crusher",
     "industrialforegoing:mob_duplicator",
     "industrialforegoing:mob_imprisonment_tool",

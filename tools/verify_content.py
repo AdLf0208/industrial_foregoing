@@ -71,6 +71,8 @@ SLAUGHTER = ["mob_slaughter_factory"]
 CRUSHER = ["mob_crusher"]
 # Slice 12: the mob duplicator and the Mob Imprisonment Tool that feeds it.
 DUPLICATOR = ["mob_duplicator"]
+# Slice 13: the animal rancher (four-way block, its tank, its 15-slot output).
+ANIMAL = ["animal_rancher"]
 TOOL = "mob_imprisonment_tool"
 PINK_ITEMS = ["pink_slime", "pink_slime_ingot"]
 PINK_BLOCK = "pink_slime_block"
@@ -180,6 +182,7 @@ def check(files: Files) -> list[str]:
         + [f"{MOD}:{machine}" for machine in SLAUGHTER]
         + [f"{MOD}:{machine}" for machine in CRUSHER]
         + [f"{MOD}:{machine}" for machine in DUPLICATOR]
+        + [f"{MOD}:{machine}" for machine in ANIMAL]
         + [f"{MOD}:{TOOL}"]
         + [f"{MOD}:{PINK_BLOCK}"]
         + [f"{MOD}:{item}" for item in PINK_ITEMS]
@@ -277,7 +280,7 @@ def check(files: Files) -> list[str]:
     # Slice 9: the mob slaughter factory — declared, named, modelled, with a blockstate, a
     # declaration, a loot table that drops it and a pickaxe entry; its shaped recipe names the
     # package's tags and results in the machine.
-    for machine in SLAUGHTER + CRUSHER:
+    for machine in SLAUGHTER + CRUSHER + ANIMAL:
         item_id = f"{MOD}:{machine}"
         if item_id not in blocks:
             failures.append(f"the {machine} is not declared as a block")
@@ -368,6 +371,34 @@ def check(files: Files) -> list[str]:
     for wanted in (f"{MOD}:{DUPLICATOR[0]}", f"{MOD}:{TOOL}"):
         if wanted not in files.json(tab).get("items", []):
             failures.append(f"the ag_hus item group does not list {wanted}")
+
+    # Slice 13: the animal rancher — the jar's PPP/SBS/GMG recipe, the four `subfacing` values its
+    # RotationType.FOUR_WAY blockstate selects on, the iron-block template and the tab.
+    rancher = files.json(f"data/{MOD}/horizon/block/{ANIMAL[0]}.json")
+    properties = rancher.get("state_properties", {}).get("subfacing", {})
+    if sorted(properties.get("values", [])) != ["east", "north", "south", "west"]:
+        failures.append("the animal rancher's declaration does not carry the four subfacing values")
+    if rancher.get("template") != "minecraft:iron_block":
+        failures.append("the animal rancher is not declared on the iron block template")
+    blockstate = files.json(f"assets/{MOD}/blockstates/{ANIMAL[0]}.json")
+    for facing in ("east", "north", "south", "west"):
+        if f"subfacing={facing}" not in blockstate.get("variants", {}):
+            failures.append(f"the animal rancher's blockstate has no subfacing={facing} variant")
+    recipe = files.json(f"data/{MOD}/recipe/{ANIMAL[0]}.json")
+    if recipe.get("pattern") != ["PPP", "SBS", "GMG"]:
+        failures.append("the animal rancher recipe is not the jar's PPP/SBS/GMG")
+    if set(recipe.get("key", {}).values()) != {
+        "#c:plastics",
+        "minecraft:bucket",
+        "minecraft:shears",
+        "#c:gears/gold",
+        f"#{MOD}:machine_frame/pity",
+    }:
+        failures.append("the animal rancher recipe does not take plastic, a bucket, shears, a gold gear and a pity frame")
+    if recipe.get("result", {}).get("id") != f"{MOD}:{ANIMAL[0]}":
+        failures.append("the animal rancher recipe does not result in the machine")
+    if f"{MOD}:{ANIMAL[0]}" not in files.json(f"data/{MOD}/horizon/creative_tab/ag_hus.json").get("items", []):
+        failures.append("the ag_hus item group does not list the animal rancher")
 
     # The pink slime set: the block (declared, modelled, drops itself) and the two items, their
     # recipes, the tags and the item group.
@@ -715,6 +746,22 @@ def selftest() -> int:
             },
         ),
         ("the mob duplicator's blacklist", f"data/{MOD}/tags/entity_type/mob_duplicator_blacklist.json", {}),
+        (
+            "the animal rancher's pattern",
+            None,
+            {
+                f"data/{MOD}/recipe/{ANIMAL[0]}.json":
+                    lambda value: value | {"pattern": ["PPP", "PPP", "PPP"]}
+            },
+        ),
+        (
+            "the animal rancher's subfacing",
+            None,
+            {
+                f"data/{MOD}/horizon/block/{ANIMAL[0]}.json":
+                    lambda value: value | {"state_properties": {}}
+            },
+        ),
         ("the pink slime ingot tag", "data/c/tags/item/ingots/pink_slime.json", {}),
         (
             "the pink slime block's eight-for-one",

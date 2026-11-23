@@ -50,7 +50,10 @@ no packed file changed but the version string — and closes deviation 37 for th
 arms. slice 12 (0.2.11, 2026-11-23) adds the **Mob Duplicator and the Mob Imprisonment Tool**: the
 first consumer of `industrialforegoing:essence`, a 62-tick bar, a 50,000 FE buffer, an 8,000 mB
 fill-only tank, a one-slot tool input and `Host::summon`; the tool captures/releases a mob and is the
-parent item a future add-on can bind to. The gap list at the end is the rest of the mod.
+parent item a future add-on can bind to. slice 13 (0.2.12, 2026-11-23) is the **Animal Rancher**, the
+first of the animal machines: a 100-tick bar, a 10,000 FE buffer at 400 FE an operation, an 8,000 mB
+milk tank, a 15-slot output container and a **single-block** working area — a sheep's wool, a cow's or
+goat's milk and a squid's dye. The gap list at the end is the rest of the mod.
 
 **Why this mod now:** it is the rank-0 `content`/`machines` core mod
 `precheck-mod.py industrialforegoing` offers (`DISPATCHABLE`, jar licence MIT,
@@ -2363,9 +2366,265 @@ The evidence is `evidence/industrialforegoing/addon-recheck-slice12.log`. Neithe
 tool is a parent item for a future add-on, not the surface these two were waiting on.
 
 
+
+## Slice 13 — the Animal Rancher (0.2.12, 2026-11-23)
+
+**The slice: gap 9's remaining families** — slice 12's closing line reads *"The remaining families
+(the animal machines, the generators, the conveyors, the GUI) are the next slices"* — and it is the
+first of the four animal machines. Tier **machines** (ledger): one block entity, a **single-block**
+working area, a 10,000 FE buffer, an 8,000 mB tank, a 15-slot output container, a server tick and an
+entity scan; no renderer, no dimension work, no recipe type.
+
+### Upstream (jar `industrial-foregoing-1.21-3.6.39.jar`; source `Buuz135/Industrial-Foregoing`
+### `ce2852db`, clone deleted after the findings)
+
+`AnimalRancherConfig` — the **values**, not the comments beside them (both agree here, unlike the
+crusher's, the chamber's and the duplicator's):
+
+| key | value | the comment beside it |
+|---|---:|---|
+| `maxProgress` | **100** | 100 |
+| `powerPerOperation` | **400** | 400 |
+| `maxStoredPower` | **10,000** | 10,000 |
+| `maxTankSize` | **8,000** | 8,000 |
+
+`AnimalRancherBlock`: `Properties.ofFullCopy(IRON_BLOCK)`, **`RotationType.FOUR_WAY`** (so it *does*
+have `subfacing` — the duplicator's slice had none), `TAB_AG_HUS`; recipe `PPP/SBS/GMG` from
+`#c:plastics`, shears, a bucket, `#c:gears/gold` and `machine_frame/pity`.
+
+`AnimalRancherTile extends IndustrialAreaWorkingTile(BEHIND, acceptsRangeUpgrades = true, 400)`:
+a bar counting **down** from 100, `SidedFluidTankComponent("fluid_output", 8000, …, 0)` with **no**
+`setTankAction` (Titanium's default is `Action.BOTH`, read from `javap` on
+`FluidTankComponent.<init>`), `SidedInventoryComponent("output", …, 5 * 3, 1)` — **15 slots**, no
+filters, and Titanium's `SidedInventoryComponent` defaults every side to `FaceMode.ENABLED` with an
+accept-all insert/extract predicate. `getWorkingArea()` is **not overridden**: `RangeManager(BEHIND)`
+is the **single block behind** the machine, unlike the crusher's `expandTowards(0, 2, 0)`. At zero,
+with `hasEnergy(400)` wrapping the whole loop:
+
+1. `mob instanceof IShearable && isShearable(…)` → `onSheared(…)` → the stacks into the output, and
+   `WorkAction(0.35, 400)`;
+2. `mob instanceof Squid && !isInventoryFull(output) && nextBoolean() × 4` → one black dye, same
+   action;
+3. `mob instanceof Animal && tank.amount + 1000 <= 8000` → a **fresh bucket** in a fake player's hand,
+   `mobInteract`, the milk bucket `fillForced` into the tank, the hand emptied, same action;
+4. nothing answered → `WorkAction(1, 0)`: **no** FE, the bar back to 100.
+
+`IndustrialWorkingTile.onFinishWork` extracts the action's energy **after** `work()` (400 on a
+success, 0 otherwise), sets `maxProgress = floor(100 × efficiency)` and
+`progress = (int)(maxProgress × workAmount)`; `onTickWork` sets `progressIncrease` from the speed
+addon (visible from the second tick).
+
+### The brief's assertion, corrected from the artefact (again)
+
+The brief asked for "an empty bucket in its input … a **milk bucket** appears, the empty bucket is
+consumed". **There is no input slot and no milk-bucket item**: the tile makes its own
+`new ItemStack(Items.BUCKET)` in a **fake player's hand**, calls the animal's `mobInteract`, drains the
+resulting bucket into its **8,000 mB tank** and empties the hand. The in-game assertion is therefore
+the tank's **1,000 mB of milk** and the 400 FE, not an item in a slot. The sheep arm does produce an
+item, in the **output container** — which is the brief's "a sheep in the same box yields wool".
+
+### The milk fluid, and why it is not `minecraft:milk`
+
+26.3's fluid registry has **three** entries — `minecraft:empty`, `:water`, `:lava` (measured in
+`~/.local/horizon-client/26.3/registries.json`); NeoForge's `minecraft:milk` does not exist at this
+pin. The port declares **`industrialforegoing:milk`** (`Registrar::declare_fluid`, the same route as
+`latex`/`essence`) and fills its tank with it. Deviation 61: the fluid **id** differs from the Java
+pack's; the behaviour (a tank of milk per milking) does not.
+
+### TDD, in order
+
+1. **Red** (`src/rancher.rs` and `src/animalrancher.rs` bodies at `todo!()`;
+   `evidence/industrialforegoing/sdk-test-red-slice13.log`): **206 passed, 15 failed**, every failure
+   `panicked at src/rancher.rs: not yet implemented` — e.g.
+   `rancher::tests::a_cow_fills_the_tank_with_a_thousand_mb_for_four_hundred_fe`,
+   `rancher::tests::the_squid_needs_a_free_slot_and_all_four_draws`,
+   `rancher::tests::without_four_hundred_fe_no_arm_runs`; then the content test caught the new id
+   before the test's list learned it (`…declares … and nothing else`, left `animal_rancher`).
+2. The rules (`src/rancher.rs`, a ninth pure module — `runtime.rs` stays byte-identical, which
+   `verify-sdk-package.py` checks): the four constants, `Wool` (16 colours → their wool items),
+   `anatomy` (the arm each type id answers, with `isShearable`'s `!isSheared() && !isBaby()`),
+   `Draws`, `Step`, `Rancher` (energy, bar, tank + milk flag, `increase`, `fill_milk`), `bar_length`,
+   `rest`, `wool_count`, `tick`. 15 tests.
+3. The glue (`src/animalrancher.rs`): the declarations, the tick, the working area, the anatomy read
+   (kind id, baby, the sheep's `Sheared`/`Color` from `entity_nbt`), the shearing write
+   (`entity_merge_nbt`), the wool and dye inserts, the milk fill, the readout, the saved compound,
+   the drop and the pinned draws. 10 glue tests.
+4. Green: **232 passed, 0 failed** (`sdk-test.log`), clippy 0, `fmt --check` clean.
+5. Content: `tools/assemble_rancher.py` (14 files, `--check` identical), the rancher's recipe in
+   `tools/craft_recipe.py`, the family's checks and two selftest mutations in
+   `tools/verify_content.py` (`CONTENT OK: 433 content files`, `selftest: OK`).
+
+### In game, phases CZ–DG (`evidence/industrialforegoing-e2e/e2e-launcher-slice13.log`)
+
+| phase | what it asserts | the value it read |
+|---|---|---|
+| CZ | the rancher places from its item, faces its placer, and is empty | `facing west`, `0/8000 mB`, `0 FE`, `animals 0`, `output empty`, bar `97/100` |
+| DA | **a cow in the block behind is milked**: 1,000 mB for 400 FE | `tank industrialforegoing:milk 1000/8000 mB`, `capability industrialforegoing:milk 1000 mB`, `4600/10000 FE`, bar rested `33` |
+| DB | **a red sheep is sheared**: 1 wool of its colour (pinned `nextInt(3)` = 0), left `Sheared: 1b` | `output 1x minecraft:red_wool`, `4600 FE`, `sheep 0`; `Sheep has the following entity data: 1b`; the same box again: no wool, `5000 FE` |
+| DC | **counterfactual, no animal**: nothing produced, nothing spent | `5000 FE`, `output empty`, `animals 0`, bar back to `93` (full rest) |
+| DD | **counterfactual, 399 FE**: the cow stays and nothing happens | `399 FE`, `tank 1000 mB` (unchanged), `milkable 1`, bar `92` |
+| DE | the squid's two gates: a **full** 15-slot output refuses, four **failing** draws refuse, four passing draws give one dye | `no dye, 5000 FE`; `output empty, 5000 FE`; `1x minecraft:black_dye, 4600 FE` |
+| DF | the milk tank drains through the declared capability | `drained 1000 mB of industrialforegoing:milk.`; then `tank empty 0/8000` |
+| DG | a broken rancher carries its buffer and tank; its output drops beside it | `drops{animal_rancher:1, red_wool:2}`; the item's `block_entity_data` `{energy: 4600, fluids: [{Amount: 1000, Fluid: "industrialforegoing:milk"}]}` |
+
+The transcript's own lines:
+
+```
+== DA: a cow in the block behind fills the tank with 1,000 mB of milk for 400 FE ==
+  Animal Rancher at [300, 101, 0]: 5000/10000 FE, tank empty 0/8000 mB, capability empty 0 mB, animals 1 (sheep 0, milkable 1, squid 0), output empty, progress 88/100, facing west, augments speed 1 efficiency 1.00, t=9426
+  Animal Rancher at [300, 101, 0]: 4600/10000 FE, tank industrialforegoing:milk 1000/8000 mB, capability industrialforegoing:milk 1000 mB, animals 1 (sheep 0, milkable 1, squid 0), output empty, progress 33/100, facing west, augments speed 1 efficiency 1.00, t=9440
+  a cow: 1000 mB of industrialforegoing:milk, 4600 FE, bar 33/100
+== DB: a sheep in the same box gives 1-3 wool of its colour and is left bare ==
+  Animal Rancher at [300, 101, 0]: 4600/10000 FE, tank industrialforegoing:milk 1000/8000 mB, capability industrialforegoing:milk 1000 mB, animals 0 (sheep 0, milkable 0, squid 0), output 1x minecraft:red_wool, progress 31/100, facing west, augments speed 1 efficiency 1.00, t=9502
+  a red sheep: 1x minecraft:red_wool, 4600 FE, sheep left to shear 0
+  the sheep's own data: Sheep has the following entity data: 1b
+  the bare sheep again: no wool, no FE, bar 97/100
+== DE: a squid's dye needs a free slot and its four draws ==
+  a full output: no dye, 5000 FE
+  a squid: 1x minecraft:black_dye, 4600 FE
+== DF: the milk tank drains through the declared capability ==
+  Animal Rancher at [300, 101, 0]: drained 1000 mB of industrialforegoing:milk.
+  the tank after the drain is 0 mB, empty
+== DG: a broken rancher carries its buffer and tank, and its output drops beside it ==
+  break: {"block":"minecraft:air","drops":{"industrialforegoing:animal_rancher":1,"minecraft:red_wool":2},"picked_up":{}}
+  carried item: Player10554 has the following entity data: {components: {"minecraft:block_entity_data": {progress: 24, id: "industrialforegoing:animal_rancher", energy: 4600, fluids: [{Amount: 1000, Fluid: "industrialforegoing:milk"}]}}, count: 1, id: "industrialforegoing:animal_rancher"}
+  the item carries 4600 FE and 1000 mB of milk
+PASS: … and the animal rancher: placed facing its placer it is empty with its working area the single block behind it, a cow there fills its 8,000 mB tank with 1,000 mB of industrialforegoing:milk and the declared capability reports it, for exactly 400 FE; a red sheep there gives one wool of its colour into the 15-slot output (the pinned nextInt(3) of 0) and is left with Sheared: 1b, so the same box again produces nothing and spends nothing; an empty box spends nothing and rests the bar full; 399 FE refuses a cow it could otherwise milk; a squid's black dye needs a free output slot, four passing draws and 400 FE (a full container and four failing draws each refuse it); the tank drains 1,000 mB of milk through the declared capability; and a broken rancher's item carries its buffer and tank while its output drops beside it; and the Animal Rancher crafts from #c:plastics, a bucket, shears, #c:gears/gold and machine_frame/pity
+EXIT:0
+```
+
+**Fail-capable, four ways, all `EXIT:1`:** the control leg (the same Nightly without the package)
+stops at its first `give` (`FAIL: the machine item did not register`); `SELFTEST=1` flips B
+(`FAIL: the water is 200, expected 201`); **`SELFTEST=rancher`** flips DA's milk by one mB
+(`FAIL: the milk one milking gives is 1000, expected 1001`); and phases DC, DD and DE are in-run
+counterfactuals (no animal, 399 FE, a full container, four failing draws).
+`check-e2e-logs.py industrialforegoing-e2e --strict` reads **24/24**.
+
+**Harness facts this slice added** (each cost a run):
+
+- **`craft_recipe.py` could not place two of a non-stackable item.** `give shears 2` is **two
+  one-item stacks**; the tool picked one source slot, right-clicked both cells, and the second
+  shears stayed in the inventory — the rancher's `PPP/SBS/GMG` was the first recipe to name two
+  shears. `place` now picks a source **per cell**, which leaves the stackable cases' sequence
+  unchanged.
+- **A pinned draw is spent by the next tick, not the next attempt.** The first run's sheep gave
+  **3** wool for `draws 0 0`: the glue called the draw every tick, so the pin was consumed while
+  the bar still fell. The tick now draws only when its fall reaches zero — and no longer burns the
+  level's own random stream on ticks that cannot work.
+- **A squid drowns on land.** The dye leg sums to ~60 ticks of fills and reads, more than an
+  out-of-water squid survives, so the 15-slot fill runs **before** the summon and the working cell
+  holds a water source for the three attempts (cleared again before the break leg).
+- **A transient early leg is not this slice's defect.** One run failed phase C (`the sources is 2,
+  expected 1`) before any of this slice's phases: the condensator counted B's second water source,
+  the known flow interference the slice-2 notes record. The next run was clean and the two after it
+  were too; the failure was not reproducible and touched no code this slice changed.
+
+### Coverage (families this slice adds)
+
+| family | coverage |
+|---|---|
+| `animal_rancher` (block + item) | `tested` — CZ places it from its item and reads it back; DG breaks it for its drop; K crafts it from its recipe |
+| the 100-tick bar, 400 FE an operation, the `floor(100 × 0.35)` rest | `tested` — DA/DB spend exactly 400 and rest at 30; DC/DD refuse without spending; the arithmetic is `rancher::Rancher::tick` |
+| the **single-block** working area (`RangeManager(BEHIND)`, not expanded) | `tested` — a cow in the cell east of a west-facing machine is `milkable 1`; the unit test pins the box and that a machine without a facing has none |
+| the sheep's shearing (`Sheared`/`Color` → wool) | `tested` — DB: one red wool from `Color:14b`, `Sheared: 1b` after, and the same box again produces nothing |
+| the 16 wool colours | `unit-tested` (`the_sixteen_colours_are_vanilla_s_dye_order`, `a_sheep_gives_one_two_or_three_wool_of_its_colour`); red in game |
+| the cow's and goat's milking | `tested` — DA (cow) at 1,000 mB; the goat shares the arm by type id (`the_arms_are_the_ones_the_jar_names`) |
+| `isShearable`'s `!isBaby()`, `mobInteract`'s `!isBaby()` | `unit-tested` (`the_arms_are_the_ones_the_jar_names`) |
+| the 8,000 mB milk tank, Titanium's default `Action.BOTH` | `tested` — DA/DE/DG read it through the entity and the declared capability; DF drains 1,000 mB through that capability; the "foreign fluid" refusal is unit-tested |
+| the 15-slot output container, both ways | `tested` — DB writes it from the machine, DE fills all 15 through `/item replace` (the free-slot gate) and DG drops its 2 wool |
+| the squid's dye and its two gates | `tested` — DE: a full container refuses, four failing draws refuse, four passing draws give one dye for 400 FE |
+| the FE buffer as a capability | `tested` — DA/DB/DE spend it; `/industrialforegoing energy` writes it |
+| the machine's item carrying its contents | `tested` — DG: `energy: 4600`, `Amount: 1000`, and the wool dropped beside the block |
+| the carried recipe (`PPP/SBS/GMG`) | `tested` — phase K crafts it and consumes every ingredient (two shears included) |
+| the carried advancement | `carried, not exercised` — it loads (no refused file) and unlocks nothing a command exposes |
+| the augments (speed, efficiency) | `ported, not exercised in this machine` — the two saved slots and the seating path are the condensator's (phases M–Q); the arithmetic is unit-tested (`a_speed_augment_falls_the_bar_four_a_tick`, `an_efficiency_augment_shortens_the_bar_and_its_rest`) |
+| the mooshroom, snow golem and bogged shears | `blocked(no-pin-shearable)` — see deviation 62 |
+| the range addons (the area stays one block) | `not ported` — `range_addon_*` is another family (gap 9) |
+| a GUI screen, redstone modes, a comparator, the config file | `not ported` — gaps 1, 2, 7, 8 |
+
+### Deviations and gaps this slice adds
+
+61. **The milk tank's fluid is `industrialforegoing:milk`, not `minecraft:milk`.** 26.3's fluid
+    registry has three entries (`minecraft:empty`, `:water`, `:lava`, measured in the prepared
+    root's `registries.json`); NeoForge's `minecraft:milk`, which the jar's bucket interaction
+    drains, does not exist here. The port declares its own key (as `latex`/`essence` are declared);
+    a user notices a tank of this package's milk rather than of the Java pack's.
+62. **Only the sheep's shear arm is ported.** Upstream reaches four vanilla `Shearable`s through the
+    fake player's shears; the pin has neither the `Shearable` interface nor a shear call, and each
+    of the other three shears is an entity-specific conversion rather than a drop list (a mooshroom
+    into mushrooms and a cow, a snow golem's pumpkin, a bogged's mushrooms). The mooshroom is **not**
+    routed to the milk arm either, because upstream would shear it first (`the_arms_are_the_ones_the_jar_names`).
+    A user notices that a mooshroom or a snow golem in the box does nothing.
+63. **The two draws are made once per attempt.** The jar draws `nextInt(3)` inside the shearing arm
+    and the four booleans inside the squid's, so a machine with both would consume a different
+    number of the level's values. Nothing fixes the position of a shared stream, and drawing once at
+    the attempt is what `/industrialforegoing draws` can pin; recorded, not faked.
+64. **The sheep's `Sheared` is written through the entity's saved data.** There is no `setSheared` at
+    the pin, so the port merges `Sheared: 1b` with `entity_merge_nbt` (the `/data merge entity`
+    path); the entity reloads from that data, so its synced state and its next `isShearable` both
+    read bare. The wool's colour comes from the same compound's `Color`.
+65. **The speed addon falls the bar from the first tick.** Titanium sets `progressIncrease` in
+    `onTickWork`, which runs after the bar's own `setProgress`, so its first tick after seating a
+    speed addon falls 1. The port falls by the addon from the first tick — the model this port's
+    condensator has used since slice 1 (one tick at 20 TPS).
+66. **The tank is written through the compound and drained through the capability.** The pin's
+    `native_fluid_insert` refuses a mod fluid (the chamber's measured route, slice 5's deviation 19),
+    so nothing fills this tank but the machine's own milking and `/industrialforegoing milk`; a
+    foreign fluid in it blocks the milking arm exactly because a NeoForge tank holds one fluid
+    (`the_tank_holds_milk_and_a_foreign_fluid_blocks_a_fill`).
+67. **The processing addon is not ported** (gap 3b, the same as the other machines), so one
+    operation a cycle.
+67b. **The tick only rewrites a tank this machine filled.** The jar's tank is a NeoForge tank that
+    holds one fluid; the port writes the `fluids` compound only when the milking changed it, so a
+    fluid a pipe put there keeps its own id instead of being rewritten as milk (or, on the clamp
+    path, as water).
+68. **This machine's own augment seating is not in its e2e.** The path (`use_item_on` →
+    `level_tick_post`) and the arithmetic are the condensator's (phases M–Q) and this module's tests;
+    no phase of CZ–DG seats an addon in the rancher — the same recorded position as the chamber, the
+    latex unit and the duplicator.
+
+### The package (0.2.12)
+
+| | |
+|---|---|
+| version | `0.2.12` |
+| pin | `native-mod`, format `native-1/0a875da…/e59da90…`, for 26.3 |
+| size | **390,790 B**, 457 entries (961,991 B unpacked), no packed `Cargo.lock` |
+| SHA-256 | `28eef176332c277538d8fc5d23bf60aac8eb226407b6a5895cfa47cbd9618826` (two clean-lock builds `cmp`-identical) |
+| `check` | `industrialforegoing 0.2.12 (native-mod, format …)`, exit 0 |
+| `fits` | `0a875da  made for`, `0b14f8a  fits`, both exit 0 |
+| `check-recipe-types` | `industrialforegoing: ok` |
+| runtime | `src/runtime.rs` packed = tree, `83ae3b11…` |
+| launcher | `Compiling industrialforegoing (1 of 1)`, `native-0a875da-cf2a427bb411`, exported `"version":"0.2.12"` |
+| gate | `verify-sdk-package.py industrialforegoing` **1/1** |
+| tests | 232 (was 206; +26: fifteen rules in `src/rancher.rs`, ten glue tests in `src/animalrancher.rs`, one content test) |
+
+### The changelog for the 0.2.12 update
+
+> Updates the entry this campaign already has (retaining its open PR). **New: the Animal Rancher** —
+> the first of the animal machines. A 100-tick bar, a 10,000 FE buffer at 400 FE an operation, an
+> 8,000 mB milk tank (Titanium's default both-ways tank) and a 15-slot output container, working on
+> the **single block behind** the machine and resting at 35 ticks after a success. At zero it takes
+> the first of three arms: a **sheep** is sheared for 1-3 wool of its colour (its `Sheared`/`Color`
+> read from its saved data, `Sheared: 1b` written back), a **cow** or a **goat** fills the tank with
+> 1,000 mB of milk, and a **squid** gives a black dye on its four draws when the output has a free
+> slot. The jar's shearing is a fake player's shears and its milking a bucket in that player's hand;
+> the pin has neither, so the port performs the same effects itself, and the milk's fluid is
+> `industrialforegoing:milk` because 26.3 has no milk fluid. Both ships with its shaped recipe
+> (`PPP/SBS/GMG` from `#c:plastics`, a bucket, shears, `#c:gears/gold` and `machine_frame/pity`), its
+> name, model, loot, pickaxe entry and the Agriculture & Husbandry tab. Proven in game: a cow in the
+> working block fills the tank with 1,000 mB for exactly 400 FE, a red sheep gives one wool and is
+> left bare (the same box then produces nothing), an empty box and 399 FE each produce nothing, a
+> full output and four failing draws each refuse the squid's dye while four passing draws give it, the
+> tank drains 1,000 mB through the declared capability, and a broken rancher's item carries 4,600 FE
+> and 1,000 mB while its two wool drop beside it. `src/runtime.rs` is unchanged, byte for byte;
+> `src/rancher.rs` is a ninth pure module. The remaining families (the other animal machines, the
+> generators, the conveyors, the GUI) are the next slices.
+
+
 ## Skills
 
-Skills: superpowers/using-superpowers,brainstorming,writing-plans,test-driven-development,systematic-debugging,verification-before-completion; BeautifulRust/rust-best-practices,rust-review (slice 12: `brainstorming` to take the duplicator from gap 9 and weigh the brief's "place it facing its placer" against the jar's state-free block (`MobDuplicatorBlock` has no `getRotationType`; the generated blockstate is `""`), `writing-plans` for SLICE-12-PLAN.md, `test-driven-development` for the twelve red rules and eight red glue tests (`192 passed, 14 failed`, every one `not yet implemented`) and then the in-game assertion before it was trusted, `systematic-debugging` for the four harness gates this slice cost (the 24-entity cramming limit that killed the cap counterfactual's own cows, a broken item picked into the main inventory, `ctl place --item` reaching the wrong stack, and a machine that spent its buffer during the break setup — 4,999 FE keeps it idle), and `verification-before-completion` before every claim; `rust-best-practices` for the eighth pure module, `Host::summon`, the tool's component and the item parts, `rust-review` for the after-the-fact audit of `src/duplicator.rs` and `src/mobduplicator.rs` — it shaped the pure/glue split (the random draw is an input, not a host call in the rules), the `Attempt`/`Step` types, and the no-`unwrap` saved-compound reads; slice 11: `brainstorming` to take the crusher from gap 9 and weigh the brief's per-health essence against the jar's `experience * 20`, `writing-plans` for SLICE-11-PLAN.md, `test-driven-development` for the ten red rules and the red glue/declaration tests (`173 passed, 13 failed`, every one `not yet implemented`) and then the in-game assertion before it was trusted, `systematic-debugging` for the two in-game gates this slice cost (the launcher's build lock held by another port, and the launcher's reuse of a same-version build — four `native-*` tags were removed before the rebuild) and for the creative-mode break flake in phase L, `verification-before-completion` before every claim; `rust-best-practices` for the seventh pure module, the fake-player kill and the two harvest hooks, `rust-review` for the after-the-fact audit of `src/mobcrusher.rs` and `src/crusher.rs` — it weighed clippy's `question_mark` finding on the first run, the `Candidate::blacklisted` field the pure filter correctly ignores, and the `Gain` type's needless `Copy`-by-hash (replaced with an owned dimension string); `rust-review`'s rules also shaped the code: no `unwrap` outside tests, an enum for the two kill paths (`AttackPath`) instead of a bool, and the harvest statics kept behind one module so no other machine can read them; slice 10: `brainstorming` to take the Nether leg from deviation 37 and weigh the brief's depth-0 counterfactual against the dimension arm the recipe actually names, `writing-plans` for SLICE-10-PLAN.md, `test-driven-development` for the in-game assertion written before the package was rebuilt — its red is `SELFTEST=nether`, because the family itself shipped in 0.2.8 — `systematic-debugging` for the harness flakes that cost four runs (`wait-ready` returning while the client still said "Loading terrain...", the game's `[CHAT]` log stopping while `ctl messages` answered, and a `ctl wait` loop exhausting itself before the server ticked), and `verification-before-completion` before recording; `rust-best-practices` loaded and the ladder run, no Rust change: 0.2.10 differs from 0.2.9 only in the version string; `rust-review`: none (no Rust diff); slice 9: `brainstorming` to choose the factory from deviations 19 and 21 and weigh the brief's "FE still spent" against `SlaughterFactoryTile.work()`, `writing-plans` for SLICE-9-PLAN.md, `test-driven-development` for the eight red rules and nine red glue tests (`149 passed, 17 failed`, every one `not yet implemented`), `systematic-debugging` for the chamber that stopped advancing its bar (seven probes in clean worlds, all green; the quirk and the padding fix are recorded in the slice 9 section) and for the two craft-script defects the game found (a stack of two `stacksTo(1)` items leaves the second cell empty; a chamber that has run a recipe is not ticked any more in that world), and `verification-before-completion` before recording; `rust-best-practices` for the sixth pure module and its glue, `rust-review` for the after-the-fact audit of `src/mobslaughter.rs`; slice 8: `brainstorming` to choose the fluid laser base from the port's own coverage row and weigh the brief's "a biome the ether recipe names" against the jar's empty whitelist, `writing-plans` for SLICE-8-PLAN.md, `test-driven-development` for the eight red rules and the five red glue tests, `systematic-debugging` for the two in-game gates this slice cost — the launcher's content-hash cache reporting "up to date" and the depth-band differential that replaced a biome counterfactual the artefact does not have — and `verification-before-completion` before recording; `rust-best-practices` for the fifth pure module and the glue, `rust-review` for the after-the-fact audit of `src/fluidbase.rs`; slice 7: `brainstorming` to choose the laser drill from the gap list and weigh the brief's "the ore the base sits on" against the jar's biome/depth rule, `writing-plans` for SLICE-7-PLAN.md, `test-driven-development` for the 14 red rules and the 9 red glue tests, `systematic-debugging` for the six in-game gates this slice cost — the ingredient-object decode (`recipes 0/10`), the biome zoom, the datapack/tag reload, the placement aim, the message/log window, and the loot condition shape — and `verification-before-completion` before recording; `rust-best-practices` for the new pure module and the glue, `rust-review` for the after-the-fact audit of `src/laserdrill.rs`)
+Skills: superpowers/using-superpowers,brainstorming,writing-plans,test-driven-development,systematic-debugging,verification-before-completion; BeautifulRust/rust-best-practices,rust-review (slice 13: `brainstorming` to take the animal rancher from gap 9 and weigh the brief's "empty bucket in its input" against the jar's fake-player bucket and tank of milk — the artefact won, and the assertion became the tank's 1,000 mB plus the sheep's wool in the output; `writing-plans` for SLICE-13-PLAN.md; `test-driven-development` for the fifteen red rules and ten red glue tests (`206 passed, 15 failed`, every one `not yet implemented`) and then the in-game assertion before it was trusted; `systematic-debugging` for the two failures this slice cost — the craft harness could not place two non-stackable shears (a per-cell source fixed it), and the pinned draw was spent on the next *tick* instead of the next *attempt* (the sheep gave 3 wool for `draws 0 0`), which also stopped the tick burning the level's random stream — plus the squid that drowns on land; `verification-before-completion` before every claim; `rust-best-practices` for the ninth pure module, the `entity_nbt`/`entity_merge_nbt` sheep write and the attempt-scoped draws; `rust-review` for the after-the-fact audit of `src/rancher.rs` and `src/animalrancher.rs` — it removed the `increase` state (the glue rebuilds the machine each tick, so the speed addon modelled one tick late never worked in game; the bar now falls by the augment, the condensator's model since slice 1), kept `fill_milk` refusing a foreign fluid, and moved the random draws out of the tick; slice 12: `brainstorming` to take the duplicator from gap 9 and weigh the brief's "place it facing its placer" against the jar's state-free block (`MobDuplicatorBlock` has no `getRotationType`; the generated blockstate is `""`), `writing-plans` for SLICE-12-PLAN.md, `test-driven-development` for the twelve red rules and eight red glue tests (`192 passed, 14 failed`, every one `not yet implemented`) and then the in-game assertion before it was trusted, `systematic-debugging` for the four harness gates this slice cost (the 24-entity cramming limit that killed the cap counterfactual's own cows, a broken item picked into the main inventory, `ctl place --item` reaching the wrong stack, and a machine that spent its buffer during the break setup — 4,999 FE keeps it idle), and `verification-before-completion` before every claim; `rust-best-practices` for the eighth pure module, `Host::summon`, the tool's component and the item parts, `rust-review` for the after-the-fact audit of `src/duplicator.rs` and `src/mobduplicator.rs` — it shaped the pure/glue split (the random draw is an input, not a host call in the rules), the `Attempt`/`Step` types, and the no-`unwrap` saved-compound reads; slice 11: `brainstorming` to take the crusher from gap 9 and weigh the brief's per-health essence against the jar's `experience * 20`, `writing-plans` for SLICE-11-PLAN.md, `test-driven-development` for the ten red rules and the red glue/declaration tests (`173 passed, 13 failed`, every one `not yet implemented`) and then the in-game assertion before it was trusted, `systematic-debugging` for the two in-game gates this slice cost (the launcher's build lock held by another port, and the launcher's reuse of a same-version build — four `native-*` tags were removed before the rebuild) and for the creative-mode break flake in phase L, `verification-before-completion` before every claim; `rust-best-practices` for the seventh pure module, the fake-player kill and the two harvest hooks, `rust-review` for the after-the-fact audit of `src/mobcrusher.rs` and `src/crusher.rs` — it weighed clippy's `question_mark` finding on the first run, the `Candidate::blacklisted` field the pure filter correctly ignores, and the `Gain` type's needless `Copy`-by-hash (replaced with an owned dimension string); `rust-review`'s rules also shaped the code: no `unwrap` outside tests, an enum for the two kill paths (`AttackPath`) instead of a bool, and the harvest statics kept behind one module so no other machine can read them; slice 10: `brainstorming` to take the Nether leg from deviation 37 and weigh the brief's depth-0 counterfactual against the dimension arm the recipe actually names, `writing-plans` for SLICE-10-PLAN.md, `test-driven-development` for the in-game assertion written before the package was rebuilt — its red is `SELFTEST=nether`, because the family itself shipped in 0.2.8 — `systematic-debugging` for the harness flakes that cost four runs (`wait-ready` returning while the client still said "Loading terrain...", the game's `[CHAT]` log stopping while `ctl messages` answered, and a `ctl wait` loop exhausting itself before the server ticked), and `verification-before-completion` before recording; `rust-best-practices` loaded and the ladder run, no Rust change: 0.2.10 differs from 0.2.9 only in the version string; `rust-review`: none (no Rust diff); slice 9: `brainstorming` to choose the factory from deviations 19 and 21 and weigh the brief's "FE still spent" against `SlaughterFactoryTile.work()`, `writing-plans` for SLICE-9-PLAN.md, `test-driven-development` for the eight red rules and nine red glue tests (`149 passed, 17 failed`, every one `not yet implemented`), `systematic-debugging` for the chamber that stopped advancing its bar (seven probes in clean worlds, all green; the quirk and the padding fix are recorded in the slice 9 section) and for the two craft-script defects the game found (a stack of two `stacksTo(1)` items leaves the second cell empty; a chamber that has run a recipe is not ticked any more in that world), and `verification-before-completion` before recording; `rust-best-practices` for the sixth pure module and its glue, `rust-review` for the after-the-fact audit of `src/mobslaughter.rs`; slice 8: `brainstorming` to choose the fluid laser base from the port's own coverage row and weigh the brief's "a biome the ether recipe names" against the jar's empty whitelist, `writing-plans` for SLICE-8-PLAN.md, `test-driven-development` for the eight red rules and the five red glue tests, `systematic-debugging` for the two in-game gates this slice cost — the launcher's content-hash cache reporting "up to date" and the depth-band differential that replaced a biome counterfactual the artefact does not have — and `verification-before-completion` before recording; `rust-best-practices` for the fifth pure module and the glue, `rust-review` for the after-the-fact audit of `src/fluidbase.rs`; slice 7: `brainstorming` to choose the laser drill from the gap list and weigh the brief's "the ore the base sits on" against the jar's biome/depth rule, `writing-plans` for SLICE-7-PLAN.md, `test-driven-development` for the 14 red rules and the 9 red glue tests, `systematic-debugging` for the six in-game gates this slice cost — the ingredient-object decode (`recipes 0/10`), the biome zoom, the datapack/tag reload, the placement aim, the message/log window, and the loot condition shape — and `verification-before-completion` before recording; `rust-best-practices` for the new pure module and the glue, `rust-review` for the after-the-fact audit of `src/laserdrill.rs`)
 
 `cargo fmt --package industrialforegoing --check`, `cargo clippy --all-targets -- -D warnings` and
 `cargo test` were run before hand-back (slice 9: `FMT-CLEAN`, 0 warnings, **166 passed**).

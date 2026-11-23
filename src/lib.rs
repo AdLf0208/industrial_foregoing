@@ -36,6 +36,7 @@
 //! vanilla `minecraft:block_entity_data` component (tagged with the type id), placement merges that
 //! component into the new block entity, and [`MachineItem::on_block_placed_by`] clamps the numbers
 //! back to the three capacities. An empty machine's item stays plain.
+pub mod animalrancher;
 pub mod chamber;
 pub mod crusher;
 pub mod dissolution;
@@ -49,6 +50,7 @@ pub mod latex;
 pub mod mobcrusher;
 pub mod mobduplicator;
 pub mod mobslaughter;
+pub mod rancher;
 pub mod runtime;
 pub mod slaughter;
 
@@ -193,6 +195,8 @@ impl Hooks for Mod {
         mobcrusher::declare(r);
         // The mob duplicator and its Mob Imprisonment Tool (slice 12).
         mobduplicator::declare(r);
+        // The animal rancher (slice 13): its tank, its output container, its buffer and its tick.
+        animalrancher::declare(r);
         // Its own recipe type **and** the read-only serializer for it: the game refuses a file
         // whose type has no serializer ("unregistered recipe serializer
         // industrialforegoing:dissolution_chamber", measured in game), and API 36's machine route
@@ -325,6 +329,12 @@ impl Hooks for Mod {
                 mobduplicator::item(),
                 mobduplicator::carried_patch(&saved),
             )
+        } else if block == animalrancher::BLOCK {
+            (
+                animalrancher::has_contents(&saved),
+                animalrancher::item(),
+                animalrancher::carried_patch(&saved),
+            )
         } else {
             return Flow::Continue;
         };
@@ -394,6 +404,8 @@ impl Hooks for Mod {
             "industrialforegoing roll <pos:block_pos> <value:number>",
             "industrialforegoing depth <pos:block_pos> <y:integer>",
             "industrialforegoing essence <pos:block_pos> <amount:integer>",
+            "industrialforegoing milk <pos:block_pos> <amount:integer>",
+            "industrialforegoing draws <pos:block_pos> <wool:integer> <dye:integer>",
         ] {
             event.commands.push(Command::op(usage, 2));
         }
@@ -451,6 +463,11 @@ impl Hooks for Mod {
         // The mob duplicator (slice 12): its own readout, setters and essence.
         if current_block(host, pos).as_deref() == Some(mobduplicator::BLOCK) {
             duplicator_command(host, invocation, pos, sub);
+            return Flow::Cancel;
+        }
+        // The animal rancher (slice 13): its own readout, setters and pinned draws.
+        if current_block(host, pos).as_deref() == Some(animalrancher::BLOCK) {
+            rancher_command(host, invocation, pos, sub);
             return Flow::Cancel;
         }
         if sub == "fluid" {
@@ -707,6 +724,8 @@ fn usage(sub: &str) -> String {
         "fill" => "usage: /industrialforegoing fill <x> <y> <z> <fluid> <amount>".to_owned(),
         "extraction" => "usage: /industrialforegoing extraction <x> <y> <z> <hits>".to_owned(),
         "roll" => "usage: /industrialforegoing roll <x> <y> <z> <0..1>".to_owned(),
+        "milk" => "usage: /industrialforegoing milk <x> <y> <z> <mB>".to_owned(),
+        "draws" => "usage: /industrialforegoing draws <x> <y> <z> <wool 0..2> <dye 0|1>".to_owned(),
         "depth" => "usage: /industrialforegoing depth <x> <y> <z> <mining y>".to_owned(),
         other => format!("usage: /industrialforegoing {other} <x> <y> <z> <amount>"),
     }
@@ -1192,6 +1211,79 @@ fn duplicator_command(
     }
 }
 
+/// The harness commands of the animal rancher: its readout, the FE and bar setters, its milk tank,
+/// the drain and the pinned draws (the squid's 1/16 gate cannot be hit deterministically otherwise).
+fn rancher_command(
+    host: &mut dyn ServerHost,
+    invocation: &CommandInvocation,
+    pos: [i32; 3],
+    sub: &str,
+) {
+    match sub {
+        "info" => {
+            let line = animalrancher::readout(host, pos);
+            say(host, &line);
+        }
+        "energy" | "progress" | "milk" => {
+            let (argument, full, unit, key) = match sub {
+                "energy" => ("amount", crate::rancher::CAPACITY_FE, "FE", KEY_ENERGY),
+                "progress" => (
+                    "ticks",
+                    crate::rancher::MAX_PROGRESS,
+                    "ticks of bar",
+                    KEY_PROGRESS,
+                ),
+                _ => ("amount", crate::rancher::TANK_MB, "mB of milk", "milk"),
+            };
+            let Some(value) = integer(invocation, argument) else {
+                say(host, &usage(sub));
+                return;
+            };
+            let value = value.clamp(0, full);
+            let changed = if sub == "milk" {
+                animalrancher::set_milk(host, pos, value)
+            } else {
+                animalrancher::set_int(host, pos, key, value)
+            };
+            say(
+                host,
+                &if changed {
+                    format!("Animal Rancher at {pos:?}: {value}/{full} {unit}.")
+                } else {
+                    format!("{pos:?} is not an animal rancher.")
+                },
+            );
+        }
+        "drain" => {
+            let Some(amount) = integer(invocation, "amount") else {
+                say(host, &usage(sub));
+                return;
+            };
+            animalrancher::drain(host, pos, amount);
+        }
+        "draws" => {
+            let (Some(wool), Some(dye)) = (integer(invocation, "wool"), integer(invocation, "dye"))
+            else {
+                say(host, &usage(sub));
+                return;
+            };
+            let draws = crate::rancher::Draws {
+                wool: wool.clamp(0, crate::rancher::WOOL_EXTRA - 1),
+                dye: dye != 0,
+            };
+            animalrancher::pin_draws(host.dimension(), pos, draws);
+            say(
+                host,
+                &format!(
+                    "Animal Rancher at {pos:?}: the next attempt draws wool {} and dye {}.",
+                    draws.wool, draws.dye as u8
+                ),
+            );
+        }
+        _ => say(host, &usage(sub)),
+    }
+}
+
 /// The machine's state, as `/industrialforegoing info` prints it.
 fn readout(host: &mut dyn ServerHost, pos: [i32; 3]) -> String {
     let Some(level) = host.level(host.dimension()) else {
@@ -1402,6 +1494,7 @@ fn is_our_entity_kind(host: &dyn Host, entity: BlockEntityRef) -> bool {
         || mobslaughter::kind_of(entity, host)
         || mobcrusher::kind_of(entity, host)
         || mobduplicator::kind_of(entity, host)
+        || animalrancher::kind_of(entity, host)
 }
 
 /// The tank's amount, in the declaration's shape: one entry per tank under `fluids`.
@@ -1791,6 +1884,9 @@ mod content {
     /// The fluid laser base (slice 8).
     const FLUID_LASER: [&str; 1] = ["fluid_laser_base"];
 
+    /// The animal rancher (slice 13).
+    const ANIMAL: [&str; 1] = ["animal_rancher"];
+
     /// The port root, which is also the package root.
     fn root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -1927,6 +2023,7 @@ mod content {
                 "mob_crusher",
                 "mob_duplicator",
                 "mob_imprisonment_tool",
+                "animal_rancher",
                 "pink_slime",
                 "pink_slime_ingot",
                 "pink_slime_block",
@@ -1973,6 +2070,7 @@ mod content {
             .copied()
             .chain(LASER.iter().copied())
             .chain(SLAUGHTER.iter().copied())
+            .chain(ANIMAL.iter().copied())
             .chain(std::iter::once(PINK_BLOCK))
         {
             assert!(
@@ -2015,6 +2113,7 @@ mod content {
             .chain(LATEX.iter().copied())
             .chain(LASER.iter().copied())
             .chain(SLAUGHTER.iter().copied())
+            .chain(ANIMAL.iter().copied())
             .chain(std::iter::once(PINK_BLOCK))
         {
             let key = format!("block.industrialforegoing.{block}");
@@ -2670,6 +2769,80 @@ mod content {
             assert!(
                 pickaxe.contains(&format!("industrialforegoing:{frame}")),
                 "a block with requires_tool and no mineable/pickaxe entry drops nothing: {frame}"
+            );
+        }
+    }
+
+    /// Slice 13's machine: the four-way block, its jar recipe, the loot, the tab and the model.
+    #[test]
+    fn the_animal_rancher_is_carried() {
+        let id = "industrialforegoing:animal_rancher";
+        let declaration = read("data/industrialforegoing/horizon/block/animal_rancher.json");
+        assert!(
+            declaration.contains("\"subfacing\""),
+            "RotationType.FOUR_WAY is a subfacing property the declaration does not carry"
+        );
+        for facing in ["north", "south", "east", "west"] {
+            assert!(
+                declaration.contains(facing),
+                "the declaration has no {facing} subfacing value"
+            );
+            let blockstate = read("assets/industrialforegoing/blockstates/animal_rancher.json");
+            assert!(
+                blockstate.contains(&format!("subfacing={facing}")),
+                "the jar's blockstate selects on subfacing={facing}"
+            );
+        }
+        assert!(
+            declaration.contains("minecraft:iron_block"),
+            "the block is Properties.ofFullCopy(IRON_BLOCK)"
+        );
+        let loot = read("data/industrialforegoing/loot_table/blocks/animal_rancher.json");
+        assert!(
+            loot.contains("minecraft:survives_explosion") && loot.contains(id),
+            "the loot table is not in 26.3's condition shape, so the machine drops nothing"
+        );
+        let recipe = read("data/industrialforegoing/recipe/animal_rancher.json");
+        assert!(
+            recipe.contains("[\n    \"PPP\",\n    \"SBS\",\n    \"GMG\"\n  ]"),
+            "the recipe is not the jar's PPP/SBS/GMG"
+        );
+        for ingredient in [
+            "#c:plastics",
+            "minecraft:shears",
+            "minecraft:bucket",
+            "#c:gears/gold",
+            "#industrialforegoing:machine_frame/pity",
+        ] {
+            assert!(
+                recipe.contains(ingredient),
+                "the rancher recipe does not name {ingredient}"
+            );
+        }
+        assert!(
+            read("data/minecraft/tags/block/mineable/pickaxe.json").contains(id),
+            "the rancher has requires_tool but no mineable/pickaxe entry"
+        );
+        let tab = read("data/industrialforegoing/horizon/creative_tab/ag_hus.json");
+        assert!(
+            tab.contains(id),
+            "the Agriculture & Husbandry tab does not list the rancher"
+        );
+        let model = read("assets/industrialforegoing/models/block/animal_rancher.json");
+        for texture in [
+            "industrialforegoing:block/animal_resource_harvester_back",
+            "industrialforegoing:block/animal_resource_harvester_side",
+        ] {
+            assert!(
+                model.contains(texture),
+                "the block model does not name {texture}"
+            );
+            let file = texture.trim_start_matches("industrialforegoing:block/");
+            assert!(
+                has(&format!(
+                    "assets/industrialforegoing/textures/block/{file}.png"
+                )),
+                "{texture} has no texture file"
             );
         }
     }
