@@ -39,6 +39,7 @@
 pub mod chamber;
 pub mod crusher;
 pub mod dissolution;
+pub mod duplicator;
 pub mod fluidbase;
 pub mod fluidchain;
 pub mod fluidlaser;
@@ -46,6 +47,7 @@ pub mod laser;
 pub mod laserdrill;
 pub mod latex;
 pub mod mobcrusher;
+pub mod mobduplicator;
 pub mod mobslaughter;
 pub mod runtime;
 pub mod slaughter;
@@ -189,6 +191,8 @@ impl Hooks for Mod {
         mobslaughter::declare(r);
         // The mob crusher (slice 11): its tank, its output container, its buffer and its tick.
         mobcrusher::declare(r);
+        // The mob duplicator and its Mob Imprisonment Tool (slice 12).
+        mobduplicator::declare(r);
         // Its own recipe type **and** the read-only serializer for it: the game refuses a file
         // whose type has no serializer ("unregistered recipe serializer
         // industrialforegoing:dissolution_chamber", measured in game), and API 36's machine route
@@ -224,6 +228,7 @@ impl Hooks for Mod {
     /// (and `mifa`) puts on its addon items.
     fn component_types(&self, _context: &RegistrationContext, event: &mut ComponentTypesEvent<'_>) {
         event.types.push(AUGMENT_COMPONENT.to_owned());
+        event.types.push(mobduplicator::TOOL_COMPONENT.to_owned());
     }
 
     /// After a level's tick pass: apply the augment seatings its right-clicks asked for. A block
@@ -314,6 +319,12 @@ impl Hooks for Mod {
                 mobcrusher::item(),
                 mobcrusher::carried_patch(&saved),
             )
+        } else if block == mobduplicator::BLOCK {
+            (
+                mobduplicator::has_contents(&saved),
+                mobduplicator::item(),
+                mobduplicator::carried_patch(&saved),
+            )
         } else {
             return Flow::Continue;
         };
@@ -382,6 +393,7 @@ impl Hooks for Mod {
             "industrialforegoing extraction <pos:block_pos> <hits:integer>",
             "industrialforegoing roll <pos:block_pos> <value:number>",
             "industrialforegoing depth <pos:block_pos> <y:integer>",
+            "industrialforegoing essence <pos:block_pos> <amount:integer>",
         ] {
             event.commands.push(Command::op(usage, 2));
         }
@@ -434,6 +446,11 @@ impl Hooks for Mod {
         // The mob crusher (slice 11): its own readout, setters and drain.
         if current_block(host, pos).as_deref() == Some(mobcrusher::BLOCK) {
             crusher_command(host, invocation, pos, sub);
+            return Flow::Cancel;
+        }
+        // The mob duplicator (slice 12): its own readout, setters and essence.
+        if current_block(host, pos).as_deref() == Some(mobduplicator::BLOCK) {
+            duplicator_command(host, invocation, pos, sub);
             return Flow::Cancel;
         }
         if sub == "fluid" {
@@ -1124,6 +1141,57 @@ fn crusher_command(
     }
 }
 
+/// The mob duplicator's own commands (slice 12): its readout, its buffer, its bar and its essence.
+fn duplicator_command(
+    host: &mut dyn ServerHost,
+    invocation: &CommandInvocation,
+    pos: [i32; 3],
+    sub: &str,
+) {
+    match sub {
+        "info" => {
+            let line = mobduplicator::readout(host, pos);
+            say(host, &line);
+        }
+        "energy" | "progress" | "essence" => {
+            let (argument, full, unit, key) = match sub {
+                "energy" => ("amount", crate::duplicator::CAPACITY_FE, "FE", KEY_ENERGY),
+                "progress" => (
+                    "ticks",
+                    crate::duplicator::MAX_PROGRESS,
+                    "ticks of bar",
+                    KEY_PROGRESS,
+                ),
+                _ => (
+                    "amount",
+                    crate::duplicator::TANK_MB,
+                    "mB of essence",
+                    "essence",
+                ),
+            };
+            let Some(value) = integer(invocation, argument) else {
+                say(host, &usage(sub));
+                return;
+            };
+            let value = value.clamp(0, full);
+            let changed = if sub == "essence" {
+                mobduplicator::set_essence(host, pos, value)
+            } else {
+                mobduplicator::set_int(host, pos, key, value)
+            };
+            say(
+                host,
+                &if changed {
+                    format!("Mob Duplicator at {pos:?}: {value}/{full} {unit}.")
+                } else {
+                    format!("{pos:?} is not a mob duplicator.")
+                },
+            );
+        }
+        _ => say(host, &usage(sub)),
+    }
+}
+
 /// The machine's state, as `/industrialforegoing info` prints it.
 fn readout(host: &mut dyn ServerHost, pos: [i32; 3]) -> String {
     let Some(level) = host.level(host.dimension()) else {
@@ -1333,6 +1401,7 @@ fn is_our_entity_kind(host: &dyn Host, entity: BlockEntityRef) -> bool {
         || fluidbase::kind_of(entity, host)
         || mobslaughter::kind_of(entity, host)
         || mobcrusher::kind_of(entity, host)
+        || mobduplicator::kind_of(entity, host)
 }
 
 /// The tank's amount, in the declaration's shape: one entry per tank under `fluids`.
@@ -1856,6 +1925,8 @@ mod content {
                 "fluid_laser_base",
                 "mob_slaughter_factory",
                 "mob_crusher",
+                "mob_duplicator",
+                "mob_imprisonment_tool",
                 "pink_slime",
                 "pink_slime_ingot",
                 "pink_slime_block",

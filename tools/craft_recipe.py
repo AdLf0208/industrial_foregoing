@@ -141,6 +141,28 @@ CASES = [
         ],
     ),
     (
+        "the mob duplicator (PWP/CMC/ERE, #c:plastics + machine_frame/advanced)",
+        "industrialforegoing:mob_duplicator",
+        1,
+        [
+            ("industrialforegoing:plastic", 2, ["100", "102"]),
+            ("minecraft:nether_wart", 1, ["101"]),
+            ("minecraft:magma_cream", 2, ["103", "105"]),
+            ("industrialforegoing:machine_frame_advanced", 1, ["104"]),
+            ("minecraft:emerald", 2, ["106", "108"]),
+            ("minecraft:redstone", 1, ["107"]),
+        ],
+    ),
+    (
+        "the Mob Imprisonment Tool ( P /PGP/ P , #c:plastics + a ghast tear)",
+        "industrialforegoing:mob_imprisonment_tool",
+        1,
+        [
+            ("industrialforegoing:plastic", 4, ["101", "103", "105", "107"]),
+            ("minecraft:ghast_tear", 1, ["104"]),
+        ],
+    ),
+    (
         "the pink slime block from nine pink slime",
         "industrialforegoing:pink_slime_block",
         1,

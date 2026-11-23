@@ -69,6 +69,9 @@ BRAND_FLUIDS = {"industrialforegoing:latex", "industrialforegoing:pink_slime",
 SLAUGHTER = ["mob_slaughter_factory"]
 # Slice 11: the mob crusher (its own tank, output container and kill hooks).
 CRUSHER = ["mob_crusher"]
+# Slice 12: the mob duplicator and the Mob Imprisonment Tool that feeds it.
+DUPLICATOR = ["mob_duplicator"]
+TOOL = "mob_imprisonment_tool"
 PINK_ITEMS = ["pink_slime", "pink_slime_ingot"]
 PINK_BLOCK = "pink_slime_block"
 
@@ -176,6 +179,8 @@ def check(files: Files) -> list[str]:
         + [f"{MOD}:{machine}" for machine in LASER]
         + [f"{MOD}:{machine}" for machine in SLAUGHTER]
         + [f"{MOD}:{machine}" for machine in CRUSHER]
+        + [f"{MOD}:{machine}" for machine in DUPLICATOR]
+        + [f"{MOD}:{TOOL}"]
         + [f"{MOD}:{PINK_BLOCK}"]
         + [f"{MOD}:{item}" for item in PINK_ITEMS]
         + [f"{MOD}:{frame}" for frame in FRAMES]
@@ -310,6 +315,59 @@ def check(files: Files) -> list[str]:
         failures.append("the mob crusher recipe does not result in the machine")
     if crusher.get("pattern") != ["PSP", "BMB", "GRG"]:
         failures.append("the mob crusher recipe is not the jar's PSP/BMB/GRG")
+
+    # Slice 12: the mob duplicator (the jar's state-free block, its PWP/CMC/ERE recipe) and the
+    # Mob Imprisonment Tool (one stack, the plastic/ghast-tear recipe, and the component key the
+    # machine reads). Its two blacklist tags are carried even when empty, so a pack may add to them.
+    for machine in DUPLICATOR:
+        item_id = f"{MOD}:{machine}"
+        if item_id not in blocks:
+            failures.append(f"the {machine} is not declared as a block")
+        for name in (
+            f"assets/{MOD}/blockstates/{machine}.json",
+            f"assets/{MOD}/models/block/{machine}.json",
+            f"assets/{MOD}/items/{machine}.json",
+            f"data/{MOD}/horizon/block/{machine}.json",
+        ):
+            if not files.has(name):
+                failures.append(f"the {machine} has no {name}")
+        loot = f"data/{MOD}/loot_table/blocks/{machine}.json"
+        if not files.has(loot):
+            failures.append(f"the {machine} has no loot table")
+        elif "\"type\": \"minecraft:survives_explosion\"" not in json.dumps(files.json(loot)):
+            failures.append(f"{loot} is not in 26.3's condition shape, so it drops nothing")
+        if item_id not in pickaxe_values(files):
+            failures.append(f"the {machine} has requires_tool but no mineable/pickaxe entry")
+    declaration = files.json(f"data/{MOD}/horizon/block/{DUPLICATOR[0]}.json")
+    if declaration.get("state_properties"):
+        failures.append("the mob duplicator has a state property it does not declare upstream")
+    if "\"subfacing\"" in json.dumps(files.json(f"assets/{MOD}/blockstates/{DUPLICATOR[0]}.json")):
+        failures.append("the mob duplicator's blockstate selects on subfacing, which it has no property for")
+    dupe = files.json(f"data/{MOD}/recipe/{DUPLICATOR[0]}.json")
+    dupe_keys = set(dupe.get("key", {}).values())
+    for tag in ("#c:plastics", f"#{MOD}:machine_frame/advanced"):
+        if tag not in dupe_keys:
+            failures.append(f"the mob duplicator recipe does not name {tag}")
+    if dupe.get("pattern") != ["PWP", "CMC", "ERE"]:
+        failures.append("the mob duplicator recipe is not the jar's PWP/CMC/ERE")
+    tool_item = files.json(f"data/{MOD}/horizon/item/{TOOL}.json")
+    if tool_item.get("max_stack_size") != 1:
+        failures.append("the Mob Imprisonment Tool does not stack to one")
+    tool_recipe = files.json(f"data/{MOD}/recipe/{TOOL}.json")
+    if tool_recipe.get("pattern") != [" P ", "PGP", " P "]:
+        failures.append("the Mob Imprisonment Tool recipe is not the jar's P/GP/P diamond")
+    if set(tool_recipe.get("key", {}).values()) != {"#c:plastics", "minecraft:ghast_tear"}:
+        failures.append("the Mob Imprisonment Tool recipe does not take plastic and a ghast tear")
+    for tag in ("mob_duplicator_blacklist", "mob_imprisonment_tool_blacklist"):
+        name = f"data/{MOD}/tags/entity_type/{tag}.json"
+        if not files.has(name):
+            failures.append(f"the {tag} entity-type tag is not carried")
+        elif files.json(name).get("values") != []:
+            failures.append(f"the jar's {tag} is empty but the package fills it")
+    tab = f"data/{MOD}/horizon/creative_tab/ag_hus.json"
+    for wanted in (f"{MOD}:{DUPLICATOR[0]}", f"{MOD}:{TOOL}"):
+        if wanted not in files.json(tab).get("items", []):
+            failures.append(f"the ag_hus item group does not list {wanted}")
 
     # The pink slime set: the block (declared, modelled, drops itself) and the two items, their
     # recipes, the tags and the item group.
@@ -638,6 +696,25 @@ def selftest() -> int:
                     lambda value: value | {"result": {"count": 1, "id": "industrialforegoing:essence"}}
             },
         ),
+        ("the mob duplicator's declaration",
+         f"data/{MOD}/horizon/block/mob_duplicator.json", {}),
+        (
+            "the mob duplicator's pattern",
+            None,
+            {
+                f"data/{MOD}/recipe/mob_duplicator.json":
+                    lambda value: value | {"pattern": ["PPP", "CMC", "ERE"]}
+            },
+        ),
+        (
+            "the Mob Imprisonment Tool's stack size",
+            None,
+            {
+                f"data/{MOD}/horizon/item/{TOOL}.json":
+                    lambda value: value | {"max_stack_size": 16}
+            },
+        ),
+        ("the mob duplicator's blacklist", f"data/{MOD}/tags/entity_type/mob_duplicator_blacklist.json", {}),
         ("the pink slime ingot tag", "data/c/tags/item/ingots/pink_slime.json", {}),
         (
             "the pink slime block's eight-for-one",

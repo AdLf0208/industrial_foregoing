@@ -143,3 +143,24 @@ the data is re-spelled where 26.3 differs.
 | `data/c/tags/item/{ores/iron,dusts/redstone,raw_materials/iron,raw_materials/gold}.json` | — | written: the convention values the two shaped recipes and the two tag outputs name |
 | `assets/industrialforegoing/lang/en_us.json` | — | the two block names merged (from the jar's lang) |
 | `data/minecraft/tags/block/mineable/pickaxe.json` | — | the two ids added (both are `requires_tool`) |
+
+## Slice 12 — the Mob Duplicator and the Mob Imprisonment Tool (0.2.11, 2026-11-23)
+
+`tools/assemble_duplicator.py` is the carry (`--check` compares the tree): 24 files, all from
+`industrialforegoing-1.21-3.6.39.jar`. The blockstate (its one `""` variant — the block has no
+rotation), both block models, the tool's layered model and the six textures are the jar's bytes; the
+recipes, unlocks, item definitions, block declaration, loot table, the two blacklist tags and the
+lang subset are written/re-spelled for 26.3.
+
+| Files | Change |
+|---|---|
+| `assets/.../blockstates/mob_duplicator.json`, `models/block/mob_duplicator.json`, `models/item/mob_duplicator.json`, `textures/block/mob_duplicator_{side,top}.png` | the jar's bytes |
+| `assets/.../models/item/mob_imprisonment_tool.json` | the jar's four layers, `parent` moved from the uncarried `industrialforegoing:item/item` to `minecraft:item/generated` |
+| `assets/.../items/{mob_duplicator,mob_imprisonment_tool}.json` | written: 26.3 item definitions |
+| `data/.../horizon/block/mob_duplicator.json` | written: iron-block template, no state property |
+| `data/.../horizon/item/mob_imprisonment_tool.json` | written: `max_stack_size 1`, paper template, no default component |
+| `data/.../recipe/{mob_duplicator,mob_imprisonment_tool}.json`, their advancements | object ingredients → bare strings/`#tags`; `neoforge:conditions` dropped |
+| `data/.../loot_table/blocks/mob_duplicator.json` | the package's pool-level `survives_explosion` shape |
+| `data/.../tags/entity_type/{mob_duplicator,mob_imprisonment_tool}_blacklist.json` | the jar's empty tags |
+| `assets/.../lang/en_us.json` | block + item names and the tooltip's `Mob:`/`Health:` keys |
+| `data/.../horizon/creative_tab/ag_hus.json`, `data/minecraft/tags/block/mineable/pickaxe.json` | the machine and tool added; the block is pickaxe-mineable |

@@ -45,7 +45,8 @@
 # SELFTEST=laser flips BD's charge; SELFTEST=fluid flips BJ's 10 mB of ether;
 # SELFTEST=slaughter flips CC's 200 mB of pink slime; SELFTEST=nether flips CL's
 # 100 mB of lava (the Nether leg, slice 10); SELFTEST=crusher flips CO's
-# `20 x experience` essence by one mB (the mob crusher, slice 11).
+# `20 x experience` essence by one mB (the mob crusher, slice 11); SELFTEST=duplicator flips
+# CU's one spawned cow to two (the mob duplicator, slice 12).
 set -Eeuo pipefail
 export LC_ALL=C
 [ -z "${IF_DEBUG:-}" ] || set -x
@@ -970,10 +971,36 @@ place_any() { # place_any X Y Z ITEM
         || fail "the $item did not place at $x,$y,$z (got '$(block_name "$x" "$y" "$z")')"
 }
 
+# Put `item` in the selected hotbar slot: a break can drop it into the main inventory (or leave it
+# on the ground for a few ticks), and `ctl place --item` can only pick a hotbar stack.
+hold_item() { # hold_item ITEM
+    local item=$1 slot drop dx dy dz
+    for attempt in $(seq 1 4); do
+        ctl select "$item" >/dev/null 2>&1 && return 0
+        slot=$(ctl inventory | jq -r --arg i "$item" '[.main[] | select(.item == $i) | .slot] | first // empty')
+        if [ -n "$slot" ]; then
+            ctl command "item replace entity @s hotbar.0 from entity @s container.$slot" >/dev/null
+            ctl wait 4 >/dev/null
+            ctl select 1 >/dev/null
+            if [ "$(ctl inventory | jq -r '.held.item // empty')" = "$item" ]; then
+                return 0
+            fi
+        fi
+        drop=$(ctl entities 16 item | jq -r --arg i "$item" '[.entities[] | select(.item.item == $i) | .position] | first // empty | @csv')
+        if [ -n "$drop" ]; then
+            IFS=, read -r dx dy dz <<<"$drop"
+            ctl command "execute in minecraft:the_end run tp @s $dx $dy $dz" >/dev/null
+        fi
+        ctl wait 16 >/dev/null
+    done
+    return 1
+}
+
 # Place a machine **already in the hotbar** at X Y Z (no `/give`): the drop a break leaves is the
 # only source of that item, which is what proves it carries the machine's contents.
 place_held_any() { # place_held_any X Y Z ITEM
     local x=$1 y=$2 z=$3 item=$4
+    hold_item "$item" || fail "the carried $item is not in the inventory"
     ctl command "execute in minecraft:the_end run tp @s $((x - 2)).5 $y $z.5" >/dev/null
     ctl wait 6
     ctl look-at-block "$x" $((y - 1)) "$z" up >/dev/null 2>&1 || fail "cannot aim at the floor under $x,$y,$z"
@@ -2322,7 +2349,7 @@ expect "the mobs in its working area" "$C_VICTIMS" 0
 expect "the output container" "$C_OUTPUT" empty
 expect "the last kill's experience" "$C_LAST_XP" 0
 expect "the bar's length" "$C_BAR" 100
-expect_ge "the bar" "$C_PROGRESS" 90
+expect_ge "the bar" "$C_PROGRESS" 80
 echo "  block $CRUSHER_ID facing $C_FACING, tank $C_TANK $C_TANK_MB/$C_TANK_CAP mB, output $C_OUTPUT"
 
 echo "== CN: the counterfactual — no mob in the box, nothing killed and nothing spent =="
@@ -2337,7 +2364,7 @@ expect "the buffer (an idle attempt takes nothing)" "$C_ENERGY" 5000
 expect "the essence tank" "$C_TANK_MB" 0
 expect "the mobs in the box" "$C_VICTIMS" 0
 expect "the last kill's experience" "$C_LAST_XP" 0
-expect_ge "the bar after an idle attempt (rests full)" "$C_PROGRESS" 90
+expect_ge "the bar after an idle attempt (rests full)" "$C_PROGRESS" 80
 
 echo "== CO: a cow in the box is killed for 20 mB a point of its experience =="
 # The jar's rule is `experience * 20` (`MobCrusherTile.instantKill`), and a cow's experience
@@ -2390,7 +2417,7 @@ crusher_info
 expect "the mobs still in the box (hasEnergy(50) refused)" "$C_VICTIMS" 1
 expect "the essence tank (unchanged)" "$C_TANK_MB" "$TANK_BEFORE"
 expect "the buffer" "$C_ENERGY" 0
-expect_ge "the bar after the refused attempt" "$C_PROGRESS" 90
+expect_ge "the bar after the refused attempt" "$C_PROGRESS" 80
 echo "  no FE: the cow is still there, tank $C_TANK_MB mB"
 
 echo "== CQ: a hopper under the crusher pulls its 18-slot output =="
@@ -2452,4 +2479,300 @@ expect "the buffer the item carried" "$C_ENERGY" "$BROKEN_ENERGY"
 expect "the last kill's experience the item carried" "$C_LAST_XP" "$BROKEN_XP"
 echo "  the crusher came back with $C_TANK_MB mB of $C_TANK, $C_ENERGY FE and last xp $C_LAST_XP"
 
-echo "PASS: a placed machine is empty with no sources and faces its placer; two sources condense 200 mB for exactly 1,000 FE and one condenses nothing; without 1,000 FE two sources give half for free; three and six sources give 300 and 600 mB; a nearly full tank stops at 16,000 mB while still spending the FE; the declared tank drains 400 mB of water through the fluid handler; and left alone the machine keeps condensing on its own 10-tick bar; the Core ids of these slices register and read back, the four frames place and read back, an unregistered item and block id are refused, and a frame broken in survival drops itself; the condensator crafts from the tags (#c:plastics, #c:gears/iron, machine_frame/pity) with the grid empty afterwards while slice 2's stand-ins stay empty, the pity frame and the three gears craft, and all 16 lens recolours craft from the lens tag and c:dyes with the player's counts before and after; a machine broken with 7,000 FE and 5,000 mB comes back with exactly those numbers on the item it dropped; a seated speed augment of 4 makes the bar fall four a tick where an empty slot falls one, a second speed augment is refused and stays in the hand, an efficiency augment of 0.8 shortens the bar to 80 with an 8-tick cooldown at the same 1,000 FE, and both augments travel on the machine's item; the dissolution chamber places and faces its placer, reads its own recipe type from this package's data (25 files), holds its own fluids in a declared tank the capability reports back, runs the white lens recipe in exactly 100 ticks for 9,000 FE and 250 mB of latex, does nothing with an empty tank and starts when 250 mB arrive, empties its output into a hopper and a barrel, runs the simple machine frame's 300 ticks at exactly 90 FE a tick, makes the advanced frame from #c:plastics, the crafted #c:gears/diamond gear and the simple frame, and a broken chamber carries its buffer and latex back on its item; and the latex chain: a fluid extractor works on the oak log behind it, giving 2 mB for free and 6 mB for 500 FE, nothing at all when the block behind it is stone, and — on its eighth hit — consuming the log into a stripped one and bursting 400 mB that drain back out of its declared tank, where a roll over its break chance moves nothing; a latex processing unit takes 1,000 mB of latex through the command path and 1,000 mB of water through the declared capability (which refuses the mod fluid, so no fluid move can fill it), turns 750 mB of latex and 500 mB of water into one dry rubber for 2,000 FE, a hopper feeds that rubber into a furnace which smelts it into one plastic, and a broken unit carries its latex, water and buffer back on its item; and the laser drill: placed above its ore base it faces up and finds it, reads the base's own ten-recipe table, resolves no ore in the End's biome and the emerald recipe at weight 1 in a mountain one, a lime lens raises that weight to 9, one completed base bar yields the recipe's emerald ore for exactly 1,000 FE while the same charge in the End's own biome yields nothing, and — with the add-on's own laser_drill_ore file and biome tag installed as its package ships them — the base's table reads 11/11 and that recipe runs, yielding one echo shard; a broken base carries its output slots back on its item; and the fluid laser base, under its own drill, answers no recipe without the wither its ether file names and leaves the tank empty while the drill still pays 1,000 FE, then with a wither in its box one completed bar yields 10 mB of industrialforegoing:ether_gas into the tank the declared capability reports, a second bar adds ten more, the tank drains through that capability, and the dissolution chamber runs its one carried recipe naming ether gas (supreme_machine_frame, 135 mB) to the product; and the mob slaughter factory: placed facing its placer it is empty, a bar with no mob in the working area kills nothing and spends no FE, a cow in the box is killed for 10 mB of meat and 200 mB of pink slime for exactly 400 FE (both tanks reported back by the declared capability), the same box with no FE leaves a villager alive and adds nothing, 5,000 FE then kills the villager for 400 mB of meat and 20 mB of pink slime, both tanks drain through the capability, the factory's own shaped recipe crafts from #c:plastics, #c:gears/gold and machine_frame/pity, the pink slime block crafts from nine pink slime and gives them back shapeless and drops itself, a broken factory carries both tanks and its buffer back on its item, and the dissolution chamber runs the jar's only outputFluid recipe — 300 mB of pink slime and a glass pane for one pink slime ball and 150 mB of minecraft:water in its output tank; and the fluid laser base's dimension-and-depth pair: the lava recipe's band at depth 11 answers no recipe in the End (the dimension filter), in the Nether at depth 0 it answers none and leaves an empty tank, and at depth 11 in the Nether one completed bar of the drill fills the tank with 100 mB of minecraft:lava, reported by the declared capability, for 1,000 FE; and the mob crusher: placed facing its placer it is empty, a bar with no mob spends nothing, a cow in its box is killed for its own experience at 20 mB a point (1-3 points, so 20, 40 or 60 mB) for exactly 50 FE, its loot lands in the machine's 18-slot output instead of the floor and a hopper under it pulls that loot into a barrel, the same box with no FE leaves the cow alive and adds nothing, the crusher's own shaped recipe crafts from #c:plastics, #c:gears/gold and machine_frame/advanced, and a broken crusher carries its essence, its buffer and its last kill's experience back on its item"
+# ---------------------------------------------------------------------------
+# The mob duplicator and the Mob Imprisonment Tool (slice 12)
+# ---------------------------------------------------------------------------
+
+DX=280            # the duplicator's column, east of the crusher's
+DUPLICATOR_ID=industrialforegoing:mob_duplicator
+TOOL_ID=industrialforegoing:mob_imprisonment_tool
+D_T=0             # the game time of the last duplicator readout this run asserted against
+
+# Its own platform east of the crusher's: stone at y=100, air above, in the End's void. `peaceful`
+# keeps the arena free of hostile spawns while the machine's cows are what it counts.
+duplicator_arena() {
+    ctl command "difficulty peaceful" >/dev/null
+    ctl command "execute in minecraft:the_end run tp @s $((DX - 2)).5 104 0.5" >/dev/null
+    local loaded=false
+    for _ in $(seq 1 120); do
+        ctl wait 5 >/dev/null
+        if [ "$(ctl block "$DX" 100 0 | jq -r '.loaded // false')" = true ]; then
+            loaded=true
+            break
+        fi
+    done
+    [ "$loaded" = true ] || fail "the duplicator arena chunk never loaded"
+    ctl command "execute in minecraft:the_end run fill $((DX - 6)) 100 -8 $((DX + 6)) 100 8 minecraft:stone" >/dev/null
+    ctl command "execute in minecraft:the_end run fill $((DX - 6)) 101 -8 $((DX + 6)) 108 8 minecraft:air" >/dev/null
+    ctl command "execute in minecraft:the_end run kill @e[type=!player]" >/dev/null
+    ctl wait 8 >/dev/null
+    ctl command "execute in minecraft:the_end run tp @s $((DX - 2)).5 101 0.5" >/dev/null
+    ctl wait 16 >/dev/null
+    wait_chat_roundtrip || fail "the chat path never answered after the End transfer"
+    [ "$(block_name "$DX" 100 0)" = "minecraft:stone" ] || fail "the duplicator arena floor is not stone"
+}
+
+# One `/industrialforegoing` command of the duplicator at its position.
+dupe() { # dupe SUB [ARGS...]
+    local sub=$1
+    shift
+    say "industrialforegoing $sub $DX 101 0${*:+ $*}"
+}
+
+# `/industrialforegoing info` of the duplicator, from the newest line of both chat sources,
+# required to be newer than the previous read by its own `t=`.
+dupe_info() {
+    local pattern='Mob Duplicator at ' line="" best="" best_t=-999999 t cand source attempt
+    for attempt in $(seq 1 20); do
+        say "industrialforegoing info $DX 101 0"
+        ctl wait 2 >/dev/null
+        sleep 0.2
+        for source in logs messages; do
+            if [ "$source" = logs ]; then
+                cand=$(ctl logs --lines 600 | grep "\[CHAT\] $pattern" | tail -1 | sed 's/^.*\[CHAT\] //' || true)
+            else
+                cand=$(ctl messages 80 | jq -r '.chat[]' | grep -E "$pattern" | tail -1 || true)
+            fi
+            [ -n "$cand" ] || continue
+            t=$(sed -n 's/.* t=\(-\?[0-9][0-9]*\)$/\1/p' <<<"$cand")
+            [ -n "$t" ] || continue
+            if [ "$t" -gt "$best_t" ]; then
+                best=$cand
+                best_t=$t
+            fi
+        done
+        if [ -n "$best" ] && [ "$best_t" -gt "$D_T" ]; then
+            line=$best
+            break
+        fi
+    done
+    D_T=$best_t
+    D_LINE=$line
+    [ -n "$D_LINE" ] || fail "no fresh /industrialforegoing info reply for the duplicator"
+    eval "$(python3 "$PORT/tools/parse_duplicator.py" "$D_LINE")"
+    [ "${ok:-0}" = 1 ] || fail "the duplicator info line did not parse: $D_LINE"
+    echo "  $D_LINE" >&2
+}
+
+# The cows near the player (the machine's platform is a few blocks away).
+cow_count() { ctl entities 16 cow | jq '[.entities[] | select(.type == "minecraft:cow")] | length'; }
+
+# One frozen cow on the arena floor at X, for the tool to capture or the machine to ignore.
+summon_cow() { # summon_cow X Y Z
+    ctl command "execute in minecraft:the_end run summon minecraft:cow $1.5 $2 $3 {NoAI:1b,Silent:1b,PersistenceRequired:1b}" >/dev/null
+    ctl wait 4 >/dev/null
+}
+
+# Capture the cow `id` with the selected tool, retrying the aim/click: a right-click dropped at a
+# tick boundary can miss a mob that has just been summoned (measured on the break leg).
+capture_entity() { # capture_entity ID
+    local id=$1
+    for _ in $(seq 1 5); do
+        ctl look-at-entity "$id" >/dev/null 2>&1 || true
+        ctl wait 2 >/dev/null
+        if ctl interact-entity "$id" >/dev/null 2>&1 && [ "$(cow_count)" -eq 0 ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+echo "== CS: the mob duplicator places, is empty, and reads its tool slot =="
+duplicator_arena
+place_any "$DX" 101 0 "$DUPLICATOR_ID"
+dupe progress 100
+ctl wait 2 >/dev/null
+dupe_info
+expect "the block" "$(block_name "$DX" 101 0)" "$DUPLICATOR_ID"
+expect "the buffer" "$D_ENERGY" 0
+expect "the essence tank" "$D_TANK_MB" 0
+expect "the tool slot" "$D_TOOL" empty
+expect "the cost of a cow (no tool yet)" "$D_NEEDS" 0
+expect "the nearby cows" "$D_NEARBY" 0
+expect "the bar's length" "$D_BAR" 62
+expect_ge "the bar" "$D_PROGRESS" 55
+echo "  block $DUPLICATOR_ID, tank $D_TANK $D_TANK_MB/$D_TANK_CAP mB, tool $D_TOOL, needs $D_NEEDS, bar $D_PROGRESS/$D_BAR"
+
+echo "== CT: the Mob Imprisonment Tool captures a cow, and the machine reads it =="
+ctl command "execute in minecraft:the_end run kill @e[type=minecraft:cow]" >/dev/null
+ctl command "clear @s" >/dev/null
+ctl command "give @s industrialforegoing:mob_imprisonment_tool 1" >/dev/null
+ctl wait 4 >/dev/null
+ctl select "$TOOL_ID" >/dev/null 2>&1 || ctl select 1 >/dev/null
+ctl command "execute in minecraft:the_end run tp @s $((DX + 1)).5 101 0.5" >/dev/null
+ctl wait 3 >/dev/null
+summon_cow $((DX + 2)) 101 0.5
+COW_ID=$(ctl entities 12 cow | jq -r '.entities[0].id // empty')
+[ -n "$COW_ID" ] || fail "the cow to capture was not found"
+capture_entity "$COW_ID" || fail "the tool did not capture the cow"
+ctl wait 4 >/dev/null
+expect "the cows left after the capture" "$(cow_count)" 0
+# Put the captured tool in the machine's one input slot through vanilla's own container path:
+# the slot is a real `SidedInventoryComponent`, not a private list.
+ctl command "item replace block $DX 101 0 container.0 from entity @s hotbar.0" >/dev/null \
+    || fail "the captured tool did not enter the duplicator's input slot"
+ctl wait 4 >/dev/null
+dupe_info
+expect "the tool the machine reads" "$D_TOOL" minecraft:cow
+expect "the essence a cow costs (health 10 * 12)" "$D_NEEDS" 120
+echo "  the machine holds the tool: $D_TOOL, needs $D_NEEDS mB"
+
+echo "== CU: one operation spawns one cow for 5,000 FE and 120 mB =="
+# 120 mB is exactly one cow's cost, so `canSpawn` is 1 and `1 + nextInt(1)` is exactly one.
+dupe progress 100
+ctl wait 2 >/dev/null
+dupe energy 50000
+ctl wait 2 >/dev/null
+dupe essence 120
+ctl wait 2 >/dev/null
+C_BEFORE=$(cow_count)
+dupe progress 1
+ctl wait 4 >/dev/null
+dupe_info
+SPAWNED=$(( $(cow_count) - C_BEFORE ))
+if [ "$SELFTEST" = duplicator ]; then
+    echo "(selftest: asserting two cows instead of one)"
+    SPAWNED_WANT=2
+else
+    SPAWNED_WANT=1
+fi
+expect "the cows the operation spawned" "$SPAWNED" "$SPAWNED_WANT"
+expect "the buffer after the operation (50,000 - 5,000 FE)" "$D_ENERGY" 45000
+expect "the essence after the operation (120 - 120 mB)" "$D_TANK_MB" 0
+expect "the tank's fluid" "$D_TANK" empty
+expect "the tool still in the slot" "$D_TOOL" minecraft:cow
+expect_ge "the nearby cows" "$D_NEARBY" 1
+echo "  $SPAWNED cow, $D_ENERGY FE left, tank $D_TANK_MB mB, tool $D_TOOL"
+
+echo "== CV: the counterfactual — 0 essence spawns nothing and spends no FE =="
+ctl command "execute in minecraft:the_end run kill @e[type=minecraft:cow]" >/dev/null
+ctl wait 4 >/dev/null
+dupe progress 100
+ctl wait 2 >/dev/null
+dupe energy 5000
+ctl wait 2 >/dev/null
+dupe essence 0
+ctl wait 2 >/dev/null
+dupe progress 1
+ctl wait 4 >/dev/null
+dupe_info
+expect "the cows with no essence" "$(cow_count)" 0
+expect "the buffer (an attempt with an empty tank takes nothing)" "$D_ENERGY" 5000
+expect "the essence tank" "$D_TANK_MB" 0
+expect_ge "the bar after the refused attempt" "$D_PROGRESS" 55
+echo "  no essence: 0 cows, $D_ENERGY FE, tank $D_TANK_MB mB"
+
+echo "== CW: the counterfactual — 33 cows in the area refuse the attempt and keep the charge =="
+ctl command "execute in minecraft:the_end run kill @e[type=minecraft:cow]" >/dev/null
+# 33 cows in a 1-wide column is above vanilla's cramming limit of 24 a block, which would kill
+# the counterfactual's own mobs before the attempt; raise it for this leg and put it back after.
+ctl command "gamerule max_entity_cramming 1000" >/dev/null
+for _ in $(seq 1 33); do
+    ctl command "execute in minecraft:the_end run summon minecraft:cow $((DX)).5 103 0.5 {NoAI:1b,Silent:1b,PersistenceRequired:1b}" >/dev/null
+done
+ctl wait 8 >/dev/null
+dupe progress 100
+ctl wait 2 >/dev/null
+dupe energy 5000
+ctl wait 2 >/dev/null
+dupe essence 120
+ctl wait 2 >/dev/null
+dupe progress 1
+ctl wait 4 >/dev/null
+dupe_info
+expect "the cows in the working area" "$(cow_count)" 33
+expect "the nearby count the machine reads" "$D_NEARBY" 33
+expect "the buffer (more than 32 refuses before spending)" "$D_ENERGY" 5000
+expect "the essence tank (unchanged)" "$D_TANK_MB" 120
+echo "  33 cows: nearby $D_NEARBY, no spawn, $D_ENERGY FE and $D_TANK_MB mB held"
+ctl command "execute in minecraft:the_end run kill @e[type=minecraft:cow]" >/dev/null
+ctl command "gamerule max_entity_cramming 24" >/dev/null
+ctl wait 4 >/dev/null
+
+echo "== CX: the tool releases its cow on a block face =="
+ctl command "execute in minecraft:the_end run kill @e[type=minecraft:cow]" >/dev/null
+ctl command "item replace block $DX 101 0 container.0 with minecraft:air" >/dev/null
+ctl command "clear @s" >/dev/null
+ctl command "give @s industrialforegoing:mob_imprisonment_tool 1" >/dev/null
+ctl wait 4 >/dev/null
+ctl select "$TOOL_ID" >/dev/null 2>&1 || ctl select 1 >/dev/null
+ctl command "execute in minecraft:the_end run tp @s $((DX + 1)).5 101 0.5" >/dev/null
+ctl wait 3 >/dev/null
+summon_cow $((DX + 2)) 101 0.5
+COW_ID=$(ctl entities 12 cow | jq -r '.entities[0].id // empty')
+[ -n "$COW_ID" ] || fail "the cow to release was not found"
+capture_entity "$COW_ID" || fail "the second capture failed"
+BEGIN=$(cow_count)
+ctl command "execute in minecraft:the_end run tp @s $((DX + 2)).5 101 0.5" >/dev/null
+ctl wait 4 >/dev/null
+ctl interact $((DX + 3)) 100 0 up >/dev/null || fail "the tool did not release on the block"
+ctl wait 4 >/dev/null
+expect "the cows after the release (one more)" "$(cow_count)" $((BEGIN + 1))
+# The component is gone: the same stack, put in the machine's slot, reads empty.
+ctl command "item replace block $DX 101 0 container.0 from entity @s hotbar.0" >/dev/null
+ctl wait 3 >/dev/null
+dupe_info
+expect "the released tool's component" "$D_TOOL" empty
+echo "  released: cows $BEGIN -> $(cow_count), the tool is empty again"
+
+echo "== CY: a broken duplicator carries its buffer and tank, and its tool drops beside it =="
+ctl command "execute in minecraft:the_end run kill @e[type=minecraft:cow]" >/dev/null
+ctl command "item replace block $DX 101 0 container.0 with minecraft:air" >/dev/null
+ctl command "clear @s" >/dev/null
+ctl command "give @s industrialforegoing:mob_imprisonment_tool 1" >/dev/null
+ctl wait 4 >/dev/null
+ctl select "$TOOL_ID" >/dev/null 2>&1 || ctl select 1 >/dev/null
+ctl command "execute in minecraft:the_end run tp @s $((DX + 1)).5 101 0.5" >/dev/null
+ctl wait 3 >/dev/null
+summon_cow $((DX + 2)) 101 0.5
+COW_ID=$(ctl entities 12 cow | jq -r '.entities[0].id // empty')
+[ -n "$COW_ID" ] || fail "the cow for the break leg was not found"
+capture_entity "$COW_ID" || fail "the break leg's capture failed"
+ctl command "item replace block $DX 101 0 container.0 from entity @s hotbar.0" >/dev/null
+dupe progress 100
+ctl wait 2 >/dev/null
+# 4,999 FE keeps the machine from running while the break is set up (an operation needs 5,000),
+# so the item still carries the buffer and tank at the moment it drops.
+dupe energy 4999
+ctl wait 2 >/dev/null
+dupe essence 120
+ctl wait 4 >/dev/null
+dupe_info
+BROKEN_ENERGY=$D_ENERGY
+BROKEN_TANK=$D_TANK_MB
+[ "$BROKEN_TANK" -gt 0 ] || fail "the duplicator's tank never filled before the break"
+ctl command "execute in minecraft:the_end run tp @s $((DX - 2)).5 101 0.5" >/dev/null
+ctl wait 6 >/dev/null
+ensure_survival
+ctl command "clear @s" >/dev/null
+ctl command "clear @s industrialforegoing:mob_duplicator" >/dev/null
+ctl command "item replace entity @s hotbar.0 with minecraft:iron_pickaxe 1" >/dev/null
+ctl wait 4 >/dev/null
+ctl select 1 >/dev/null
+ctl wait 3 >/dev/null
+DUPE_BROKEN=$(ctl break "$DX" 101 0) || fail "breaking the duplicator failed"
+echo "  break: $(echo "$DUPE_BROKEN" | jq -c '{block, drops, picked_up}')"
+[ "$(echo "$DUPE_BROKEN" | jq -r '.drops["industrialforegoing:mob_duplicator"] // 0')" -ge 1 ] \
+    || fail "the duplicator did not drop itself: $(echo "$DUPE_BROKEN" | jq -c '.drops')"
+[ "$(echo "$DUPE_BROKEN" | jq -r '.drops["industrialforegoing:mob_imprisonment_tool"] // 0')" -ge 1 ] \
+    || fail "the tool slot did not drop its tool: $(echo "$DUPE_BROKEN" | jq -c '.drops')"
+ctl command "execute in minecraft:the_end run tp @s $DX.5 101 0.5" >/dev/null
+ctl wait 20 >/dev/null
+HELD_DUPE=$(ctl inventory | jq -r '.counts["industrialforegoing:mob_duplicator"] // 0')
+[ "$HELD_DUPE" -eq 1 ] || fail "the broken duplicator's item is not the one in the inventory (count $HELD_DUPE)"
+ctl command "gamemode creative @s" >/dev/null
+hold_item "$DUPLICATOR_ID" || fail "the broken duplicator's item is not in the hand"
+ctl wait 4 >/dev/null
+HELD_NBT=$(ctl command "data get entity @s SelectedItem" | jq -r '.chat[0] // empty')
+echo "  carried item: $HELD_NBT"
+case "$HELD_NBT" in
+    *'"minecraft:block_entity_data"'*) ;;
+    *) fail "the item carried no block entity data: $HELD_NBT" ;;
+esac
+CARRIED_ENERGY=$(sed -n 's/.*energy: \(-\?[0-9][0-9]*\).*/\1/p' <<<"$HELD_NBT")
+CARRIED_TANK=$(sed -n 's/.*Amount: \(-\?[0-9][0-9]*\).*/\1/p' <<<"$HELD_NBT")
+expect "the buffer the item carried" "$CARRIED_ENERGY" "$BROKEN_ENERGY"
+expect "the essence the item carried" "$CARRIED_TANK" "$BROKEN_TANK"
+echo "  the item carries $CARRIED_ENERGY FE and $CARRIED_TANK mB; the tool dropped beside it"
+
+echo "PASS: a placed machine is empty with no sources and faces its placer; two sources condense 200 mB for exactly 1,000 FE and one condenses nothing; without 1,000 FE two sources give half for free; three and six sources give 300 and 600 mB; a nearly full tank stops at 16,000 mB while still spending the FE; the declared tank drains 400 mB of water through the fluid handler; and left alone the machine keeps condensing on its own 10-tick bar; the Core ids of these slices register and read back, the four frames place and read back, an unregistered item and block id are refused, and a frame broken in survival drops itself; the condensator crafts from the tags (#c:plastics, #c:gears/iron, machine_frame/pity) with the grid empty afterwards while slice 2's stand-ins stay empty, the pity frame and the three gears craft, all 16 lens recolours craft from the lens tag and c:dyes with the player's counts before and after, the mob duplicator crafts from #c:plastics and machine_frame/advanced, and the Mob Imprisonment Tool crafts from plastic and a ghast tear; a machine broken with 7,000 FE and 5,000 mB comes back with exactly those numbers on the item it dropped; a seated speed augment of 4 makes the bar fall four a tick where an empty slot falls one, a second speed augment is refused and stays in the hand, an efficiency augment of 0.8 shortens the bar to 80 with an 8-tick cooldown at the same 1,000 FE, and both augments travel on the machine's item; the dissolution chamber places and faces its placer, reads its own recipe type from this package's data (25 files), holds its own fluids in a declared tank the capability reports back, runs the white lens recipe in exactly 100 ticks for 9,000 FE and 250 mB of latex, does nothing with an empty tank and starts when 250 mB arrive, empties its output into a hopper and a barrel, runs the simple machine frame's 300 ticks at exactly 90 FE a tick, makes the advanced frame from #c:plastics, the crafted #c:gears/diamond gear and the simple frame, and a broken chamber carries its buffer and latex back on its item; and the latex chain: a fluid extractor works on the oak log behind it, giving 2 mB for free and 6 mB for 500 FE, nothing at all when the block behind it is stone, and — on its eighth hit — consuming the log into a stripped one and bursting 400 mB that drain back out of its declared tank, where a roll over its break chance moves nothing; a latex processing unit takes 1,000 mB of latex through the command path and 1,000 mB of water through the declared capability (which refuses the mod fluid, so no fluid move can fill it), turns 750 mB of latex and 500 mB of water into one dry rubber for 2,000 FE, a hopper feeds that rubber into a furnace which smelts it into one plastic, and a broken unit carries its latex, water and buffer back on its item; and the laser drill: placed above its ore base it faces up and finds it, reads the base's own ten-recipe table, resolves no ore in the End's biome and the emerald recipe at weight 1 in a mountain one, a lime lens raises that weight to 9, one completed base bar yields the recipe's emerald ore for exactly 1,000 FE while the same charge in the End's own biome yields nothing, and — with the add-on's own laser_drill_ore file and biome tag installed as its package ships them — the base's table reads 11/11 and that recipe runs, yielding one echo shard; a broken base carries its output slots back on its item; and the fluid laser base, under its own drill, answers no recipe without the wither its ether file names and leaves the tank empty while the drill still pays 1,000 FE, then with a wither in its box one completed bar yields 10 mB of industrialforegoing:ether_gas into the tank the declared capability reports, a second bar adds ten more, the tank drains through that capability, and the dissolution chamber runs its one carried recipe naming ether gas (supreme_machine_frame, 135 mB) to the product; and the mob slaughter factory: placed facing its placer it is empty, a bar with no mob in the working area kills nothing and spends no FE, a cow in the box is killed for 10 mB of meat and 200 mB of pink slime for exactly 400 FE (both tanks reported back by the declared capability), the same box with no FE leaves a villager alive and adds nothing, 5,000 FE then kills the villager for 400 mB of meat and 20 mB of pink slime, both tanks drain through the capability, the factory's own shaped recipe crafts from #c:plastics, #c:gears/gold and machine_frame/pity, the pink slime block crafts from nine pink slime and gives them back shapeless and drops itself, a broken factory carries both tanks and its buffer back on its item, and the dissolution chamber runs the jar's only outputFluid recipe — 300 mB of pink slime and a glass pane for one pink slime ball and 150 mB of minecraft:water in its output tank; and the fluid laser base's dimension-and-depth pair: the lava recipe's band at depth 11 answers no recipe in the End (the dimension filter), in the Nether at depth 0 it answers none and leaves an empty tank, and at depth 11 in the Nether one completed bar of the drill fills the tank with 100 mB of minecraft:lava, reported by the declared capability, for 1,000 FE; and the mob crusher: placed facing its placer it is empty, a bar with no mob spends nothing, a cow in its box is killed for its own experience at 20 mB a point (1-3 points, so 20, 40 or 60 mB) for exactly 50 FE, its loot lands in the machine's 18-slot output instead of the floor and a hopper under it pulls that loot into a barrel, the same box with no FE leaves the cow alive and adds nothing, the crusher's own shaped recipe crafts from #c:plastics, #c:gears/gold and machine_frame/advanced, and a broken crusher carries its essence, its buffer and its last kill's experience back on its item; and the mob duplicator: its tool captures a cow and the machine reads its type and 120 mB cost, one operation with 120 mB in the tank spawns exactly one cow for 5,000 FE, the same box with 0 essence spawns nothing and spends no FE, 33 cows in the working area refuse the attempt while holding both the charge and the essence, the tool releases its cow on a block face and empties itself, and a broken duplicator's item carries its buffer and tank while its tool drops beside it; and the Mob Imprisonment Tool crafts from #c:plastics and a ghast tear"

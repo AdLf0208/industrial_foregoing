@@ -1,0 +1,21 @@
+{
+  "category": "misc",
+  "key": {
+    "C": "minecraft:magma_cream",
+    "E": "minecraft:emerald",
+    "M": "#industrialforegoing:machine_frame/advanced",
+    "P": "#c:plastics",
+    "R": "minecraft:redstone",
+    "W": "minecraft:nether_wart"
+  },
+  "pattern": [
+    "PWP",
+    "CMC",
+    "ERE"
+  ],
+  "result": {
+    "count": 1,
+    "id": "industrialforegoing:mob_duplicator"
+  },
+  "type": "minecraft:crafting_shaped"
+}

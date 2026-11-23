@@ -1,0 +1,17 @@
+{
+  "category": "misc",
+  "key": {
+    "G": "minecraft:ghast_tear",
+    "P": "#c:plastics"
+  },
+  "pattern": [
+    " P ",
+    "PGP",
+    " P "
+  ],
+  "result": {
+    "count": 1,
+    "id": "industrialforegoing:mob_imprisonment_tool"
+  },
+  "type": "minecraft:crafting_shaped"
+}

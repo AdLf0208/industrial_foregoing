@@ -47,7 +47,10 @@ has its source, the pink slime item/ingot/block ship with their recipes and tags
 chamber finally runs an `outputFluid` recipe in game (the jar's only one, `pink_slime_ball`). slice 10
 (0.2.10, 2026-11-23) is the **Nether leg** for the fluid type's **lava** recipe — evidence-only, with
 no packed file changed but the version string — and closes deviation 37 for the dimension and depth
-arms. The gap list at the end is the rest of the mod.
+arms. slice 12 (0.2.11, 2026-11-23) adds the **Mob Duplicator and the Mob Imprisonment Tool**: the
+first consumer of `industrialforegoing:essence`, a 62-tick bar, a 50,000 FE buffer, an 8,000 mB
+fill-only tank, a one-slot tool input and `Host::summon`; the tool captures/releases a mob and is the
+parent item a future add-on can bind to. The gap list at the end is the rest of the mod.
 
 **Why this mod now:** it is the rank-0 `content`/`machines` core mod
 `precheck-mod.py industrialforegoing` offers (`DISPATCHABLE`, jar licence MIT,
@@ -2156,9 +2159,213 @@ dropped. The re-run reached its own assertion. Nothing in this slice touches tha
 > byte; `src/crusher.rs` is a seventh pure module. The remaining families (the mob duplicator, the
 > animal machines, the generators, the conveyors, the GUI) are the next slices.
 
+## Slice 12 — the Mob Duplicator and the Mob Imprisonment Tool (0.2.11, 2026-11-23)
+
+**The slice: gap 9's remaining family** — slice 11's own closing line reads *"The remaining families
+(the mob duplicator, the animal machines, the generators, the conveyors, the GUI) are the next
+slices"* — and it is the crate's first **consumer** of `industrialforegoing:essence`: the crusher
+made the fluid, the duplicator spends it. Tier **machines** (ledger): one block entity, a 50,000 FE
+buffer, an 8,000 mB fill-only tank, a one-slot input container, a server tick, an entity scan and
+`Host::summon`; no renderer, no dimension work, no recipe type.
+
+### Upstream (jar `industrial-foregoing-1.21-3.6.39.jar`; source `Buuz135/Industrial-Foregoing`
+### `ce2852db`, clone deleted after the findings)
+
+`MobDuplicatorConfig` — the **values**, not the comments beside them (the comments are stale for
+three of the five, exactly as the crusher's and the chamber's were):
+
+| key | value | the comment beside it says |
+|---|---:|---|
+| `maxProgress` | **62** | 100 |
+| `powerPerOperation` | **5,000** | 400 |
+| `maxStoredPower` | **50,000** | 10,000 |
+| `tankSize` | **8,000** | 8,000 |
+| `essenceNeeded` | **12** per health point | 12 |
+| `exactCopy` | false | — |
+
+`MobDuplicatorTile extends IndustrialAreaWorkingTile(TOP_UP)`: a bar counting down from 62; the
+working area is `AABB.move(0,2,0).expandTowards(0,1,0)` — the 1-wide, two-block column two blocks
+above the machine — and **the block has no `subfacing`** (`MobDuplicatorBlock` does not override
+`getRotationType()`, and its blockstate's only variant is `""`). At zero:
+
+1. no tool, or `< 5,000 FE` → `WorkAction(1, 0)`: nothing, no FE;
+2. empty tank → the same;
+3. the tool's entity unreadable, or its type in `industrialforegoing:mob_duplicator_blacklist` →
+   the same;
+4. **more than 32** entities of that class in the area → the same;
+5. `essenceNeeded = (int)(entity.getHealth() * 12)`, `canSpawn = tank / max(essenceNeeded, 1)`;
+   `canSpawn == 0` → the same;
+6. `spawnAmount = 1 + level.random.nextInt(min(canSpawn, 4))`; each successful spawn drains
+   `essenceNeeded`; the attempt spends **5,000 FE** and rests the bar **full**.
+
+`MobImprisonmentToolItem`: `stacksTo(1)`; a captured entity in the
+`industrialforegoing:mob_imprisonment_tool` component as `{entity: "<type id>", …saveWithoutId()}`;
+right-click an alive, non-player, non-boss, non-blacklisted entity to capture (`remove(DISCARDED)`);
+right-click a block face to release it; the tooltip shows the mob and its health.
+
+### What the port does
+
+| piece | where | what |
+|---|---|---|
+| the rules | `src/duplicator.rs` (an eighth pure module) | the constants above, `Duplicator` (energy, bar, tank, `increase`), `Attempt` (health, nearby, draw), `Step::{Working, Idle, Spawn{count, essence_each}}`, `essence_for_health` (Java's int truncation), `spawn_count = 1 + min(draw, min(canSpawn,4)-1)`, the same augment arithmetic as the crusher |
+| the machine | `src/mobduplicator.rs` | declarations, the tick, `working_area`, the nearby count (alive, same type id), the spawn position (the lowest clear block; no liquid), `Host::summon`, the readout and the saved compound |
+| the tool | the same module | `ItemPart::item_interact_mob` captures, `use_on` releases, `tooltip` shows `Mob:`/`Health:`; the component is registered in `component_types` |
+| the tank | `Registrar::block_fluids` | `Action.FILL`: `inputs = [0]`, `outputs = []`; the harness writes it with `/industrialforegoing essence` because the pin's fluid insert refuses a mod fluid (the chamber's route) |
+| the container | `Registrar::block_container` | one input slot; the tick refuses a stack that is not the tool |
+| the commands | `register_commands`/`run_mod_command` | `info`, `energy`, `progress`, `essence` |
+| the drop | `Hooks::block_drops` | the item carries the saved `energy`/`fluids`/`progress`; `Items` is stripped, so the tool drops beside the block and never twice |
+
+### TDD, in order
+
+1. **Red** (`src/duplicator.rs` and `src/mobduplicator.rs` bodies at `todo!()`; the log is
+   `evidence/industrialforegoing/sdk-test-red-slice12.log`): **192 passed, 14 failed**, every new
+   failure `panicked at src/…: not yet implemented` — e.g.
+   `duplicator::tests::one_spawn_costs_five_thousand_fe_and_rests_the_bar_full`,
+   `duplicator::tests::more_than_thirty_two_of_the_same_class_refuses_without_fe`,
+   `mobduplicator::tests::a_broken_duplicator_carries_its_buffer_tank_and_bar_but_not_its_slot`.
+2. The rules, then the glue, then the content; green: **206 passed, 0 failed**
+   (`sdk-test.log`), clippy 0, `fmt --check` clean.
+3. Content: `tools/assemble_duplicator.py` (24 files, `--check` identical), the two shaped recipes
+   in `tools/craft_recipe.py`, the family's checks and four selftest mutations in
+   `tools/verify_content.py` (`CONTENT OK: 422 content files`).
+
+### In game, phases CS–CY (`evidence/industrialforegoing-e2e/e2e-launcher-slice12.log`)
+
+| phase | what it asserts | the value it read |
+|---|---|---|
+| CS | the machine places from its item and is empty | `0/50000 FE`, `tank empty 0/8000`, `tool empty`, `needs 0`, `nearby 0`, bar `59/62` |
+| CT | the tool captures a cow and the machine reads its type and cost | `tool minecraft:cow`, `needs 120 mB` |
+| CU | **the brief's assertion** — 120 mB and 50,000 FE, one operation | **+1 cow**, `45000/50000 FE`, tank `0`, tool still `minecraft:cow` |
+| CV | **counterfactual: 0 essence** | 0 cows, `5000 FE` unchanged, tank 0 |
+| CW | **counterfactual: 33 cows at the cap** | `nearby 33`, no spawn, `5000 FE` and `120 mB` held |
+| CX | the tool releases on a block face and empties itself | cows `0 -> 1`, machine reads `tool empty` |
+| CY | a broken machine's item carries its buffer and tank; the tool drops beside it | `drops{mob_duplicator:1, mob_imprisonment_tool:1}`, item's component `energy: 4999`, `Amount: 120` |
+
+The transcript's own lines:
+
+```
+== CT: the Mob Imprisonment Tool captures a cow, and the machine reads it ==
+  Mob Duplicator at [280, 101, 0]: 0/50000 FE, tank empty 0/8000 mB, capability empty 0 mB, tool minecraft:cow, needs 120 mB, nearby 0, progress 10/62, augments speed 1 efficiency 1.00, t=7265
+== CU: one operation spawns one cow for 5,000 FE and 120 mB ==
+  Mob Duplicator at [280, 101, 0]: 45000/50000 FE, tank empty 0/8000 mB, capability empty 0 mB, tool minecraft:cow, needs 120 mB, nearby 1, progress 58/62, augments speed 1 efficiency 1.00, t=7289
+  1 cow, 45000 FE left, tank 0 mB, tool minecraft:cow
+== CW: the counterfactual — 33 cows in the area refuse the attempt and keep the charge ==
+  Mob Duplicator at [280, 101, 0]: 5000/50000 FE, tank industrialforegoing:essence 120/8000 mB, capability industrialforegoing:essence 120 mB, tool minecraft:cow, needs 120 mB, nearby 33, progress 59/62, augments speed 1 efficiency 1.00, t=7388
+  33 cows: nearby 33, no spawn, 5000 FE and 120 mB held
+== CY: a broken duplicator carries its buffer and tank, and its tool drops beside it ==
+  break: {"block":"minecraft:air","drops":{"industrialforegoing:mob_duplicator":1,"industrialforegoing:mob_imprisonment_tool":1},"picked_up":{}}
+  carried item: … "minecraft:block_entity_data": {progress: 51, id: "industrialforegoing:mob_duplicator", energy: 4999, fluids: [{Amount: 120, Fluid: "industrialforegoing:essence"}]} …
+  the item carries 4999 FE and 120 mB; the tool dropped beside it
+```
+
+**Fail-capable:** the control leg (same Nightly, no package) stops at its first assertion
+(`Unknown item 'industrialforegoing:water_condensator'`, `EXIT:1`); `SELFTEST=1` flips B
+(`FAIL: the water is 200, expected 201`, `EXIT:1`); **`SELFTEST=duplicator`** flips CU's spawned
+count (`FAIL: the cows the operation spawned is 1, expected 2`, `EXIT:1`). All three logs are in
+`evidence/industrialforegoing-e2e/`; `check-e2e-logs.py --strict` reads **20/20**.
+
+The run cost two harness corrections worth recording: `max_entity_cramming` is 24 by default, so
+33 cows in one block die before the cap attempt (`gamerule max_entity_cramming 1000` for CW and
+back to 24 after), and a broken machine's item can be picked into the **main** inventory, which
+`ctl place --item` cannot reach — `hold_item` moves it to `hotbar.0` first. The break leg also
+sets **4,999 FE**, not 5,000: an operation needs 5,000, so the buffer and tank survive the break
+setup without the machine spending them.
+
+### Coverage (families this slice adds)
+
+| family | coverage |
+|---|---|
+| `mob_duplicator` (block + item) | `tested` — CS places it from its item and reads it back; CY breaks it and reads `drops{mob_duplicator: 1}` |
+| the 62-tick bar, 5,000 FE an operation, rest full | `tested` — CU spends exactly 5,000 and rests the bar; CV/CW refuse without spending (bar ≥55); the arithmetic is `duplicator::Duplicator::tick` |
+| the working area (two blocks above, 1 wide) | `tested` — CW's 33 cows at y=103 are `nearby 33`; `working_area` is unit-tested |
+| the 32-mob cap | `tested` — CW: 33 refuses, CU: 1 does not |
+| `essenceNeeded = health × 12` | `tested` — CT reads `needs 120` for a cow; the unit tests pin 10/20/4/7.5 health → 120/240/48/90 |
+| the 8,000 mB fill-only tank | `tested` — CU/CW/CY read `tank industrialforegoing:essence 120/8000` and the declared capability; `outputs` is empty |
+| the one-slot input container | `tested` — CT/CY put the captured tool in through `/item replace block … container.0` |
+| `Host::summon` and the spawn count | `tested` — CU `+1 cow`; the pure `spawn_count` pins 1..4 and the `min(canSpawn,4)` draw |
+| the Mob Imprisonment Tool's capture | `tested` — CT/CY capture a cow (`cows 0`) and the machine reads `minecraft:cow` |
+| the tool's release | `tested` — CX releases one cow and the machine reads `tool empty` |
+| the tool's `stacksTo(1)` and item definition | `tested` by `verify_content.py`; CT/CY hold one |
+| the two blacklist entity-type tags | `carried` — both the jar's empty files; the machine/tool read them through `Host::entity_type_in_tag`; no packed entry to exercise at this pin |
+| the two carried recipes | `tested` — phase K crafts the duplicator (`PWP/CMC/ERE`) and the tool (` P /PGP/ P `), consumes every ingredient |
+| the jar's tooltip | `ported` — `tooltip` prints `Mob:`/`Health:`; no screen assertion (`--headless` has no tooltip) |
+| a GUI screen, redstone modes, comparator, config | `not ported` — gaps 1, 2, 7, 8 |
+| the range addons, animal machines, generators, conveyors | `not ported` — gap 9's remaining families |
+
+### Deviations and gaps this slice adds
+
+56. **The spawn position is deterministic, not random.** Upstream picks one of the column's blocks
+    at random and retries 20 times; the port takes the lowest clear block (no collision box, no
+    fluid). A user notices the mob always appears at the bottom of the column.
+57. **The essence cost is the captured NBT's `Health`, not a fresh entity's max health.** With
+    `exactCopy = false` upstream creates a fresh entity and charges its max health; the pin has no
+    read for a type's default attributes, so a wounded capture costs its current health × 12. A
+    full-health capture (the normal case) is identical.
+58. **The nearby cap counts the same type id, not the Java class.** A cow and a mushroom cow are
+    different ids and classes; a subclass with its own type id would be counted separately where
+    upstream's `getClass()` groups it.
+59. **The input slot has no item filter.** `ModContainer` declares slots and faces, not a per-slot
+    predicate; a hopper can insert anything, and the tick simply refuses a non-tool. The tool's own
+    `stacksTo(1)` is the item declaration, not a slot limit.
+60. **The tooltip is text only; the item's dynamic name is not changed.** Upstream appends
+    `(minecraft:cow)` to `getName`; the pin's item naming is content, not a Part hook, so the name
+    stays "Mob Imprisonment Tool" and the captured mob is on the tooltip and the machine readout.
+
+### The package (0.2.11)
+
+| | |
+|---|---|
+| version | `0.2.11` |
+| pin | `native-mod`, format `native-1/0a875da…/e59da90…`, for 26.3 |
+| size | **366,772 B**, 444 entries, no packed `Cargo.lock` |
+| SHA-256 | `f7154dc52f6c9a343a11d5b757b1c674bb924c92ba199f2d73a1ccc91fa962ad` (two clean-lock builds `cmp`-identical) |
+| `check` | `industrialforegoing 0.2.11 (native-mod, format …)`, exit 0 |
+| `fits` | `0a875da  made for`, `0b14f8a  fits`, both exit 0 |
+| `check-recipe-types` | `industrialforegoing: ok` |
+| runtime | `src/runtime.rs` packed = tree, `83ae3b11…` |
+| launcher | `Compiling industrialforegoing (1 of 1)`, exported `version = "0.2.11"` |
+| gate | `verify-sdk-package.py industrialforegoing` **1/1** |
+| tests | 206 (was 186; +20: twelve rules in `src/duplicator.rs`, eight glue/declaration tests in `src/mobduplicator.rs`) |
+
+### The changelog for the 0.2.11 update
+
+> Updates the entry this campaign already has (retaining its open PR). **New: the Mob Duplicator
+> and the Mob Imprisonment Tool.** The machine has a 62-tick bar, a 50,000 FE buffer at 5,000 FE an
+> operation, an 8,000 mB fill-only essence tank and a one-slot tool input; at zero it reads the
+> tool's entity and, with 32 or fewer of that type in the working column two blocks above it,
+> spawns `1 + random.nextInt(min(canSpawn, 4))` fresh mobs for `health × 12` mB each. The tool
+> captures an alive mob into `industrialforegoing:mob_imprisonment_tool` (`{entity, …NBT}`),
+> releases it on a block face and shows the mob and health on its tooltip; it stacks to one. Both
+> ship with their shaped recipes (`PWP/CMC/ERE` from `#c:plastics` and the advanced frame;
+> ` P /PGP/ P ` from plastic and a ghast tear), names, models, loot, the jar's two empty
+> entity-type blacklists and the Agriculture & Husbandry tab. Proven in game: the tool captured a
+> cow and the machine read `minecraft:cow`/120 mB; 120 mB in the tank spawned exactly one cow for
+> 5,000 FE; the same box with 0 essence spawned nothing and spent nothing; 33 cows in the area
+> refused the attempt while holding the charge and the essence; the tool released its cow and
+> emptied itself; and a broken duplicator's item carried 4,999 FE and 120 mB while its tool dropped
+> beside it. `src/runtime.rs` is unchanged, byte for byte; `src/duplicator.rs` is an eighth pure
+> module. The remaining families (the animal machines, the generators, the conveyors, the GUI) are
+> the next slices.
+
+### Add-on re-check at this pin (the brief asked whether the tool is their missing surface)
+
+**It is not.** The current add-on jars were read rather than assumed:
+
+- `mifa-neoforge-1.21.x-2.1.0.jar`: **0** hits for `industrialforegoing:mob_duplicator`,
+  **0** for `mob_imprisonment`; its parent ids are the chamber, the gears, `c:plastics`, the
+  addons, `latex`/`ether_gas`/`pink_slime`/`biofuel`/`sludge`. Its own notes are blocked on
+  `c:experience` and the parent's `Processing` tiers.
+- `industrial-foregoing-souls-1.21.1-1.10.7.jar`: **0** hits for either id; it names
+  `blue_laser_lens`, `laser_drill_ore` and `machine_frame/advanced`, and its notes are partial on
+  the comparator/acceleration hooks, not on a tool.
+
+The evidence is `evidence/industrialforegoing/addon-recheck-slice12.log`. Neither row changes; the
+tool is a parent item for a future add-on, not the surface these two were waiting on.
+
+
 ## Skills
 
-Skills: superpowers/using-superpowers,brainstorming,writing-plans,test-driven-development,systematic-debugging,verification-before-completion; BeautifulRust/rust-best-practices,rust-review (slice 11: `brainstorming` to take the crusher from gap 9 and weigh the brief's per-health essence against the jar's `experience * 20`, `writing-plans` for SLICE-11-PLAN.md, `test-driven-development` for the ten red rules and the red glue/declaration tests (`173 passed, 13 failed`, every one `not yet implemented`) and then the in-game assertion before it was trusted, `systematic-debugging` for the two in-game gates this slice cost (the launcher's build lock held by another port, and the launcher's reuse of a same-version build — four `native-*` tags were removed before the rebuild) and for the creative-mode break flake in phase L, `verification-before-completion` before every claim; `rust-best-practices` for the seventh pure module, the fake-player kill and the two harvest hooks, `rust-review` for the after-the-fact audit of `src/mobcrusher.rs` and `src/crusher.rs` — it weighed clippy's `question_mark` finding on the first run, the `Candidate::blacklisted` field the pure filter correctly ignores, and the `Gain` type's needless `Copy`-by-hash (replaced with an owned dimension string); `rust-review`'s rules also shaped the code: no `unwrap` outside tests, an enum for the two kill paths (`AttackPath`) instead of a bool, and the harvest statics kept behind one module so no other machine can read them; slice 10: `brainstorming` to take the Nether leg from deviation 37 and weigh the brief's depth-0 counterfactual against the dimension arm the recipe actually names, `writing-plans` for SLICE-10-PLAN.md, `test-driven-development` for the in-game assertion written before the package was rebuilt — its red is `SELFTEST=nether`, because the family itself shipped in 0.2.8 — `systematic-debugging` for the harness flakes that cost four runs (`wait-ready` returning while the client still said "Loading terrain...", the game's `[CHAT]` log stopping while `ctl messages` answered, and a `ctl wait` loop exhausting itself before the server ticked), and `verification-before-completion` before recording; `rust-best-practices` loaded and the ladder run, no Rust change: 0.2.10 differs from 0.2.9 only in the version string; `rust-review`: none (no Rust diff); slice 9: `brainstorming` to choose the factory from deviations 19 and 21 and weigh the brief's "FE still spent" against `SlaughterFactoryTile.work()`, `writing-plans` for SLICE-9-PLAN.md, `test-driven-development` for the eight red rules and nine red glue tests (`149 passed, 17 failed`, every one `not yet implemented`), `systematic-debugging` for the chamber that stopped advancing its bar (seven probes in clean worlds, all green; the quirk and the padding fix are recorded in the slice 9 section) and for the two craft-script defects the game found (a stack of two `stacksTo(1)` items leaves the second cell empty; a chamber that has run a recipe is not ticked any more in that world), and `verification-before-completion` before recording; `rust-best-practices` for the sixth pure module and its glue, `rust-review` for the after-the-fact audit of `src/mobslaughter.rs`; slice 8: `brainstorming` to choose the fluid laser base from the port's own coverage row and weigh the brief's "a biome the ether recipe names" against the jar's empty whitelist, `writing-plans` for SLICE-8-PLAN.md, `test-driven-development` for the eight red rules and the five red glue tests, `systematic-debugging` for the two in-game gates this slice cost — the launcher's content-hash cache reporting "up to date" and the depth-band differential that replaced a biome counterfactual the artefact does not have — and `verification-before-completion` before recording; `rust-best-practices` for the fifth pure module and the glue, `rust-review` for the after-the-fact audit of `src/fluidbase.rs`; slice 7: `brainstorming` to choose the laser drill from the gap list and weigh the brief's "the ore the base sits on" against the jar's biome/depth rule, `writing-plans` for SLICE-7-PLAN.md, `test-driven-development` for the 14 red rules and the 9 red glue tests, `systematic-debugging` for the six in-game gates this slice cost — the ingredient-object decode (`recipes 0/10`), the biome zoom, the datapack/tag reload, the placement aim, the message/log window, and the loot condition shape — and `verification-before-completion` before recording; `rust-best-practices` for the new pure module and the glue, `rust-review` for the after-the-fact audit of `src/laserdrill.rs`)
+Skills: superpowers/using-superpowers,brainstorming,writing-plans,test-driven-development,systematic-debugging,verification-before-completion; BeautifulRust/rust-best-practices,rust-review (slice 12: `brainstorming` to take the duplicator from gap 9 and weigh the brief's "place it facing its placer" against the jar's state-free block (`MobDuplicatorBlock` has no `getRotationType`; the generated blockstate is `""`), `writing-plans` for SLICE-12-PLAN.md, `test-driven-development` for the twelve red rules and eight red glue tests (`192 passed, 14 failed`, every one `not yet implemented`) and then the in-game assertion before it was trusted, `systematic-debugging` for the four harness gates this slice cost (the 24-entity cramming limit that killed the cap counterfactual's own cows, a broken item picked into the main inventory, `ctl place --item` reaching the wrong stack, and a machine that spent its buffer during the break setup — 4,999 FE keeps it idle), and `verification-before-completion` before every claim; `rust-best-practices` for the eighth pure module, `Host::summon`, the tool's component and the item parts, `rust-review` for the after-the-fact audit of `src/duplicator.rs` and `src/mobduplicator.rs` — it shaped the pure/glue split (the random draw is an input, not a host call in the rules), the `Attempt`/`Step` types, and the no-`unwrap` saved-compound reads; slice 11: `brainstorming` to take the crusher from gap 9 and weigh the brief's per-health essence against the jar's `experience * 20`, `writing-plans` for SLICE-11-PLAN.md, `test-driven-development` for the ten red rules and the red glue/declaration tests (`173 passed, 13 failed`, every one `not yet implemented`) and then the in-game assertion before it was trusted, `systematic-debugging` for the two in-game gates this slice cost (the launcher's build lock held by another port, and the launcher's reuse of a same-version build — four `native-*` tags were removed before the rebuild) and for the creative-mode break flake in phase L, `verification-before-completion` before every claim; `rust-best-practices` for the seventh pure module, the fake-player kill and the two harvest hooks, `rust-review` for the after-the-fact audit of `src/mobcrusher.rs` and `src/crusher.rs` — it weighed clippy's `question_mark` finding on the first run, the `Candidate::blacklisted` field the pure filter correctly ignores, and the `Gain` type's needless `Copy`-by-hash (replaced with an owned dimension string); `rust-review`'s rules also shaped the code: no `unwrap` outside tests, an enum for the two kill paths (`AttackPath`) instead of a bool, and the harvest statics kept behind one module so no other machine can read them; slice 10: `brainstorming` to take the Nether leg from deviation 37 and weigh the brief's depth-0 counterfactual against the dimension arm the recipe actually names, `writing-plans` for SLICE-10-PLAN.md, `test-driven-development` for the in-game assertion written before the package was rebuilt — its red is `SELFTEST=nether`, because the family itself shipped in 0.2.8 — `systematic-debugging` for the harness flakes that cost four runs (`wait-ready` returning while the client still said "Loading terrain...", the game's `[CHAT]` log stopping while `ctl messages` answered, and a `ctl wait` loop exhausting itself before the server ticked), and `verification-before-completion` before recording; `rust-best-practices` loaded and the ladder run, no Rust change: 0.2.10 differs from 0.2.9 only in the version string; `rust-review`: none (no Rust diff); slice 9: `brainstorming` to choose the factory from deviations 19 and 21 and weigh the brief's "FE still spent" against `SlaughterFactoryTile.work()`, `writing-plans` for SLICE-9-PLAN.md, `test-driven-development` for the eight red rules and nine red glue tests (`149 passed, 17 failed`, every one `not yet implemented`), `systematic-debugging` for the chamber that stopped advancing its bar (seven probes in clean worlds, all green; the quirk and the padding fix are recorded in the slice 9 section) and for the two craft-script defects the game found (a stack of two `stacksTo(1)` items leaves the second cell empty; a chamber that has run a recipe is not ticked any more in that world), and `verification-before-completion` before recording; `rust-best-practices` for the sixth pure module and its glue, `rust-review` for the after-the-fact audit of `src/mobslaughter.rs`; slice 8: `brainstorming` to choose the fluid laser base from the port's own coverage row and weigh the brief's "a biome the ether recipe names" against the jar's empty whitelist, `writing-plans` for SLICE-8-PLAN.md, `test-driven-development` for the eight red rules and the five red glue tests, `systematic-debugging` for the two in-game gates this slice cost — the launcher's content-hash cache reporting "up to date" and the depth-band differential that replaced a biome counterfactual the artefact does not have — and `verification-before-completion` before recording; `rust-best-practices` for the fifth pure module and the glue, `rust-review` for the after-the-fact audit of `src/fluidbase.rs`; slice 7: `brainstorming` to choose the laser drill from the gap list and weigh the brief's "the ore the base sits on" against the jar's biome/depth rule, `writing-plans` for SLICE-7-PLAN.md, `test-driven-development` for the 14 red rules and the 9 red glue tests, `systematic-debugging` for the six in-game gates this slice cost — the ingredient-object decode (`recipes 0/10`), the biome zoom, the datapack/tag reload, the placement aim, the message/log window, and the loot condition shape — and `verification-before-completion` before recording; `rust-best-practices` for the new pure module and the glue, `rust-review` for the after-the-fact audit of `src/laserdrill.rs`)
 
 `cargo fmt --package industrialforegoing --check`, `cargo clippy --all-targets -- -D warnings` and
 `cargo test` were run before hand-back (slice 9: `FMT-CLEAN`, 0 warnings, **166 passed**).
@@ -2263,10 +2470,11 @@ shows both ids unknown.
 
 ### Packaged artifacts
 
-The current package (2026-11-21, SDK format) — one file, code and content together:
+The current package (2026-11-23, SDK format) — one file, code and content together:
 
 | File | Size | SHA-256 | Entries |
 |---|---:|---|---:|
+| `industrialforegoing.hmod` (0.2.11) | 366,772 B | `f7154dc52f6c9a343a11d5b757b1c674bb924c92ba199f2d73a1ccc91fa962ad` | 444 |
 | `industrialforegoing.hmod` (0.2.10) | 318,730 B | `d69f820c312619d9c46f2011cb7a09dc36cb5fc497c3c35e3c3906047419f37f` | 409 |
 | `industrialforegoing.hmod` (0.2.9) | 318,727 B | `fa7300d371f22f81576f452d0c1994449d69ebaf0852c89a9491dcdc7479278d` | 409 |
 | `industrialforegoing.hmod` (0.2.8) | 286,421 B | `f34f98ee0c57a700595160189162ee80856e962df12218d04f7ab7529fbbbfc9` | 371 |
