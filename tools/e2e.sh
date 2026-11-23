@@ -43,7 +43,9 @@
 # so the run must fail at that assertion — the contents family's. SELFTEST=core
 # is the Core item set's: leg U asserts the red lens arrived twice.
 # SELFTEST=laser flips BD's charge; SELFTEST=fluid flips BJ's 10 mB of ether;
-# SELFTEST=slaughter flips CC's 200 mB of pink slime.
+# SELFTEST=slaughter flips CC's 200 mB of pink slime; SELFTEST=nether flips CL's
+# 100 mB of lava (the Nether leg, slice 10); SELFTEST=crusher flips CO's
+# `20 x experience` essence by one mB (the mob crusher, slice 11).
 set -Eeuo pipefail
 export LC_ALL=C
 [ -z "${IF_DEBUG:-}" ] || set -x
@@ -126,7 +128,25 @@ launch() { # launch [WORLD]
     # server paused the chat commands queue and no readout arrives (measured 2026-11-22: the
     # add-on leg's first post-reopen `info` worked, the next never answered).
     ctl resume >/dev/null 2>&1 || true
+    wait_chat_roundtrip || fail "the player's chat path never answered a launch"
     ctl wait 40
+}
+
+# Wait until the player's chat path answers: a vanilla chat command whose reply is a new
+# `[CHAT]` line. Required after a launch and after every **dimension change** — a `tp`
+# across dimensions drops chat lines until the client has finished the transfer, which is
+# what made slice 10's first runs fail phase A with "no fresh info reply" under load.
+wait_chat_roundtrip() {
+    local i
+    for i in $(seq 1 30); do
+        ctl chat "/time query gametime" >/dev/null 2>&1 || true
+        # The ctl's own wait, not a log grep: it subscribes to the chat line and answers
+        # only when a *new* one arrives, so a dropped send costs one retry, not a parse race.
+        if ctl wait-for chat "The game time is" --timeout 10 >/dev/null 2>&1; then
+            return 0
+        fi
+    done
+    return 1
 }
 
 block_name() { ctl block "$1" "$2" "$3" | jq -r '.name // .block // empty'; }
@@ -152,6 +172,7 @@ arena() {
     ctl command "execute in minecraft:the_end run kill @e[type=!player]" >/dev/null
     ctl command "execute in minecraft:the_end run tp @s $X0.5 101 0.5" >/dev/null
     ctl wait 20
+    wait_chat_roundtrip || fail "the chat path never answered after the End transfer"
     [ "$(block_name "$X0" 100 0)" = "minecraft:stone" ] || fail "the arena floor is not stone"
     [ "$(block_name "$X0" 101 0)" = "minecraft:air" ] || fail "the arena air above the floor is not air"
 }
@@ -159,21 +180,39 @@ arena() {
 # `/industrialforegoing info X Y Z`: the line, then the parsed fields in
 # ENERGY, WATER, SOURCES, PROGRESS, T.
 info() { # info X Y Z
-    local before now line="" attempt
-    # A **new** readout, counted in the game's own `[CHAT]` log (complete and ordered): a
-    # short `ctl messages` window can still hold the previous read, and the setters' replies
-    # share the machine's opening words, so the line is selected by `, sources ` too.
-    before=$(ctl logs --lines 400 | grep -c 'Water Condensator at .*, sources ' || true)
-    say "industrialforegoing info $1 $2 $3"
-    for attempt in $(seq 1 15); do
+    local pattern='Water Condensator at .*, sources ' line="" best="" best_t=-999999 t cand source attempt
+    local before_t=${INFO_T:-0}
+    # A **new** readout from the newest line of **both** sources: the game's own `[CHAT]`
+    # log (complete and ordered) and the live `ctl messages` window. Slice 10 measured the
+    # log stopping at the launch while the window still answered, so either alone is a
+    # flaky oracle; the line's own `t=` is what says it is newer than the previous read.
+    for attempt in $(seq 1 40); do
+        # Re-sent every attempt: a chat line is dropped while the client is finishing a
+        # dimension transfer, and a readout is idempotent. The real sleep is a floor too —
+        # a `wait 2` before the server ticks passes immediately.
+        say "industrialforegoing info $1 $2 $3"
         ctl wait 2 >/dev/null
-        now=$(ctl logs --lines 400 | grep -c 'Water Condensator at .*, sources ' || true)
-        if [ "$now" -gt "$before" ]; then
-            line=$(ctl logs --lines 400 | grep 'Water Condensator at .*, sources ' \
-                | tail -1 | sed 's/^.*\[CHAT\] //' || true)
+        sleep 0.2
+        for source in logs messages; do
+            if [ "$source" = logs ]; then
+                cand=$(ctl logs --lines 400 | grep "\[CHAT\] $pattern" | tail -1 | sed 's/^.*\[CHAT\] //' || true)
+            else
+                cand=$(ctl messages 40 | jq -r '.chat[]' | grep -E "$pattern" | tail -1 || true)
+            fi
+            [ -n "$cand" ] || continue
+            t=$(sed -n 's/.* t=\(-\?[0-9][0-9]*\)$/\1/p' <<<"$cand")
+            [ -n "$t" ] || continue
+            if [ "$t" -gt "$best_t" ]; then
+                best=$cand
+                best_t=$t
+            fi
+        done
+        if [ -n "$best" ] && [ "$best_t" -gt "$before_t" ]; then
+            line=$best
             break
         fi
     done
+    INFO_T=$best_t
     INFO_LINE=$line
     [ -n "$INFO_LINE" ] || fail "no fresh /industrialforegoing info reply"
     eval "$(python3 "$PORT/tools/parse_info.py" "$INFO_LINE")"
@@ -1413,6 +1452,10 @@ BASE_ID=industrialforegoing:ore_laser_base
 FLUID_BASE_ID=industrialforegoing:fluid_laser_base
 DRILL_ID=industrialforegoing:laser_drill
 PURPLE_LENS=industrialforegoing:purple_laser_lens
+ORANGE_LENS=industrialforegoing:orange_laser_lens
+# The Nether column for the fluid type's lava recipe (slice 10): its own dimension, and the
+# 5..20 depth band. Far from the End's arenas by dimension, not by coordinate.
+NFX=200
 # Its own platform east of the latex chain's: stone at y=100 and air above, in the End's void.
 # Peaceful: the End's mobs would otherwise reach the player during the leg.
 laser_arena() {
@@ -1433,6 +1476,7 @@ laser_arena() {
     ctl command "execute in minecraft:the_end run kill @e[type=!player]" >/dev/null
     ctl command "execute in minecraft:the_end run tp @s $((DRX - 2)).5 101 0.5" >/dev/null
     ctl wait 16
+    wait_chat_roundtrip || fail "the chat path never answered after the End transfer"
     [ "$(block_name "$DRX" 100 0)" = "minecraft:stone" ] || fail "the laser arena floor is not stone"
 }
 
@@ -1480,6 +1524,65 @@ lasay() { # lasay X Y Z SUB [ARGS...]
     say "industrialforegoing $sub $x $y $z${*:+ $*}"
 }
 
+# The Nether arena (slice 10): stone at y=10, air above, so the base stands at y=11 —
+# inside the lava recipe's 5..20 band — in its own dimension. A fresh dimension is its own
+# oracle: the same base, lens and depth in the End answer no recipe (phase CJ).
+nether_arena() {
+    ctl command "difficulty peaceful" >/dev/null
+    ctl command "execute in minecraft:the_nether run tp @s $((NFX - 2)).5 40 0.5" >/dev/null
+    local loaded=false
+    for _ in $(seq 1 120); do
+        ctl wait 5 >/dev/null
+        if [ "$(ctl block "$NFX" 30 0 | jq -r '.loaded // false')" = true ]; then
+            loaded=true
+            break
+        fi
+    done
+    [ "$loaded" = true ] || fail "the Nether arena chunk never loaded"
+    ctl command "execute in minecraft:the_nether run fill $((NFX - 8)) 10 -6 $((NFX + 8)) 10 6 minecraft:stone" >/dev/null
+    ctl command "execute in minecraft:the_nether run fill $((NFX - 8)) 11 -6 $((NFX + 8)) 20 6 minecraft:air" >/dev/null
+    ctl wait 8
+    ctl command "execute in minecraft:the_nether run kill @e[type=!player]" >/dev/null
+    ctl command "execute in minecraft:the_nether run tp @s $((NFX - 2)).5 11 0.5" >/dev/null
+    ctl wait 16
+    wait_chat_roundtrip || fail "the chat path never answered after the Nether transfer"
+    [ "$(block_name "$NFX" 10 0)" = "minecraft:stone" ] || fail "the Nether arena floor is not stone"
+}
+
+# `place_any` in the Nether: the same item-in-hand placement, aiming at the floor under it.
+place_nether() { # place_nether X Y Z ITEM
+    local x=$1 y=$2 z=$3 item=$4
+    ctl command "item replace entity @s hotbar.0 with $item 1" >/dev/null
+    ctl wait 6
+    ctl select 1 >/dev/null
+    ctl command "execute in minecraft:the_nether run tp @s $((x - 2)).5 $y $z.5" >/dev/null
+    ctl wait 6
+    ctl look-at-block "$x" $((y - 1)) "$z" up >/dev/null 2>&1 || fail "cannot aim at the Nether floor under $x,$y,$z"
+    ctl wait 8
+    ctl place "$x" "$y" "$z" --item "$item" >/dev/null || fail "the $item did not place at $x,$y,$z in the Nether"
+    ctl wait 6
+    [ "$(block_name "$x" "$y" "$z")" = "$item" ] \
+        || fail "the $item did not place at $x,$y,$z in the Nether (got '$(block_name "$x" "$y" "$z")')"
+}
+
+# The drill above the Nether base, from its item looking down (`facing: up`). Two blocks
+# above the base's top face, not five: a fresh arena's player falls, and a taller drop put
+# the aim out of reach (measured in this slice's probe).
+place_drill_over_nether() { # place_drill_over_nether BASE_X
+    local x=$1
+    ctl command "item replace entity @s hotbar.0 with $DRILL_ID 1" >/dev/null
+    ctl wait 6
+    ctl select 1 >/dev/null
+    ctl command "execute in minecraft:the_nether run tp @s $((x + 1)).5 13 0.5" >/dev/null
+    ctl wait 3
+    ctl look-at-block "$x" 11 0 up >/dev/null 2>&1 || fail "cannot aim at the Nether base's top face"
+    ctl wait 1
+    ctl place "$x" 12 0 --item "$DRILL_ID" >/dev/null || fail "the drill did not place above the Nether base"
+    ctl wait 4
+    [ "$(block_name "$x" 12 0)" = "$DRILL_ID" ] \
+        || fail "the drill did not place at $x 12 0 in the Nether (got '$(block_name "$x" 12 0)')"
+}
+
 # `/industrialforegoing info` of a laser machine, read from the game's own `[CHAT]` log and
 # waiting for a line whose game time differs from the previous read's (the `ctl messages`
 # window can return an earlier readout, as slice 6 measured).
@@ -1493,12 +1596,13 @@ laser_info() { # laser_info X Y Z base|drill|fluid
     else
         pattern='Laser Drill at .*, target '
     fi
-    say "industrialforegoing info $x $y $z"
     # A reopened world stops growing `ctl logs`' chat (slice 7's measurement) while the live
     # `ctl messages` window may still hold an older readout. Take the newest line from
     # **both** sources and require its game time to be past the previous read's, so a stale
-    # line can never be asserted against.
+    # line can never be asserted against. Re-sent every attempt: a chat line is dropped
+    # while the client is finishing a dimension transfer (slice 10).
     for attempt in $(seq 1 20); do
+        say "industrialforegoing info $x $y $z"
         ctl wait 2 >/dev/null
         for source in logs messages; do
             if [ "$source" = logs ]; then
@@ -1849,6 +1953,7 @@ factory_arena() {
     ctl command "execute in minecraft:the_end run kill @e[type=!player]" >/dev/null
     ctl command "execute in minecraft:the_end run tp @s $((SFX - 2)).5 101 0.5" >/dev/null
     ctl wait 16
+    wait_chat_roundtrip || fail "the chat path never answered after the End transfer"
     [ "$(block_name "$SFX" 100 0)" = "minecraft:stone" ] || fail "the factory arena floor is not stone"
 }
 
@@ -1864,8 +1969,8 @@ slay() { # slay SUB [ARGS...]
 # newer than the previous read by its own `t=`.
 slaughter_info() {
     local pattern='Mob Slaughter Factory at ' line="" best="" best_t=-999999 t cand source attempt
-    say "industrialforegoing info $SFX 101 0"
     for attempt in $(seq 1 20); do
+        say "industrialforegoing info $SFX 101 0"
         ctl wait 2 >/dev/null
         for source in logs messages; do
             if [ "$source" = logs ]; then
@@ -2044,4 +2149,307 @@ expect "the pink slime the item carried" "$S_SLIME_MB" 120
 expect "the buffer the item carried" "$S_ENERGY" 4600
 echo "  the factory came back with $S_MEAT_MB mB of $S_MEAT, $S_SLIME_MB mB of $S_SLIME and $S_ENERGY FE"
 
-echo "PASS: a placed machine is empty with no sources and faces its placer; two sources condense 200 mB for exactly 1,000 FE and one condenses nothing; without 1,000 FE two sources give half for free; three and six sources give 300 and 600 mB; a nearly full tank stops at 16,000 mB while still spending the FE; the declared tank drains 400 mB of water through the fluid handler; and left alone the machine keeps condensing on its own 10-tick bar; the Core ids of these slices register and read back, the four frames place and read back, an unregistered item and block id are refused, and a frame broken in survival drops itself; the condensator crafts from the tags (#c:plastics, #c:gears/iron, machine_frame/pity) with the grid empty afterwards while slice 2's stand-ins stay empty, the pity frame and the three gears craft, and all 16 lens recolours craft from the lens tag and c:dyes with the player's counts before and after; a machine broken with 7,000 FE and 5,000 mB comes back with exactly those numbers on the item it dropped; a seated speed augment of 4 makes the bar fall four a tick where an empty slot falls one, a second speed augment is refused and stays in the hand, an efficiency augment of 0.8 shortens the bar to 80 with an 8-tick cooldown at the same 1,000 FE, and both augments travel on the machine's item; the dissolution chamber places and faces its placer, reads its own recipe type from this package's data (25 files), holds its own fluids in a declared tank the capability reports back, runs the white lens recipe in exactly 100 ticks for 9,000 FE and 250 mB of latex, does nothing with an empty tank and starts when 250 mB arrive, empties its output into a hopper and a barrel, runs the simple machine frame's 300 ticks at exactly 90 FE a tick, makes the advanced frame from #c:plastics, the crafted #c:gears/diamond gear and the simple frame, and a broken chamber carries its buffer and latex back on its item; and the latex chain: a fluid extractor works on the oak log behind it, giving 2 mB for free and 6 mB for 500 FE, nothing at all when the block behind it is stone, and — on its eighth hit — consuming the log into a stripped one and bursting 400 mB that drain back out of its declared tank, where a roll over its break chance moves nothing; a latex processing unit takes 1,000 mB of latex through the command path and 1,000 mB of water through the declared capability (which refuses the mod fluid, so no fluid move can fill it), turns 750 mB of latex and 500 mB of water into one dry rubber for 2,000 FE, a hopper feeds that rubber into a furnace which smelts it into one plastic, and a broken unit carries its latex, water and buffer back on its item; and the laser drill: placed above its ore base it faces up and finds it, reads the base's own ten-recipe table, resolves no ore in the End's biome and the emerald recipe at weight 1 in a mountain one, a lime lens raises that weight to 9, one completed base bar yields the recipe's emerald ore for exactly 1,000 FE while the same charge in the End's own biome yields nothing, and — with the add-on's own laser_drill_ore file and biome tag installed as its package ships them — the base's table reads 11/11 and that recipe runs, yielding one echo shard; a broken base carries its output slots back on its item; and the fluid laser base, under its own drill, answers no recipe without the wither its ether file names and leaves the tank empty while the drill still pays 1,000 FE, then with a wither in its box one completed bar yields 10 mB of industrialforegoing:ether_gas into the tank the declared capability reports, a second bar adds ten more, the tank drains through that capability, and the dissolution chamber runs its one carried recipe naming ether gas (supreme_machine_frame, 135 mB) to the product; and the mob slaughter factory: placed facing its placer it is empty, a bar with no mob in the working area kills nothing and spends no FE, a cow in the box is killed for 10 mB of meat and 200 mB of pink slime for exactly 400 FE (both tanks reported back by the declared capability), the same box with no FE leaves a villager alive and adds nothing, 5,000 FE then kills the villager for 400 mB of meat and 20 mB of pink slime, both tanks drain through the capability, the factory's own shaped recipe crafts from #c:plastics, #c:gears/gold and machine_frame/pity, the pink slime block crafts from nine pink slime and gives them back shapeless and drops itself, a broken factory carries both tanks and its buffer back on its item, and the dissolution chamber runs the jar's only outputFluid recipe — 300 mB of pink slime and a glass pane for one pink slime ball and 150 mB of minecraft:water in its output tank"
+echo "== CJ: the lava recipe's depth in the End answers no recipe (the dimension arm) =="
+# The lava file's rarity is `dimension_filter.whitelist: ["minecraft:the_nether"]` and
+# `depth 5..20`; the ether file names every dimension but is gated on a wither in the box
+# (BM killed the last one and the difficulty is peaceful). So the same base, the same
+# orange lens and the same depth **11**, differing only in the dimension, must answer no
+# recipe in the End. This is the shared `laser::Filter`'s dimension branch in game.
+ctl command "difficulty peaceful" >/dev/null
+ctl command "execute in minecraft:the_end run kill @e[type=minecraft:wither]" >/dev/null
+ctl command "execute in minecraft:the_end run tp @s $((FLX - 2)).5 101 0.5" >/dev/null
+ctl command "item replace block $FLX 101 0 container.0 with $ORANGE_LENS 1" >/dev/null
+lasay "$FLX" 101 0 depth 11
+ctl wait 8
+laser_info "$FLX" 101 0 fluid
+expect "the dimension filter the base reads" "$LF_DIM" minecraft:the_end
+expect "the depth inside the lava band" "$LF_DEPTH" 11
+expect "the recipe the dimension arm refuses in the End" "$LF_RECIPE" none
+expect "the tank the refused arm leaves (BL's 10 mB of ether)" "$LF_TANK_MB" 10
+echo "  depth 11 in $LF_DIM: $LF_RECIPE (the lava file needs the Nether)"
+
+echo "== CK: in the Nether at depth 0 the same base answers no recipe and leaves the tank empty =="
+# The depth arm, inside the right dimension: the base stands at y=11 (its own depth until a
+# GUI/command changes it) but the command sets 0, below the band's floor of 5.
+nether_arena
+place_nether "$NFX" 11 0 "$FLUID_BASE_ID"
+place_drill_over_nether "$NFX"
+ctl command "item replace block $NFX 11 0 container.0 with $ORANGE_LENS 1" >/dev/null
+lasay "$NFX" 11 0 depth 0
+lasay "$NFX" 12 0 energy 0
+ctl wait 8
+laser_info "$NFX" 11 0 fluid
+expect "the dimension the base now stands in" "$LF_DIM" minecraft:the_nether
+expect "the depth the counterfactual sets" "$LF_DEPTH" 0
+expect "the recipe below the lava band" "$LF_RECIPE" none
+expect "the tank the depth counterfactual leaves" "$LF_TANK_MB" 0
+expect "the capability it leaves" "$LF_CAP_MB" 0
+expect "the recipe files the game keeps in the Nether" "$LF_RULES/$LF_FILES" 2/3
+echo "  $LF_DIM depth $LF_DEPTH: $LF_RECIPE, tank $LF_TANK_MB mB"
+
+echo "== CL: at depth 11 in the Nether one bar fills the tank with 100 mB of lava =="
+# The positive arm: the same box, same orange lens, depth inside the band, the drill
+# charged. `progress 19` + one drill charge is exactly one completed 20-tick bar.
+lasay "$NFX" 11 0 depth 11
+ctl wait 2
+laser_info "$NFX" 11 0 fluid
+expect "the depth inside the lava band" "$LF_DEPTH" 11
+expect "the recipe the dimension arm admits" "$LF_RECIPE" "industrialforegoing:laser_drill_fluid/lava"
+expect "the tank before the operation" "$LF_TANK_MB" 0
+lasay "$NFX" 11 0 progress 19
+lasay "$NFX" 12 0 energy 10000
+lasay "$NFX" 12 0 progress 1
+ctl wait 8
+laser_info "$NFX" 12 0 drill
+laser_info "$NFX" 11 0 fluid
+LAVA_MB=$LF_TANK_MB
+if [ "$SELFTEST" = nether ]; then
+    echo "(selftest: asserting one mB more than one lava operation gives)"
+    LAVA_MB=$((LAVA_MB + 1))
+fi
+expect "the lava one bar yields" "$LAVA_MB" 100
+expect "the tank's fluid" "$LF_TANK_FLUID" minecraft:lava
+expect "the fluid the declared capability reports" "$LF_CAP_FLUID" minecraft:lava
+expect "the capability's amount" "$LF_CAP_MB" 100
+expect "the drill's target (the Nether base)" "$LD_TARGET" "[$NFX, 11, 0]"
+expect "the buffer after the charge (10,000 - 1,000 FE)" "$LD_ENERGY" 9000
+echo "  $LF_RECIPE: tank $LF_TANK_FLUID $LF_TANK_MB/32000 mB, capability $LF_CAP_MB mB, $LD_ENERGY FE"
+
+# ---------------------------------------------------------------------------
+# The mob crusher and its essence (slice 11)
+# ---------------------------------------------------------------------------
+
+CFX=260            # the crusher's column, east of the slaughter factory's
+CRUSHER_ID=industrialforegoing:mob_crusher
+CRUSHER_T=0        # the game time of the last crusher readout this run asserted against
+
+# Its own platform east of the slaughter factory's: stone at y=100, air above, in the End's void.
+crusher_arena() {
+    ctl command "difficulty peaceful" >/dev/null
+    ctl command "execute in minecraft:the_end run tp @s $((CFX - 2)).5 104 0.5" >/dev/null
+    local loaded=false
+    for _ in $(seq 1 120); do
+        ctl wait 5 >/dev/null
+        if [ "$(ctl block "$CFX" 100 0 | jq -r '.loaded // false')" = true ]; then
+            loaded=true
+            break
+        fi
+    done
+    [ "$loaded" = true ] || fail "the crusher arena chunk never loaded"
+    ctl command "execute in minecraft:the_end run fill $((CFX - 6)) 100 -8 $((CFX + 6)) 100 8 minecraft:stone" >/dev/null
+    ctl command "execute in minecraft:the_end run fill $((CFX - 6)) 101 -8 $((CFX + 6)) 108 8 minecraft:air" >/dev/null
+    ctl wait 8
+    ctl command "execute in minecraft:the_end run kill @e[type=!player]" >/dev/null
+    ctl command "execute in minecraft:the_end run kill @e[type=minecraft:experience_orb]" >/dev/null
+    ctl command "execute in minecraft:the_end run tp @s $((CFX - 2)).5 101 0.5" >/dev/null
+    ctl wait 16
+    wait_chat_roundtrip || fail "the chat path never answered after the End transfer"
+    [ "$(block_name "$CFX" 100 0)" = "minecraft:stone" ] || fail "the crusher arena floor is not stone"
+}
+
+# One `/industrialforegoing` command of the crusher at its position.
+crush() { # crush SUB [ARGS...]
+    local sub=$1
+    shift
+    say "industrialforegoing $sub $CFX 101 0${*:+ $*}"
+}
+
+# `/industrialforegoing info` of the crusher, from the newest line of both chat sources, required
+# to be newer than the previous read by its own `t=`.
+crusher_info() {
+    local pattern='Mob Crusher at ' line="" best="" best_t=-999999 t cand source attempt
+    for attempt in $(seq 1 20); do
+        say "industrialforegoing info $CFX 101 0"
+        ctl wait 2 >/dev/null
+        sleep 0.2
+        for source in logs messages; do
+            if [ "$source" = logs ]; then
+                cand=$(ctl logs --lines 600 | grep "\[CHAT\] $pattern" | tail -1 | sed 's/^.*\[CHAT\] //' || true)
+            else
+                cand=$(ctl messages 80 | jq -r '.chat[]' | grep -E "$pattern" | tail -1 || true)
+            fi
+            [ -n "$cand" ] || continue
+            t=$(sed -n 's/.* t=\(-\?[0-9][0-9]*\)$/\1/p' <<<"$cand")
+            [ -n "$t" ] || continue
+            if [ "$t" -gt "$best_t" ]; then
+                best=$cand
+                best_t=$t
+            fi
+        done
+        if [ -n "$best" ] && [ "$best_t" -gt "$CRUSHER_T" ]; then
+            line=$best
+            break
+        fi
+    done
+    CRUSHER_T=$best_t
+    CRUSHER_LINE=$line
+    [ -n "$CRUSHER_LINE" ] || fail "no fresh /industrialforegoing info reply for the crusher"
+    eval "$(python3 "$PORT/tools/parse_crusher.py" "$CRUSHER_LINE")"
+    [ "${ok:-0}" = 1 ] || fail "the crusher info line did not parse: $CRUSHER_LINE"
+    echo "  $CRUSHER_LINE" >&2
+}
+
+# A mob in the crusher's working area: the block behind it (west-facing, so east), on the floor.
+summon_victim() { # summon_victim KIND
+    ctl command "execute in minecraft:the_end run summon minecraft:$1 $((CFX + 1)).5 101 0.5 {NoAI:1b,Silent:1b,PersistenceRequired:1b}" >/dev/null
+    ctl wait 8 >/dev/null
+}
+
+# The beef and leather item entities on the arena floor: the differential for the output — a
+# `living_drops` that let the world have them would leave them here, and the output would be empty.
+crusher_ground_loot() {
+    ctl entities 48 item 2>/dev/null | jq -r --argjson x0 $((CFX - 2)) --argjson x1 $((CFX + 4)) '
+      [.entities[] | select(.kind == "item")
+       | select((.item.item // "") | test("minecraft:(beef|leather)$"))
+       | select((.position[0] | floor) >= $x0 and (.position[0] | floor) <= $x1)
+       | select((.position[2] | floor) >= -4 and (.position[2] | floor) <= 4)
+      ] | length' 2>/dev/null || echo 0
+}
+
+echo "== CM: the mob crusher places, faces its placer, and is empty =="
+crusher_arena
+place_any "$CFX" 101 0 "$CRUSHER_ID"
+crush progress 100
+ctl wait 2 >/dev/null
+crusher_info
+expect "the block" "$(block_name "$CFX" 101 0)" "$CRUSHER_ID"
+expect "the facing" "$C_FACING" west
+expect "the buffer" "$C_ENERGY" 0
+expect "the essence tank" "$C_TANK_MB" 0
+expect "the tank's fluid (empty)" "$C_TANK" empty
+expect "the declared capability's amount" "$C_CAP_MB" 0
+expect "the mobs in its working area" "$C_VICTIMS" 0
+expect "the output container" "$C_OUTPUT" empty
+expect "the last kill's experience" "$C_LAST_XP" 0
+expect "the bar's length" "$C_BAR" 100
+expect_ge "the bar" "$C_PROGRESS" 90
+echo "  block $CRUSHER_ID facing $C_FACING, tank $C_TANK $C_TANK_MB/$C_TANK_CAP mB, output $C_OUTPUT"
+
+echo "== CN: the counterfactual — no mob in the box, nothing killed and nothing spent =="
+# `MobCrusherTile.work()` without a victim answers `WorkAction(1f, 0)`: no FE out, the bar full.
+crush progress 100
+crush energy 5000
+ctl wait 2 >/dev/null
+crush progress 1
+ctl wait 6 >/dev/null
+crusher_info
+expect "the buffer (an idle attempt takes nothing)" "$C_ENERGY" 5000
+expect "the essence tank" "$C_TANK_MB" 0
+expect "the mobs in the box" "$C_VICTIMS" 0
+expect "the last kill's experience" "$C_LAST_XP" 0
+expect_ge "the bar after an idle attempt (rests full)" "$C_PROGRESS" 90
+
+echo "== CO: a cow in the box is killed for 20 mB a point of its experience =="
+# The jar's rule is `experience * 20` (`MobCrusherTile.instantKill`), and a cow's experience
+# reward is 1-3 points, so one cow adds 20, 40 or 60 mB — the readout's `last xp` is the
+# engine's own count, and the tank must be exactly twenty times it. A health-based rule (the
+# brief's premise) would read 200 here and fail.
+crush progress 100
+crush energy 5000
+summon_victim cow
+crusher_info
+expect "the mobs in the box before the attempt" "$C_VICTIMS" 1
+crush progress 1
+ctl wait 3 >/dev/null
+crusher_info
+XP=$C_LAST_XP
+ESSENCE_WANT=$((XP * 20))
+if [ "$SELFTEST" = crusher ]; then
+    echo "(selftest: asserting one mB more than the experience gives)"
+    ESSENCE_WANT=$((ESSENCE_WANT + 1))
+fi
+case "$XP" in
+    1|2|3) ;;
+    *) fail "a cow's experience reward is $XP, expected 1-3 (the vanilla 1 + random(3))" ;;
+esac
+expect "the essence a cow gives (20 x $XP points)" "$C_TANK_MB" "$ESSENCE_WANT"
+expect "the tank's fluid" "$C_TANK" industrialforegoing:essence
+expect "the fluid the declared capability reports" "$C_CAP_FLUID" industrialforegoing:essence
+expect "the capability's amount" "$C_CAP_MB" "$ESSENCE_WANT"
+expect "the buffer after the kill (5,000 - 50 FE)" "$C_ENERGY" 4950
+expect_le "the bar after a kill (floor(100 * 0.1))" "$C_PROGRESS" 10
+expect "the mobs left in the box (the cow is gone)" "$C_VICTIMS" 0
+case "$C_OUTPUT" in
+    *"minecraft:beef"*) ;;
+    *) fail "the cow's loot did not land in the crusher's output: $C_OUTPUT" ;;
+esac
+GROUND=$(crusher_ground_loot)
+expect "the cow's loot left on the floor (the machine took it)" "$GROUND" 0
+echo "  a cow: $XP experience -> $C_TANK_MB mB of $C_TANK, output $C_OUTPUT, $C_ENERGY FE"
+
+echo "== CP: the counterfactual — a mob but no FE: nothing is killed and nothing is added =="
+TANK_BEFORE=$C_TANK_MB
+crush progress 100
+crush energy 0
+summon_victim cow
+crusher_info
+expect "the mobs in the box (a cow)" "$C_VICTIMS" 1
+crush progress 1
+ctl wait 8 >/dev/null
+crusher_info
+expect "the mobs still in the box (hasEnergy(50) refused)" "$C_VICTIMS" 1
+expect "the essence tank (unchanged)" "$C_TANK_MB" "$TANK_BEFORE"
+expect "the buffer" "$C_ENERGY" 0
+expect_ge "the bar after the refused attempt" "$C_PROGRESS" 90
+echo "  no FE: the cow is still there, tank $C_TANK_MB mB"
+
+echo "== CQ: a hopper under the crusher pulls its 18-slot output =="
+# The output is upstream's `SidedInventoryComponent`, output-only but reachable: a hopper below
+# the machine must take the cow's loot out of it, which is what makes the container a real
+# capability instead of a private list.
+ctl command "execute in minecraft:the_end run setblock $CFX 100 0 minecraft:hopper[facing=down]" >/dev/null
+ctl command "execute in minecraft:the_end run setblock $CFX 99 0 minecraft:barrel" >/dev/null
+ctl wait 60 >/dev/null
+BARREL=$(ctl container "$CFX" 99 0 | jq -r '[.slots[]? | select(. != null) | .item] | join(",")')
+case "$BARREL" in
+    *minecraft:beef*|*minecraft:leather*) ;;
+    *) fail "the hopper did not empty the crusher's output into the barrel: '$BARREL'" ;;
+esac
+crusher_info
+expect "the output after the hopper" "$C_OUTPUT" empty
+echo "  barrel through the hopper: $BARREL"
+# Put the floor back under the crusher for the break leg.
+ctl command "execute in minecraft:the_end run setblock $CFX 100 0 minecraft:stone" >/dev/null
+ctl wait 6 >/dev/null
+
+echo "== CR: a broken crusher's item carries its tank and buffer =="
+ctl command "execute in minecraft:the_end run kill @e[type=minecraft:cow]" >/dev/null
+crusher_arena
+place_any "$CFX" 101 0 "$CRUSHER_ID"
+crush energy 4600
+summon_victim cow
+crush progress 1
+ctl wait 6 >/dev/null
+crusher_info
+BROKEN_TANK=$C_TANK_MB
+BROKEN_XP=$C_LAST_XP
+BROKEN_ENERGY=$C_ENERGY
+[ "$BROKEN_TANK" -gt 0 ] || fail "the crusher's tank never filled before the break"
+expect "the buffer after the kill (4,600 - 50 FE)" "$BROKEN_ENERGY" 4550
+ctl command "execute in minecraft:the_end run tp @s $((CFX - 2)).5 101 0.5" >/dev/null
+ctl wait 8 >/dev/null
+ensure_survival
+ctl command "clear @s" >/dev/null
+ctl command "item replace entity @s hotbar.0 with minecraft:iron_pickaxe 1" >/dev/null
+ctl wait 6 >/dev/null
+ctl select 1 >/dev/null
+ctl wait 4 >/dev/null
+CRUSHER_BROKEN=$(ctl break "$CFX" 101 0) || fail "breaking the crusher failed"
+echo "  break: $(echo "$CRUSHER_BROKEN" | jq -c '{block, drops, picked_up}')"
+[ "$(echo "$CRUSHER_BROKEN" | jq -r '.drops["industrialforegoing:mob_crusher"] // 0')" -ge 1 ] \
+    || fail "the crusher did not drop itself: $(echo "$CRUSHER_BROKEN" | jq -c '.drops')"
+ctl command "execute in minecraft:the_end run tp @s $CFX.5 101 0.5" >/dev/null
+ctl wait 20 >/dev/null
+HELD_CRUSHER=$(ctl inventory | jq -r '.counts["industrialforegoing:mob_crusher"] // 0')
+[ "$HELD_CRUSHER" -ge 1 ] || fail "the broken crusher's item was not picked up (counts $HELD_CRUSHER)"
+ctl command "gamemode creative @s" >/dev/null
+ctl select "$CRUSHER_ID" >/dev/null 2>&1 || ctl select 1 >/dev/null
+ctl wait 4 >/dev/null
+place_held_any "$CFX" 101 0 "$CRUSHER_ID"
+crusher_info
+expect "the essence the item carried" "$C_TANK_MB" "$BROKEN_TANK"
+expect "the buffer the item carried" "$C_ENERGY" "$BROKEN_ENERGY"
+expect "the last kill's experience the item carried" "$C_LAST_XP" "$BROKEN_XP"
+echo "  the crusher came back with $C_TANK_MB mB of $C_TANK, $C_ENERGY FE and last xp $C_LAST_XP"
+
+echo "PASS: a placed machine is empty with no sources and faces its placer; two sources condense 200 mB for exactly 1,000 FE and one condenses nothing; without 1,000 FE two sources give half for free; three and six sources give 300 and 600 mB; a nearly full tank stops at 16,000 mB while still spending the FE; the declared tank drains 400 mB of water through the fluid handler; and left alone the machine keeps condensing on its own 10-tick bar; the Core ids of these slices register and read back, the four frames place and read back, an unregistered item and block id are refused, and a frame broken in survival drops itself; the condensator crafts from the tags (#c:plastics, #c:gears/iron, machine_frame/pity) with the grid empty afterwards while slice 2's stand-ins stay empty, the pity frame and the three gears craft, and all 16 lens recolours craft from the lens tag and c:dyes with the player's counts before and after; a machine broken with 7,000 FE and 5,000 mB comes back with exactly those numbers on the item it dropped; a seated speed augment of 4 makes the bar fall four a tick where an empty slot falls one, a second speed augment is refused and stays in the hand, an efficiency augment of 0.8 shortens the bar to 80 with an 8-tick cooldown at the same 1,000 FE, and both augments travel on the machine's item; the dissolution chamber places and faces its placer, reads its own recipe type from this package's data (25 files), holds its own fluids in a declared tank the capability reports back, runs the white lens recipe in exactly 100 ticks for 9,000 FE and 250 mB of latex, does nothing with an empty tank and starts when 250 mB arrive, empties its output into a hopper and a barrel, runs the simple machine frame's 300 ticks at exactly 90 FE a tick, makes the advanced frame from #c:plastics, the crafted #c:gears/diamond gear and the simple frame, and a broken chamber carries its buffer and latex back on its item; and the latex chain: a fluid extractor works on the oak log behind it, giving 2 mB for free and 6 mB for 500 FE, nothing at all when the block behind it is stone, and — on its eighth hit — consuming the log into a stripped one and bursting 400 mB that drain back out of its declared tank, where a roll over its break chance moves nothing; a latex processing unit takes 1,000 mB of latex through the command path and 1,000 mB of water through the declared capability (which refuses the mod fluid, so no fluid move can fill it), turns 750 mB of latex and 500 mB of water into one dry rubber for 2,000 FE, a hopper feeds that rubber into a furnace which smelts it into one plastic, and a broken unit carries its latex, water and buffer back on its item; and the laser drill: placed above its ore base it faces up and finds it, reads the base's own ten-recipe table, resolves no ore in the End's biome and the emerald recipe at weight 1 in a mountain one, a lime lens raises that weight to 9, one completed base bar yields the recipe's emerald ore for exactly 1,000 FE while the same charge in the End's own biome yields nothing, and — with the add-on's own laser_drill_ore file and biome tag installed as its package ships them — the base's table reads 11/11 and that recipe runs, yielding one echo shard; a broken base carries its output slots back on its item; and the fluid laser base, under its own drill, answers no recipe without the wither its ether file names and leaves the tank empty while the drill still pays 1,000 FE, then with a wither in its box one completed bar yields 10 mB of industrialforegoing:ether_gas into the tank the declared capability reports, a second bar adds ten more, the tank drains through that capability, and the dissolution chamber runs its one carried recipe naming ether gas (supreme_machine_frame, 135 mB) to the product; and the mob slaughter factory: placed facing its placer it is empty, a bar with no mob in the working area kills nothing and spends no FE, a cow in the box is killed for 10 mB of meat and 200 mB of pink slime for exactly 400 FE (both tanks reported back by the declared capability), the same box with no FE leaves a villager alive and adds nothing, 5,000 FE then kills the villager for 400 mB of meat and 20 mB of pink slime, both tanks drain through the capability, the factory's own shaped recipe crafts from #c:plastics, #c:gears/gold and machine_frame/pity, the pink slime block crafts from nine pink slime and gives them back shapeless and drops itself, a broken factory carries both tanks and its buffer back on its item, and the dissolution chamber runs the jar's only outputFluid recipe — 300 mB of pink slime and a glass pane for one pink slime ball and 150 mB of minecraft:water in its output tank; and the fluid laser base's dimension-and-depth pair: the lava recipe's band at depth 11 answers no recipe in the End (the dimension filter), in the Nether at depth 0 it answers none and leaves an empty tank, and at depth 11 in the Nether one completed bar of the drill fills the tank with 100 mB of minecraft:lava, reported by the declared capability, for 1,000 FE; and the mob crusher: placed facing its placer it is empty, a bar with no mob spends nothing, a cow in its box is killed for its own experience at 20 mB a point (1-3 points, so 20, 40 or 60 mB) for exactly 50 FE, its loot lands in the machine's 18-slot output instead of the floor and a hopper under it pulls that loot into a barrel, the same box with no FE leaves the cow alive and adds nothing, the crusher's own shaped recipe crafts from #c:plastics, #c:gears/gold and machine_frame/advanced, and a broken crusher carries its essence, its buffer and its last kill's experience back on its item"

@@ -1,0 +1,21 @@
+{
+  "category": "misc",
+  "key": {
+    "B": "minecraft:book",
+    "G": "#c:gears/gold",
+    "M": "#industrialforegoing:machine_frame/advanced",
+    "P": "#c:plastics",
+    "R": "minecraft:redstone",
+    "S": "minecraft:iron_sword"
+  },
+  "pattern": [
+    "PSP",
+    "BMB",
+    "GRG"
+  ],
+  "result": {
+    "count": 1,
+    "id": "industrialforegoing:mob_crusher"
+  },
+  "type": "minecraft:crafting_shaped"
+}

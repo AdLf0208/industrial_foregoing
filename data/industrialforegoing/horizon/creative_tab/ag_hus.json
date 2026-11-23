@@ -1,6 +1,7 @@
 {
   "icon": "industrialforegoing:mob_slaughter_factory",
   "items": [
+    "industrialforegoing:mob_crusher",
     "industrialforegoing:mob_slaughter_factory"
   ],
   "title": "itemGroup.industrialforegoing_ag_hus"

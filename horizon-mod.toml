@@ -1,6 +1,6 @@
 id = "industrialforegoing"
 name = "Industrial Foregoing"
-version = "0.2.9"
+version = "0.2.10"
 description = """A port of Industrial Foregoing for Horizon: the Water Condensator, a machine that condenses water out
 of the water source blocks beside it, for Forge Energy. Its 10,000 FE buffer feeds a 16,000 mB drain-only
 water tank through a bar that counts down each tick: two or more sources beside it give 100 mB a source for

@@ -44,8 +44,10 @@ own `industrialforegoing:laser_drill_fluid` recipe type — the tank machine the
 so `industrialforegoing:ether_gas` has a source and only `:pink_slime` remains sourceless. slice 9
 (0.2.9, 2026-11-23) adds the **mob slaughter factory** and the **pink slime set**: `:pink_slime` now
 has its source, the pink slime item/ingot/block ship with their recipes and tags, and the dissolution
-chamber finally runs an `outputFluid` recipe in game (the jar's only one, `pink_slime_ball`). The gap
-list at the end is the rest of the mod.
+chamber finally runs an `outputFluid` recipe in game (the jar's only one, `pink_slime_ball`). slice 10
+(0.2.10, 2026-11-23) is the **Nether leg** for the fluid type's **lava** recipe — evidence-only, with
+no packed file changed but the version string — and closes deviation 37 for the dimension and depth
+arms. The gap list at the end is the rest of the mod.
 
 **Why this mod now:** it is the rank-0 `content`/`machines` core mod
 `precheck-mod.py industrialforegoing` offers (`DISPATCHABLE`, jar licence MIT,
@@ -1545,7 +1547,7 @@ own exit status; `check-e2e-logs.py industrialforegoing-e2e --strict` reads **9/
 | `fluid_laser_base` (block + item) | `tested` — BI places it from its item under a drill and reads it back; the item carries the tank on a break (`a_broken_base_carries_its_tank_and_not_its_lens`, clamped) |
 | `industrialforegoing:laser_drill_fluid` (recipe type + serializer) | `tested` — BI reads `recipes 2/3` (three files kept, two decodable) and BJ resolves `…/ether`; the file-count side is asserted |
 | the **ether** recipe (10 mB, purple lens, entity gate) | `tested` — BI (no wither, none) → BJ (wither, 10 mB) |
-| the **lava** recipe (100 mB, orange lens, Nether 5–20) | `carried, not exercised in game` — its dimension is the Nether and its band 5–20; the rules test asserts both (`the_rarity_band_and_dimension_are_the_jars`). A Nether leg is the next slice's first option (deviation 37) |
+| the **lava** recipe (100 mB, orange lens, Nether 5–20) | `tested` in the Nether — slice 10, phases CJ/CK/CL: the End refuses it at depth 11, the Nether refuses it at depth 0 and runs it at 11 (100 mB, capability 100 mB, 1,000 FE) |
 | the **oil** recipe (50 mB, black lens, ocean/desert 20–60) | `carried as data, not in the table` — `pneumaticcraft:oil` is another mod's fluid key; the game keeps the file, the decode leaves it out (`recipes 2/3`) |
 | the depth band | `tested` — BJ: depth 300 → `none`, depth 101 → ether, the wither present in both |
 | the biome filter | `ported, not exercised for this type` — the ether file names no biome; the shared `laser::Filter` is exercised by the ore base's BA/BB/BE |
@@ -1559,13 +1561,12 @@ own exit status; `check-e2e-logs.py industrialforegoing-e2e --strict` reads **9/
 
 ### Deviations and gaps this slice adds
 
-37. **The fluid type's place filter is proven for depth, not for dimension or biome.** The only
-    standalone recipe of the type is ether, whose band is the whole world with an empty biome
-    whitelist; lava names the Nether (5–20) and oil names ocean/desert (20–60) but oil's output is a
-    foreign fluid key. So the in-game differential is `depth 300` → none against `depth 101` → ether,
-    and the Nether/biome arms are unit-tested (`the_rarity_band_and_dimension_are_the_jars`) and, for
-    the shared `laser::Filter`, exercised in game by the ore base (BA/BB/BE). A Nether leg that runs
-    lava (orange lens, y 5–20) is the honest way to close it.
+37. ~~**The fluid type's place filter is proven for depth, not for dimension or biome.**~~ **Closed for
+    depth and dimension in 0.2.10 (slice 10).** The Nether leg (CJ/CK/CL) runs the lava recipe in
+    its own dimension at depth 11, refuses it at depth 0 in the Nether and refuses it at depth 11 in
+    the End; the only arm still unexercised *for this type* is the biome whitelist, which no
+    standalone file of the type names (ether and lava both whitelist nothing). The shared
+    `laser::Filter`'s biome arm stays exercised by the ore base (BA/BB/BE).
 38. **The tank is filled by the machine only.** As with every tank at this pin, `native_fluid_insert`
     takes water and lava only, so a mod fluid cannot be inserted; the machine's own `fillForced` is
     the fill path and the tank is `Action.DRAIN` on every face, as upstream. `/industrialforegoing
@@ -1811,9 +1812,353 @@ instead of skipped, so a short view can never freeze a machine silently.
 > short slot view instead of skipping the machine. The remaining families (the mob crusher, the
 > animal machines, the generators, the conveyors, the GUI) are the next slices.
 
+## Slice 10 — the Nether leg for the lava recipe (0.2.10, 2026-11-23)
+
+**The slice: the port's own deviation 37** — *"The fluid type's place filter is proven for depth,
+not for dimension or biome. … A Nether leg that runs lava (orange lens, y 5–20) is the honest way
+to close it."* It is not a new family: the fluid laser base, its recipe type and the drill have
+shipped since 0.2.8, and the lava file's `dimension_filter` (the Nether) and `depth 5..20` have been
+carried data. What was missing was **the game exercising the dimension arm**: every earlier phase of
+this type ran in the End, where the only standalone recipe is ether (whole world, gated on a wither).
+Tier **machines**, unchanged: no renderer, no dimension work by the mod, no new recipe type — the
+port reads the dimension the base stands in and the recipe file does the rest.
+
+**This is an evidence-only slice (ruling 2026-11-21), and the record says so.** The package changes
+only its version string (`horizon-mod.toml`, `Cargo.toml`); every other packed file is byte-identical
+to 0.2.9, and the leg was **already green on the delivered 0.2.9 package** in this slice's first
+probe — there is no product red to quote because the behaviour shipped in 0.2.8. What 0.2.10 adds is
+the in-game proof and the harness repairs below, as the orchestrator's brief asked (it owns the
+`Update` of the entry we already have, retaining PR #1665). The next behaviour slice starts from
+this evidence.
+
+### The assertion, exactly
+
+In `minecraft:the_nether`, a fluid base at y=11 (inside the lava band) with its own drill at y=12,
+an **orange** lens in its one slot, the bar forced and the drill charged:
+
+| read | value |
+|---|---|
+| the base's dimension | `minecraft:the_nether` |
+| the recipe table | `recipes 2/3` (three files kept, ether and lava decoded) |
+| at `depth 0` | `recipe none`, tank `0/32000 mB`, capability 0 |
+| at `depth 11` | `recipe industrialforegoing:laser_drill_fluid/lava` |
+| one completed 20-tick bar | `tank minecraft:lava 100/32000 mB`, `capability minecraft:lava 100 mB` |
+| the drill after the charge | `9000/10000 FE`, `target [200, 11, 0]` |
+
+The **dimension arm** has its own differential (phase CJ): the *same* base at the *same* depth 11
+with the *same* orange lens in the End answers `recipe none` — the only difference is the dimension.
+The **depth arm** is phase CK: the same Nether box at depth 0 answers none and leaves the tank
+empty. The positive arm is CL. Together they are the first in-game exercise of
+`industrialforegoing:laser_drill_fluid/lava` and of `laser::Filter`'s dimension list.
+
+The seed's biome at (200, 11, 0) is `minecraft:basalt_deltas`; the lava file's biome whitelist is
+empty, so the biome arm is not part of this recipe (and is exercised for the shared filter by the
+ore base's BA/BB/BE).
+
+### In game, phases CJ–CL (`evidence/industrialforegoing-e2e/e2e-launcher.log`)
+
+```
+== CJ: the lava recipe's depth in the End answers no recipe (the dimension arm) ==
+  Fluid Laser Base at [240, 101, 0]: tank industrialforegoing:ether_gas 10/32000 mB, capability industrialforegoing:ether_gas 10 mB, progress 7/20, depth 11, biome minecraft:deep_dark, dimension minecraft:the_end, recipe none, recipes 2/3, lens industrialforegoing:orange_laser_lens, augments speed 1 efficiency 1.00, t=5510
+  depth 11 in minecraft:the_end: none (the lava file needs the Nether)
+== CK: in the Nether at depth 0 the same base answers no recipe and leaves the tank empty ==
+  Fluid Laser Base at [200, 11, 0]: tank empty 0/32000 mB, capability empty 0 mB, progress 0/20, depth 0, biome minecraft:basalt_deltas, dimension minecraft:the_nether, recipe none, recipes 2/3, lens industrialforegoing:orange_laser_lens, augments speed 1 efficiency 1.00, t=5627
+  minecraft:the_nether depth 0: none, tank 0 mB
+== CL: at depth 11 in the Nether one bar fills the tank with 100 mB of lava ==
+  Fluid Laser Base at [200, 11, 0]: tank empty 0/32000 mB, capability empty 0 mB, progress 0/20, depth 11, biome minecraft:basalt_deltas, dimension minecraft:the_nether, recipe industrialforegoing:laser_drill_fluid/lava, recipes 2/3, lens industrialforegoing:orange_laser_lens, augments speed 1 efficiency 1.00, t=5633
+  Laser Drill at [200, 12, 0]: 9000/10000 FE, progress 41/50, target [200, 11, 0], augments speed 1 efficiency 1.00, facing up, t=5649
+  Fluid Laser Base at [200, 11, 0]: tank minecraft:lava 100/32000 mB, capability minecraft:lava 100 mB, progress 0/20, depth 11, biome minecraft:basalt_deltas, dimension minecraft:the_nether, recipe industrialforegoing:laser_drill_fluid/lava, recipes 2/3, lens industrialforegoing:orange_laser_lens, augments speed 1 efficiency 1.00, t=5653
+  industrialforegoing:laser_drill_fluid/lava: tank minecraft:lava 100/32000 mB, capability 100 mB, 9000 FE
+```
+
+The other ten legs are re-run and green in their own way: the green leg `PASS` + `EXIT:0`, the
+control leg `EXIT:1`, and each selftest at its own phase — base (`the water is 200, expected 201`),
+contents (`the restored tank is 5000, expected 5001`), core (the red lens), chamber (the white lens
+count), laser (the drill's 9,001 FE), latex (the 3 mB free operation), fluid (11 mB of ether),
+slaughter (201 mB of pink slime) and the new **nether** (`the lava one bar yields is 101, expected
+100`). `check-e2e-logs.py industrialforegoing-e2e --strict` reads **11/11**.
+
+**Fail-capable, three ways.** `SELFTEST=nether` flips CL's 100 mB to 101 →
+`FAIL: the lava one bar yields is 101, expected 100` → `EXIT:1`. The two counterfactuals are in the
+same run (CJ's End read, CK's depth-0 read) and would fail if the filter ignored the dimension or the
+depth. The control leg (the same Nightly, no package) still fails at its first `give`. A run of the
+new phases against the **delivered 0.2.9 package** is green as well: the probe
+(`evidence/industrialforegoing/probe-nether-lava.log`) is the record, and it is why this slice is
+recorded as evidence-only rather than as a behaviour change.
+
+### Harness facts learned here (recorded so the next slice does not pay them)
+
+- **A Nether arena is available.** `execute in minecraft:the_nether run tp @s …` moves the player and
+  the dimension generates (`OverworldGenerator::for_dimension("minecraft:the_nether")`), so the
+  brief's `blocked(no-nether-arena)` did not apply. The arena is stone at y=10 and air above, the
+  base at y=11, the drill at y=12.
+- **The drill is placed two blocks above the base, not five.** A fresh arena's player falls; from
+  five above the aim was out of reach and `look-at-block` refused (`NO AIM drill`, this slice's first
+  probe).
+- **A launch's readiness is the chat round trip, not `wait-ready`.** Under a loaded machine
+  `wait-ready` returned while the client was still on "Loading terrain...", and `ctl chat` drops the
+  line silently; phase A then failed with `no fresh /industrialforegoing info reply`. `launch()` now
+  sends `/time query gametime` and waits for its reply with `ctl wait-for chat`, and every readout
+  re-sends its command each attempt.
+- **The game's `[CHAT]` log can stop growing while `ctl messages` still answers** (first measured on
+  a reopened world in slice 7). `info()` now takes the newest line from **both** sources and requires
+  its own `t=` to be past the previous read's, the way `laser_info`/`slaughter_info` already did.
+- **A readout helper needs a real-time floor.** `ctl wait N` before the server ticks passes without
+  N ticks having elapsed, so a 30-tick retry window can exhaust itself in milliseconds; the helpers
+  now also `sleep`.
+- **Nothing here explains the chamber-tick anomaly and this slice did not touch it.** Phase BN still
+  places its own fresh chamber (the workaround recorded in slice 9) and ran the `pink_slime_ball`
+  `outputFluid` recipe to 150 mB of water; the anomaly stays open as recorded.
+
+### Coverage (families this slice closes)
+
+| family | coverage |
+|---|---|
+| the **lava** recipe (100 mB, orange lens, the Nether, depth 5–20) | `tested` — CJ (same depth, End → none) and CK/CL (Nether, 0 → none, 11 → lava, one bar → 100 mB) |
+| the **dimension filter** of the shared `laser::Filter` | `tested` — CJ: the only difference from CL is `minecraft:the_end` vs `minecraft:the_nether` |
+| the **depth band**, inside the right dimension | `tested` — CK (0) vs CL (11), same base, lens and box |
+| the 32,000 mB tank and declared capability with a **vanilla** fluid | `tested` — CL reads `minecraft:lava 100/32000 mB` and `capability minecraft:lava 100 mB`; the same drain path is BL's |
+| the **oil** recipe (50 mB, ocean/desert 20–60) | `carried as data, not in the table` — `pneumaticcraft:oil` is another mod's fluid key (deviation 39, unchanged) |
+| the biome arm of the filter | `ported, not exercised for this type` — the standalone files name no biome; the ore base's BA/BB/BE exercise the shared filter |
+
+### Deviations and gaps this slice changes
+
+37. ~~**The fluid type's place filter is proven for depth, not for dimension or biome.**~~ **Closed for
+    depth and dimension (0.2.10).** The Nether leg (CJ/CK/CL) exercises both arms in game with the
+    same base, lens and charge; the only remaining unexercised arm for *this* type is the biome
+    whitelist, which no standalone file of the type names — ether's is empty, lava's is empty, and
+    oil's names ocean/desert but its output is a foreign fluid key. The shared `laser::Filter`'s biome
+    arm stays exercised by the ore base (BA/BB/BE).
+38. **The tank is filled by the machine only** — unchanged, and now shown for `minecraft:lava` too: the
+    pin's fill takes water and lava but the base's tank mode is `DRAIN`, so even lava arrives only
+    through `fillForced`.
+39. **`oil` stays in the package as data** — unchanged (`recipes 2/3` in the Nether as in the End).
+
+### The package (0.2.10)
+
+| | |
+|---|---|
+| version | `0.2.10` |
+| pin | `native-mod`, format `native-1/0a875da…/e59da90…`, for 26.3 |
+| size | **318,730 B**, 409 entries, no packed `Cargo.lock` |
+| SHA-256 | `d69f820c312619d9c46f2011cb7a09dc36cb5fc497c3c35e3c3906047419f37f` (two clean-lock builds `cmp`-identical) |
+| `check` | `industrialforegoing 0.2.10 (native-mod, format native-1/0a875da…/e59da90…, for 26.3)`, exit 0 |
+| `fits` | `0a875da  made for`, `0b14f8a  fits`, both exit 0 |
+| runtime | `src/runtime.rs` packed = tree, `83ae3b11…` |
+| gate | `verify-sdk-package.py industrialforegoing` **1/1** (166 tests, 0 clippy warnings, skills) |
+| difference from 0.2.9 | the version string in `horizon-mod.toml` and `Cargo.toml`; every other packed file unchanged |
+
+### The changelog for the 0.2.10 update
+
+> Updates the entry this campaign already has (retaining its open PR). **Evidence-only release:** the
+> package is byte-identical to 0.2.9 apart from the version string; the behaviour below shipped in
+> 0.2.8 and 0.2.9 and this version adds its in-game proof. The fluid laser base's `lava` recipe is
+> now exercised in a real Nether: with the base at y=11, an orange lens in its slot and the drill
+> charged, the recipe table reads 2 of its 3 files decodable and resolves
+> `industrialforegoing:laser_drill_fluid/lava` at depth 11, and one completed bar puts 100 mB of
+> `minecraft:lava` into the 32,000 mB tank the declared capability reports, for 1,000 FE — while the
+> same base, lens and depth in the End answer no recipe (the recipe's dimension filter), and the same
+> Nether box at depth 0 answers none and leaves the tank empty (its depth band). The port's own
+> `tools/e2e.sh` also gained a chat-round-trip readiness gate for launches and dimension changes and
+> a two-source readout helper; the existing ten in-game legs stay green (11/11 logs under
+> `check-e2e-logs.py --strict`, with `SELFTEST=nether` as the new fail-capable leg).
+
+## Slice 11 — the mob crusher and the essence fluid (0.2.10, 2026-11-23)
+
+**The slice: the port's own gap 9** — slice 9's coverage row reads *"the range addons, the mob
+crusher, the animal machines | `not ported` — gap 9's remaining families"* — and it gives
+`industrialforegoing:essence` its first source, the same "declared with no source" shape
+deviations 19 and 21 closed for `:pink_slime`. Tier **machines**: one block entity, one 10,000 FE
+buffer, one 32,000 mB tank, one 18-slot output container, a server tick and an entity scan — no
+renderer, no dimension work, no new recipe type.
+
+### Upstream (jar `industrial-foregoing-1.21-3.6.39.jar`; source `Buuz135/Industrial-Foregoing`
+### `ce2852db`, clone deleted after the findings)
+
+| upstream | behaviour | what the port carries |
+|---|---|---|
+| `MobCrusherBlock` | `Properties.ofFullCopy(IRON_BLOCK)`, `RotationType.FOUR_WAY`, `TAB_AG_HUS` | block + item, `subfacing`, the iron-block template, the `ag_hus` tab, the pickaxe entry, a 26.3 loot table |
+| `MobCrusherTile extends IndustrialAreaWorkingTile(BEHIND, acceptsRangeUpgrades = true)` | a bar **counting down** from 100; at zero `work()`: with ≥ 50 FE, the first `Mob` in `RangeManager(BEHIND).getBox().expandTowards(0, 2, 0)` that is alive, not `isInvulnerable()`, not `(Animal && isBaby())` and not a wither in its spawn invulnerability is killed; a type in `industrialforegoing:mob_crusher_instant_kill_blacklist` is hurt for 75 instead | `src/crusher.rs` (the rules) and `src/mobcrusher.rs` (the tick, the scan, the kill) |
+| `instantKill` | the mob's loot table rolled with a **fake player**'s `LootContext` into the output inventory, the special drops collected, **`experience * 20`** mB of essence added, the mob removed `KILLED` | the pin's own `Host::fake_player` credited in an `EntityRef::hurt`, so the engine's death path rolls the loot and awards the experience; `living_drops` takes the drop list, `living_experience_drop` turns the points into essence |
+| one `SidedFluidTankComponent("essence", 32000, …, Action.DRAIN)` keyed on `c:experience` | every face reads/drains, none fills | `Registrar::block_fluids`, one drain-only tank, the contents in the block entity's `fluids` compound |
+| `SidedInventoryComponent("output", 6 * 3, 1)`, `setInputFilter((stack, slot) -> false)` | an 18-slot output-only inventory a hopper pulls from | `Registrar::block_container`, 18 slots, all outputs |
+| `EnergyStorageComponent(maxStoredPower = 10,000, 10, 20)` | unlimited IO up to capacity | `ModEnergyBuffer`, the amount the compound's `energy` int |
+| `mob_crusher` recipe `PSP/BMB/GRG` + its unlock | plastic, an iron sword, books, the advanced frame, gold gears, redstone | both files, re-spelled for 26.3 |
+
+`MobCrusherConfig`: `maxProgress` 100, `powerPerOperation` **50**, `maxStoredPower` 10,000,
+`tankSize` **32,000**, `attackDamage` **75** — read from the code, not its comments. The
+`powerPerOperation` comment says *"Amount of Power Consumed per Tick - Default: [40FE]"* while the
+value beside it is 50 and `WorkAction(0.1f, 50)` spends 50; the value wins, as the chamber's own
+comment misled the same way (90 against a comment's 60).
+
+### The brief's "per-health essence" corrected from the artefact
+
+The brief asked for `+N` equal to *"the jar's per-health essence for that mob"*. **The jar has no
+per-health rule.** `MobCrusherTile.instantKill()` fills the tank with `experience * 20` mB, where
+`experience = entity.getExperienceReward(serviceLevel, fakePlayer)` — **20 mB per experience
+point**. A cow's reward is `1 + random(3)` points (`Animal.getBaseExperienceReward`, the same
+number the engine's `mobs::drops::base_experience` computes), so one cow adds **20, 40 or 60 mB**;
+a `health * 20` rule would read 200. The e2e asserts the rule that exists: the tank gains exactly
+`20 ×` the engine's own count, which the readout prints as `last xp N`, and `N` must be 1–3 for a
+cow. Read from `MobCrusherTile.instantKill()` at `ce2852db` (the commit the jar's own build date
+matches) and recorded here instead of implementing a rule the jar does not have.
+
+### TDD, in order
+
+1. **Red** (`src/crusher.rs`'s ten rule tests and `src/mobcrusher.rs`'s tank/container/declaration
+   tests with `Crusher::tick`, `eligible`, `essence_for`, `tanks` and `container` at `todo!()`;
+   `sdk-test-red-slice11.log`): **173 passed, 13 failed**, every failure
+   `panicked at src/…: not yet implemented` — e.g.
+   `crusher::tests::essence_is_twenty_mb_a_point`,
+   `crusher::tests::one_kill_costs_fifty_fe_and_rests_the_bar_at_ten`,
+   `mobcrusher::tests::the_crusher_declares_one_thirty_two_thousand_mb_tank`, and
+   `tests::the_engine_accepts_every_part_of_this_package`.
+2. **The rules** (`src/crusher.rs`, a **seventh** pure module — `runtime.rs` stays byte-identical,
+   which `verify-sdk-package.py` checks): `Candidate`/`eligible` (the jar's four filters),
+   `AttackPath`, `Crusher` (the bar down, the 50 FE, the rest at `floor(bar * 0.1)`, the
+   32,000 mB clamp) and `essence_for(points) = points * 20`.
+3. **The glue** (`src/mobcrusher.rs`): the declarations, the scan (`LevelRef::entities_in`,
+   `Host::mob`, `LivingRef::alive`/`health`/`baby`, `EntityRef::permanently_invulnerable`,
+   `Host::entity_type_in_tag` for the blacklist), the fake-player hit, the two harvest queues, the
+   saved compound, the readout, the setters and the drain.
+4. **The hooks** (`src/lib.rs`): `living_drops` takes the whole drop list of a death this machine
+   caused into its output container and cancels the world drops; `living_experience_drop` queues
+   `20 × points` for the tank and cancels the orbs. Both find their machine through the attempt
+   record written before the hurt.
+5. **Content** (13 files) with `tools/assemble_crusher.py` (`--check`), and `verify_content.py`'s
+   new family plus three selftest mutations (a missing declaration, a wrong pattern, a wrong
+   result).
+
+Green: **186 passed, 0 failed** (`Compiling industrialforegoing v0.2.10`).
+
+### In game, phases CM–CR (`evidence/industrialforegoing-e2e/e2e-launcher-slice11.log`)
+
+| phase | what it asserts | the value it read |
+|---|---|---|
+| CM | the crusher places, faces its placer, and is empty | `block industrialforegoing:mob_crusher`, `facing west`, `0/10000 FE`, `tank empty 0/32000 mB`, capability `empty 0 mB`, `victims 0`, `output empty`, `last xp 0`, bar 97/100 |
+| CN | **counterfactual: no mob** | 5,000 FE in, **5,000 FE out**, tank empty, `last xp 0`, bar 93/100 (rests full) |
+| CO | a cow in the box | `victims 1` before; after: **4,950 FE**, `tank industrialforegoing:essence 20/32000 mB`, `capability … 20 mB`, `last xp 1` (**1 point → 20 mB**), `output 1x minecraft:leather, 2x minecraft:beef`, `victims 0`, bar 7/100; the arena floor held **no** beef or leather (the `living_drops` cancel) |
+| CP | **counterfactual: a mob but 0 FE** | `victims 1` before and after (the cow is alive), tank still 20 mB, `0 FE`, bar 89/100 |
+| CQ | a hopper under the machine | the barrel reads `minecraft:leather,minecraft:beef`; the crusher's `output` is `empty` — the 18-slot container is a real capability |
+| CR | a broken crusher's item | broken at 4,550 FE / 40 mB / `last xp 2`; placed back at exactly those (the loot dropped beside it, as a vanilla container's slots do) |
+
+The transcript's own lines:
+
+```
+== CM: the mob crusher places, faces its placer, and is empty ==
+  Mob Crusher at [260, 101, 0]: 0/10000 FE, tank empty 0/32000 mB, capability empty 0 mB, progress 97/100, victims 0, output empty, last xp 0, facing west, augments speed 1 efficiency 1.00, t=7203
+== CO: a cow in the box is killed for 20 mB a point of its experience ==
+  Mob Crusher at [260, 101, 0]: 5000/10000 FE, tank empty 0/32000 mB, capability empty 0 mB, progress 86/100, victims 1, output empty, last xp 0, facing west, augments speed 1 efficiency 1.00, t=7247
+  Mob Crusher at [260, 101, 0]: 4950/10000 FE, tank industrialforegoing:essence 20/32000 mB, capability industrialforegoing:essence 20 mB, progress 7/100, victims 0, output 1x minecraft:leather, 2x minecraft:beef, last xp 1, facing west, augments speed 1 efficiency 1.00, t=7259
+  a cow: 1 experience -> 20 mB of industrialforegoing:essence, output 1x minecraft:leather, 2x minecraft:beef, 4950 FE
+== CQ: a hopper under the crusher pulls its 18-slot output ==
+  barrel through the hopper: minecraft:leather,minecraft:beef
+== CR: a broken crusher's item carries its tank and buffer ==
+  Mob Crusher at [260, 101, 0]: 4550/10000 FE, tank industrialforegoing:essence 40/32000 mB, capability industrialforegoing:essence 40 mB, progress 3/100, victims 0, output 1x minecraft:leather, 1x minecraft:beef, last xp 2, facing west, augments speed 1 efficiency 1.00, t=7504
+  break: {"block":"minecraft:air","drops":{"industrialforegoing:mob_crusher":1,"minecraft:beef":1,"minecraft:leather":1},"picked_up":{}}
+  the crusher came back with 40 mB of industrialforegoing:essence, 4550 FE and last xp 2
+```
+
+**Fail-capable, four ways, all `EXIT:1`:** the control leg (the same Nightly, no package) stops at
+its first assertion (`FAIL: the machine item did not register`); **`SELFTEST=crusher`** — this
+slice's own — flips CO's essence by one mB after the whole scenario has run
+(`FAIL: the essence a cow gives (20 x 1 points) is 20, expected 21`); `SELFTEST=1` still flips
+phase B (`FAIL: the water is 200, expected 201`); `SELFTEST=slaughter` still flips CC
+(`FAIL: the pink slime a cow gives ((int)(health * 20)) is 201, expected 200`). CN, CP and CQ are
+in-run counterfactuals (no mob; a mob with no FE; the world drops the machine took).
+`check-e2e-logs.py industrialforegoing-e2e --strict` reads **16/16**.
+
+One harness flake cost a run and is worth recording: the first `SELFTEST=slaughter` attempt died
+in phase L with `the broken machine dropped no item: {}` — the break ran in creative, so nothing
+dropped. The re-run reached its own assertion. Nothing in this slice touches that phase.
+
+### Coverage (families this slice adds and closes)
+
+| family | coverage |
+|---|---|
+| `mob_crusher` (block + item) | `tested` — CM places it from its item and reads it back, `facing west`; CR breaks it and reads `drops{mob_crusher: 1}` |
+| its 100-tick bar, 50 FE an operation, the rest at 10 | `tested` — CO reads bar 7/100 and exactly 50 FE spent; CN/CP at 93/89 (idle attempts rest full); the arithmetic is `crusher::Crusher::rest` |
+| the working area (behind, two up) | `tested` — CO (`victims 1` for a cow behind a west-facing machine); `the_working_area_is_the_block_behind_the_machine` pins the four offsets |
+| the Mob filter (alive, not invulnerable, not a baby animal, not a spawning wither) | `unit-tested` (`a_cow_is_eligible_and_a_baby_or_an_invulnerable_mob_is_not`) and `tested` for the animal arm (CO); CP proves a refused attempt leaves the mob alive |
+| the kill (a fake player's credit, the engine's loot table and experience) | `tested` — CO's `last xp 1` and the loot table's own beef/leather; the kill is `EntityRef::hurt` with `Host::fake_player` |
+| the blacklist path (75 damage) | `ported, not exercised in game` — the tag ships and is read (`entity_type_in_tag`), but the End arena has no dragon; `attackDamage` is asserted as 75 |
+| `industrialforegoing:essence` — the tank and its capability | `tested` — CO/CP/CR read `tank industrialforegoing:essence N/32000 mB` and `capability … N mB`; the tank is drain-only (no face fills it) |
+| the jar's `c:experience` fluid tag on the tank's validator | `not carried` — the tank validates by this package's own `industrialforegoing:essence` key (the same call as deviation 44 for `c:fluid/pink_slime`: no carried recipe or add-on reads a fluid tag); the machine writes the tank itself, as deviation 38 describes |
+| the 18-slot output container | `tested` — CO's loot is in `output`; CQ's hopper pulls it into a barrel; CR's break drops the slots and the item carries the rest |
+| `living_drops` (the loot edit) | `tested` — CO: the beef and leather are in the machine and **none on the floor** (the differential) |
+| `living_experience_drop` (the experience into essence) | `tested` — CO's `last xp N` and the tank's `20 × N`, with `SELFTEST=crusher` as the flip |
+| the crusher's shaped recipe | `tested` — `tools/craft_recipe.py` crafts `PSP/BMB/GRG` from `#c:plastics`, `#c:gears/gold`, `machine_frame/advanced`, an iron sword, two books and redstone, asserting the result and that every ingredient is consumed |
+| a GUI screen, redstone modes, comparator, config | `not ported` — gaps 1, 2, 7, 8 |
+| the looting toggle ("consume essence for looting") | `not ported` — the jar's alternate mode (deviation 51) |
+| the range addons | `not ported` — gap 46 |
+
+### Deviations and gaps this slice adds
+
+49. **The instant kill is a player-credited hurt, not `setHealth(0)` + removal.** Upstream rolls the
+    loot table itself with a fake player and then sets the victim's health to 0; the port deals a
+    lethal `minecraft:player_attack` hurt from the pin's own fake player (`Host::fake_player`), so
+    the engine's death path rolls the same table with the same credit and awards the experience
+    vanilla would. A user notices a death animation and a hurt sound where the jar is silent, and
+    a mob with damage reduction may survive one attempt (it is hit again 10 ticks later).
+50. **The wither's spawn invulnerability has no pin read.** `WitherBoss.getInvulnerableTicks()` is
+    not exposed, so a wither in its first 220 ticks would be hurt (and refuse it) where upstream
+    skips it. Every other enemy is unaffected.
+51. **The looting toggle is not ported.** The jar's button swaps "Produce Essence" for "Consume
+    Essence for Looting" (a random Looting level on each kill, no essence); the port ships the
+    default produce-essence mode only, with no GUI to toggle it.
+52. **No range addons.** As with the slaughter factory (gap 46): the working area is the base box,
+    the block behind the machine expanded two blocks up.
+53. **`industrialforegoing:essence` is a declared fluid key, with no bucket and no world block.**
+    Upstream registers an `essence` fluid type, its bucket and its liquid block; the port declares
+    the key (as it does for latex, meat and pink slime), so a tank can hold it and the readout
+    resolves it, but there is no bucket item and no placeable fluid. No carried recipe of this
+    package names it as an ingredient yet.
+54. **A broken crusher's item carries its tank, buffer, bar and last kill's experience, not its
+    output slots.** The output is a declared container, and the engine drops a container's slots
+    beside the block (measured: CR's break drops the beef and leather, and the item still carries
+    the tank and the buffer). Upstream's item handler would carry them inside the machine's own
+    data; the difference is where a user finds the loot after breaking it.
+55. **A full output container loses the remainder.** Upstream ignores
+    `ItemHandlerHelper.insertItem`'s returned remainder too, so the stacks that do not fit vanish;
+    the port does the same (the loot is taken before the check).
+
+### The package (0.2.10)
+
+| | |
+|---|---|
+| version | `0.2.10` |
+| pin | `native-mod`, format `native-1/0a875da…/e59da90…`, for 26.3 |
+| size | **339,359 B**, 421 entries, no packed `Cargo.lock` |
+| SHA-256 | `c759203e51229549e63fb4b113c76950e661576d3053472fa5e69dc5e627f4d4` (two clean-lock builds `cmp`-identical) |
+| `check` | `industrialforegoing 0.2.10 (native-mod, format …)`, exit 0 |
+| `fits` | `0a875da  made for`, `0b14f8a  fits`, both exit 0 |
+| runtime | `src/runtime.rs` packed = tree, `83ae3b11…` |
+| launcher | `Compiling industrialforegoing (1 of 1)`, exported `version = "0.2.10"` |
+| gate | `verify-sdk-package.py industrialforegoing` **1/1** |
+| tests | 186 (was 166; +20: ten rules in `src/crusher.rs` and ten glue/declaration tests in `src/mobcrusher.rs`) |
+
+### The changelog for the 0.2.10 update
+
+> Updates the entry this campaign already has (retaining its open PR). **New: the Mob Crusher and
+> the essence fluid.** A 100-tick bar counting down, a 10,000 FE buffer at 50 FE an operation, a
+> 32,000 mB drain-only essence tank and an 18-slot output-only container; the machine kills the
+> first eligible mob in the block behind it — alive, not invulnerable, not a baby animal — through
+> a fake player's credit, so the loot table rolls with a player kill and the experience becomes
+> essence at **20 mB a point** (a cow's 1–3 points give 20, 40 or 60 mB), and a type in the jar's
+> `mob_crusher_instant_kill_blacklist` takes 75 damage instead. Its loot lands in the machine's own
+> output rather than on the floor (a hopper pulls it out), and it ships with the jar's shaped
+> recipe, loot table, blockstate, models and name, and `industrialforegoing:essence` is declared.
+> Proven in game: placed facing its placer it is empty; an attempt with no mob spends nothing; a
+> cow is killed for its own experience at 20 mB a point for exactly 50 FE, its loot in the
+> output and none on the floor; the same box with no FE leaves the cow alive and adds nothing; a
+> hopper under it empties the output into a barrel; and a broken crusher's item comes back with
+> its essence, its buffer and its last kill's experience. `src/runtime.rs` is unchanged, byte for
+> byte; `src/crusher.rs` is a seventh pure module. The remaining families (the mob duplicator, the
+> animal machines, the generators, the conveyors, the GUI) are the next slices.
+
 ## Skills
 
-Skills: superpowers/using-superpowers,brainstorming,writing-plans,test-driven-development,systematic-debugging,verification-before-completion; BeautifulRust/rust-best-practices,rust-review (slice 9: `brainstorming` to choose the factory from deviations 19 and 21 and weigh the brief's "FE still spent" against `SlaughterFactoryTile.work()`, `writing-plans` for SLICE-9-PLAN.md, `test-driven-development` for the eight red rules and nine red glue tests (`149 passed, 17 failed`, every one `not yet implemented`), `systematic-debugging` for the chamber that stopped advancing its bar (seven probes in clean worlds, all green; the quirk and the padding fix are recorded in the slice 9 section) and for the two craft-script defects the game found (a stack of two `stacksTo(1)` items leaves the second cell empty; a chamber that has run a recipe is not ticked any more in that world), and `verification-before-completion` before recording; `rust-best-practices` for the sixth pure module and its glue, `rust-review` for the after-the-fact audit of `src/mobslaughter.rs`; slice 8: `brainstorming` to choose the fluid laser base from the port's own coverage row and weigh the brief's "a biome the ether recipe names" against the jar's empty whitelist, `writing-plans` for SLICE-8-PLAN.md, `test-driven-development` for the eight red rules and the five red glue tests, `systematic-debugging` for the two in-game gates this slice cost — the launcher's content-hash cache reporting "up to date" and the depth-band differential that replaced a biome counterfactual the artefact does not have — and `verification-before-completion` before recording; `rust-best-practices` for the fifth pure module and the glue, `rust-review` for the after-the-fact audit of `src/fluidbase.rs`; slice 7: `brainstorming` to choose the laser drill from the gap list and weigh the brief's "the ore the base sits on" against the jar's biome/depth rule, `writing-plans` for SLICE-7-PLAN.md, `test-driven-development` for the 14 red rules and the 9 red glue tests, `systematic-debugging` for the six in-game gates this slice cost — the ingredient-object decode (`recipes 0/10`), the biome zoom, the datapack/tag reload, the placement aim, the message/log window, and the loot condition shape — and `verification-before-completion` before recording; `rust-best-practices` for the new pure module and the glue, `rust-review` for the after-the-fact audit of `src/laserdrill.rs`)
+Skills: superpowers/using-superpowers,brainstorming,writing-plans,test-driven-development,systematic-debugging,verification-before-completion; BeautifulRust/rust-best-practices,rust-review (slice 11: `brainstorming` to take the crusher from gap 9 and weigh the brief's per-health essence against the jar's `experience * 20`, `writing-plans` for SLICE-11-PLAN.md, `test-driven-development` for the ten red rules and the red glue/declaration tests (`173 passed, 13 failed`, every one `not yet implemented`) and then the in-game assertion before it was trusted, `systematic-debugging` for the two in-game gates this slice cost (the launcher's build lock held by another port, and the launcher's reuse of a same-version build — four `native-*` tags were removed before the rebuild) and for the creative-mode break flake in phase L, `verification-before-completion` before every claim; `rust-best-practices` for the seventh pure module, the fake-player kill and the two harvest hooks, `rust-review` for the after-the-fact audit of `src/mobcrusher.rs` and `src/crusher.rs` — it weighed clippy's `question_mark` finding on the first run, the `Candidate::blacklisted` field the pure filter correctly ignores, and the `Gain` type's needless `Copy`-by-hash (replaced with an owned dimension string); `rust-review`'s rules also shaped the code: no `unwrap` outside tests, an enum for the two kill paths (`AttackPath`) instead of a bool, and the harvest statics kept behind one module so no other machine can read them; slice 10: `brainstorming` to take the Nether leg from deviation 37 and weigh the brief's depth-0 counterfactual against the dimension arm the recipe actually names, `writing-plans` for SLICE-10-PLAN.md, `test-driven-development` for the in-game assertion written before the package was rebuilt — its red is `SELFTEST=nether`, because the family itself shipped in 0.2.8 — `systematic-debugging` for the harness flakes that cost four runs (`wait-ready` returning while the client still said "Loading terrain...", the game's `[CHAT]` log stopping while `ctl messages` answered, and a `ctl wait` loop exhausting itself before the server ticked), and `verification-before-completion` before recording; `rust-best-practices` loaded and the ladder run, no Rust change: 0.2.10 differs from 0.2.9 only in the version string; `rust-review`: none (no Rust diff); slice 9: `brainstorming` to choose the factory from deviations 19 and 21 and weigh the brief's "FE still spent" against `SlaughterFactoryTile.work()`, `writing-plans` for SLICE-9-PLAN.md, `test-driven-development` for the eight red rules and nine red glue tests (`149 passed, 17 failed`, every one `not yet implemented`), `systematic-debugging` for the chamber that stopped advancing its bar (seven probes in clean worlds, all green; the quirk and the padding fix are recorded in the slice 9 section) and for the two craft-script defects the game found (a stack of two `stacksTo(1)` items leaves the second cell empty; a chamber that has run a recipe is not ticked any more in that world), and `verification-before-completion` before recording; `rust-best-practices` for the sixth pure module and its glue, `rust-review` for the after-the-fact audit of `src/mobslaughter.rs`; slice 8: `brainstorming` to choose the fluid laser base from the port's own coverage row and weigh the brief's "a biome the ether recipe names" against the jar's empty whitelist, `writing-plans` for SLICE-8-PLAN.md, `test-driven-development` for the eight red rules and the five red glue tests, `systematic-debugging` for the two in-game gates this slice cost — the launcher's content-hash cache reporting "up to date" and the depth-band differential that replaced a biome counterfactual the artefact does not have — and `verification-before-completion` before recording; `rust-best-practices` for the fifth pure module and the glue, `rust-review` for the after-the-fact audit of `src/fluidbase.rs`; slice 7: `brainstorming` to choose the laser drill from the gap list and weigh the brief's "the ore the base sits on" against the jar's biome/depth rule, `writing-plans` for SLICE-7-PLAN.md, `test-driven-development` for the 14 red rules and the 9 red glue tests, `systematic-debugging` for the six in-game gates this slice cost — the ingredient-object decode (`recipes 0/10`), the biome zoom, the datapack/tag reload, the placement aim, the message/log window, and the loot condition shape — and `verification-before-completion` before recording; `rust-best-practices` for the new pure module and the glue, `rust-review` for the after-the-fact audit of `src/laserdrill.rs`)
 
 `cargo fmt --package industrialforegoing --check`, `cargo clippy --all-targets -- -D warnings` and
 `cargo test` were run before hand-back (slice 9: `FMT-CLEAN`, 0 warnings, **166 passed**).
@@ -1922,6 +2267,7 @@ The current package (2026-11-21, SDK format) — one file, code and content toge
 
 | File | Size | SHA-256 | Entries |
 |---|---:|---|---:|
+| `industrialforegoing.hmod` (0.2.10) | 318,730 B | `d69f820c312619d9c46f2011cb7a09dc36cb5fc497c3c35e3c3906047419f37f` | 409 |
 | `industrialforegoing.hmod` (0.2.9) | 318,727 B | `fa7300d371f22f81576f452d0c1994449d69ebaf0852c89a9491dcdc7479278d` | 409 |
 | `industrialforegoing.hmod` (0.2.8) | 286,421 B | `f34f98ee0c57a700595160189162ee80856e962df12218d04f7ab7529fbbbfc9` | 371 |
 | `industrialforegoing.hmod` (0.2.7) | 265,740 B | `68b63343357f9f9847bb5bf9be3cd44348aa0f90c98e449afbfc0af8ce5ec614` | 355 |

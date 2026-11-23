@@ -54,11 +54,12 @@ const KEY_ENERGY: &str = "energy";
 const KEY_PROGRESS: &str = "progress";
 /// The fluids this machine's carried recipes name, declared as fluid keys
 /// (`ModuleCore.LATEX`/`PINK_SLIME`/`ETHER_GAS`/`MEAT`).
-pub const DECLARED_FLUIDS: [&str; 4] = [
+pub const DECLARED_FLUIDS: [&str; 5] = [
     "industrialforegoing:latex",
     "industrialforegoing:pink_slime",
     "industrialforegoing:ether_gas",
     "industrialforegoing:meat",
+    "industrialforegoing:essence",
 ];
 /// The side the tanks are read through (all six reach them).
 const READ_FACE: Direction = Direction::Up;
@@ -823,7 +824,8 @@ mod tests {
                 "industrialforegoing:latex",
                 "industrialforegoing:pink_slime",
                 "industrialforegoing:ether_gas",
-                "industrialforegoing:meat"
+                "industrialforegoing:meat",
+                "industrialforegoing:essence"
             ]
         );
     }

@@ -64,9 +64,11 @@ FLUID_LASER = ["fluid_laser_base"]
 FLUID_RECIPES = 3
 FLUID_OUTPUTS = {"minecraft:lava", "industrialforegoing:ether_gas", "pneumaticcraft:oil"}
 BRAND_FLUIDS = {"industrialforegoing:latex", "industrialforegoing:pink_slime",
-                "industrialforegoing:ether_gas"}
+                "industrialforegoing:ether_gas", "industrialforegoing:essence"}
 # Slice 9: the mob slaughter factory and the pink slime set.
 SLAUGHTER = ["mob_slaughter_factory"]
+# Slice 11: the mob crusher (its own tank, output container and kill hooks).
+CRUSHER = ["mob_crusher"]
 PINK_ITEMS = ["pink_slime", "pink_slime_ingot"]
 PINK_BLOCK = "pink_slime_block"
 
@@ -173,6 +175,7 @@ def check(files: Files) -> list[str]:
         + [f"{MOD}:{machine}" for machine in LATEX]
         + [f"{MOD}:{machine}" for machine in LASER]
         + [f"{MOD}:{machine}" for machine in SLAUGHTER]
+        + [f"{MOD}:{machine}" for machine in CRUSHER]
         + [f"{MOD}:{PINK_BLOCK}"]
         + [f"{MOD}:{item}" for item in PINK_ITEMS]
         + [f"{MOD}:{frame}" for frame in FRAMES]
@@ -269,7 +272,7 @@ def check(files: Files) -> list[str]:
     # Slice 9: the mob slaughter factory — declared, named, modelled, with a blockstate, a
     # declaration, a loot table that drops it and a pickaxe entry; its shaped recipe names the
     # package's tags and results in the machine.
-    for machine in SLAUGHTER:
+    for machine in SLAUGHTER + CRUSHER:
         item_id = f"{MOD}:{machine}"
         if item_id not in blocks:
             failures.append(f"the {machine} is not declared as a block")
@@ -295,6 +298,18 @@ def check(files: Files) -> list[str]:
             failures.append(f"the mob slaughter factory recipe does not name {tag}")
     if shaped.get("result", {}).get("id") != f"{MOD}:mob_slaughter_factory":
         failures.append("the mob slaughter factory recipe does not result in the machine")
+
+    # Slice 11: the mob crusher — the same machine checks, its own recipe (the jar's advanced
+    # frame, gold gears and plastic), and its own saved-output declaration.
+    crusher = files.json(f"data/{MOD}/recipe/{CRUSHER[0]}.json")
+    crusher_keys = set(crusher.get("key", {}).values())
+    for tag in ("#c:plastics", "#c:gears/gold", f"#{MOD}:machine_frame/advanced"):
+        if tag not in crusher_keys:
+            failures.append(f"the mob crusher recipe does not name {tag}")
+    if crusher.get("result", {}).get("id") != f"{MOD}:{CRUSHER[0]}":
+        failures.append("the mob crusher recipe does not result in the machine")
+    if crusher.get("pattern") != ["PSP", "BMB", "GRG"]:
+        failures.append("the mob crusher recipe is not the jar's PSP/BMB/GRG")
 
     # The pink slime set: the block (declared, modelled, drops itself) and the two items, their
     # recipes, the tags and the item group.
@@ -605,6 +620,24 @@ def selftest() -> int:
         ),
         ("the slaughter factory's declaration",
          f"data/{MOD}/horizon/block/mob_slaughter_factory.json", {}),
+        ("the mob crusher's declaration",
+         f"data/{MOD}/horizon/block/mob_crusher.json", {}),
+        (
+            "the mob crusher's pattern",
+            None,
+            {
+                f"data/{MOD}/recipe/mob_crusher.json":
+                    lambda value: value | {"pattern": ["PPP", "BMB", "GRG"]}
+            },
+        ),
+        (
+            "the mob crusher's essence fluid",
+            None,
+            {
+                f"data/{MOD}/recipe/mob_crusher.json":
+                    lambda value: value | {"result": {"count": 1, "id": "industrialforegoing:essence"}}
+            },
+        ),
         ("the pink slime ingot tag", "data/c/tags/item/ingots/pink_slime.json", {}),
         (
             "the pink slime block's eight-for-one",

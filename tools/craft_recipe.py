@@ -127,12 +127,25 @@ CASES = [
         ],
     ),
     (
+        "the mob crusher (PSP/BMB/GRG, #c:gears/gold + machine_frame/advanced)",
+        "industrialforegoing:mob_crusher",
+        1,
+        [
+            ("industrialforegoing:plastic", 2, ["100", "102"]),
+            # A sword stacks to one, so its cell gets its own `give`.
+            ("minecraft:iron_sword", 1, ["101"]),
+            ("minecraft:book", 2, ["103", "105"]),
+            ("industrialforegoing:machine_frame_advanced", 1, ["104"]),
+            ("industrialforegoing:gold_gear", 2, ["106", "108"]),
+            ("minecraft:redstone", 1, ["107"]),
+        ],
+    ),
+    (
         "the pink slime block from nine pink slime",
         "industrialforegoing:pink_slime_block",
         1,
         [("industrialforegoing:pink_slime", 9, GRID)],
-    ),
-    (
+    ),    (
         "nine pink slime back out of the block (shapeless)",
         "industrialforegoing:pink_slime",
         9,

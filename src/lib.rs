@@ -37,6 +37,7 @@
 //! component into the new block entity, and [`MachineItem::on_block_placed_by`] clamps the numbers
 //! back to the three capacities. An empty machine's item stays plain.
 pub mod chamber;
+pub mod crusher;
 pub mod dissolution;
 pub mod fluidbase;
 pub mod fluidchain;
@@ -44,6 +45,7 @@ pub mod fluidlaser;
 pub mod laser;
 pub mod laserdrill;
 pub mod latex;
+pub mod mobcrusher;
 pub mod mobslaughter;
 pub mod runtime;
 pub mod slaughter;
@@ -56,9 +58,10 @@ use mod_api::{
     BlockEntityTicksEvent, BlockEntityTypeKey, BlockPart, BlockState, Command,
     CommandArgumentValue, CommandInvocation, ComponentTypesEvent, Compound, Direction, FLUIDS,
     Flow, FluidIdentity, Hand, Hooks, Host, HostSide, HostTransaction, InteractionResult, ItemKey,
-    ItemPart, ItemStack, LevelHost, LevelTickPostEvent, ModEnergyBuffer, ModFluidTanks,
-    OnBlockPlacedByEvent, RegisterCommandsEvent, Registrar, RegistrationContext,
-    RunModCommandEvent, ServerHost, StateForPlacementEvent, Tag, Text, UseItemOnEvent,
+    ItemPart, ItemStack, LevelHost, LevelTickPostEvent, LivingDropsEvent,
+    LivingExperienceDropEvent, ModEnergyBuffer, ModFluidTanks, OnBlockPlacedByEvent,
+    RegisterCommandsEvent, Registrar, RegistrationContext, RunModCommandEvent, ServerHost,
+    StateForPlacementEvent, Tag, Text, UseItemOnEvent,
 };
 
 use crate::runtime::{
@@ -184,6 +187,8 @@ impl Hooks for Mod {
         fluidbase::declare(r);
         // The mob slaughter factory (slice 9): its two tanks, its buffer and its tick.
         mobslaughter::declare(r);
+        // The mob crusher (slice 11): its tank, its output container, its buffer and its tick.
+        mobcrusher::declare(r);
         // Its own recipe type **and** the read-only serializer for it: the game refuses a file
         // whose type has no serializer ("unregistered recipe serializer
         // industrialforegoing:dissolution_chamber", measured in game), and API 36's machine route
@@ -303,6 +308,12 @@ impl Hooks for Mod {
                 mobslaughter::item(),
                 mobslaughter::carried_patch(&saved),
             )
+        } else if block == mobcrusher::BLOCK {
+            (
+                mobcrusher::has_contents(&saved),
+                mobcrusher::item(),
+                mobcrusher::carried_patch(&saved),
+            )
         } else {
             return Flow::Continue;
         };
@@ -318,6 +329,41 @@ impl Hooks for Mod {
             }
         }
         Flow::Continue
+    }
+
+    /// `LivingDropsEvent`: a mob the mob crusher just killed drops its whole list into the
+    /// machine's output container instead of the world (upstream's
+    /// `ItemHandlerHelper.insertItem(this.output, …)`), which is why the crusher's harvest is its
+    /// own tick's write and not this hook's. Only a death this package's crusher caused is taken:
+    /// every other mob's drops pass untouched.
+    fn living_drops(&self, _host: &mut dyn ServerHost, event: &mut LivingDropsEvent<'_>) -> Flow {
+        let Some(attempt) = mobcrusher::attempt_for(event.entity) else {
+            return Flow::Continue;
+        };
+        let stacks: Vec<ItemStack> = std::mem::take(event.drops)
+            .into_iter()
+            .map(|drop| drop.stack)
+            .collect();
+        mobcrusher::queue_loot(&attempt.dimension, attempt.pos, stacks);
+        Flow::Cancel
+    }
+
+    /// `LivingExperienceDropEvent`: the crusher's kill turns the victim's experience into essence
+    /// — 20 mB a point into its 32,000 mB tank — and no orbs spawn. Upstream's
+    /// `getExperienceReward(level, fakePlayer) * 20` is the same arithmetic on the same points.
+    fn living_experience_drop(
+        &self,
+        _host: &mut dyn ServerHost,
+        event: &mut LivingExperienceDropEvent<'_>,
+    ) -> Flow {
+        let Some(attempt) = mobcrusher::take_attempt(event.entity) else {
+            return Flow::Continue;
+        };
+        if event.amount <= 0 {
+            return Flow::Continue;
+        }
+        mobcrusher::queue_gain(&attempt.dimension, attempt.pos, event.amount);
+        Flow::Cancel
     }
 
     /// The harness commands (`RegisterCommandsEvent`). Upstream has none: they exist so a machine can
@@ -383,6 +429,11 @@ impl Hooks for Mod {
         // The mob slaughter factory (slice 9): its own readout, setters and drain.
         if current_block(host, pos).as_deref() == Some(mobslaughter::BLOCK) {
             slaughter_command(host, invocation, pos, sub);
+            return Flow::Cancel;
+        }
+        // The mob crusher (slice 11): its own readout, setters and drain.
+        if current_block(host, pos).as_deref() == Some(mobcrusher::BLOCK) {
+            crusher_command(host, invocation, pos, sub);
             return Flow::Cancel;
         }
         if sub == "fluid" {
@@ -1026,6 +1077,53 @@ fn slaughter_command(
     }
 }
 
+/// The harness commands of the mob crusher (slice 11): its readout, its two setters and the
+/// drain that proves its tank is a declared handler.
+fn crusher_command(
+    host: &mut dyn ServerHost,
+    invocation: &CommandInvocation,
+    pos: [i32; 3],
+    sub: &str,
+) {
+    match sub {
+        "info" => {
+            let line = mobcrusher::readout(host, pos);
+            say(host, &line);
+        }
+        "energy" | "progress" => {
+            let (argument, full, unit, key) = if sub == "energy" {
+                ("amount", crate::crusher::CAPACITY_FE, "FE", KEY_ENERGY)
+            } else {
+                (
+                    "ticks",
+                    crate::crusher::MAX_PROGRESS,
+                    "ticks of bar",
+                    KEY_PROGRESS,
+                )
+            };
+            let Some(value) = integer(invocation, argument) else {
+                say(host, &usage(sub));
+                return;
+            };
+            let value = value.clamp(0, full);
+            let changed = mobcrusher::set_int(host, pos, key, value);
+            say(
+                host,
+                &if changed {
+                    format!("Mob Crusher at {pos:?}: {value}/{full} {unit}.")
+                } else {
+                    format!("{pos:?} is not a mob crusher.")
+                },
+            );
+        }
+        "drain" => {
+            let amount = integer(invocation, "amount").unwrap_or(0).max(0);
+            mobcrusher::drain(host, pos, amount);
+        }
+        _ => say(host, &usage(sub)),
+    }
+}
+
 /// The machine's state, as `/industrialforegoing info` prints it.
 fn readout(host: &mut dyn ServerHost, pos: [i32; 3]) -> String {
     let Some(level) = host.level(host.dimension()) else {
@@ -1234,6 +1332,7 @@ fn is_our_entity_kind(host: &dyn Host, entity: BlockEntityRef) -> bool {
         || laserdrill::kind_of(entity, host)
         || fluidbase::kind_of(entity, host)
         || mobslaughter::kind_of(entity, host)
+        || mobcrusher::kind_of(entity, host)
 }
 
 /// The tank's amount, in the declaration's shape: one entry per tank under `fluids`.
@@ -1756,6 +1855,7 @@ mod content {
                 "ore_laser_base",
                 "fluid_laser_base",
                 "mob_slaughter_factory",
+                "mob_crusher",
                 "pink_slime",
                 "pink_slime_ingot",
                 "pink_slime_block",
