@@ -1,6 +1,6 @@
 id = "industrialforegoing"
 name = "Industrial Foregoing"
-version = "0.2.7"
+version = "0.2.8"
 description = """A port of Industrial Foregoing for Horizon: the Water Condensator, a machine that condenses water out
 of the water source blocks beside it, for Forge Energy. Its 10,000 FE buffer feeds a 16,000 mB drain-only
 water tank through a bar that counts down each tick: two or more sources beside it give 100 mB a source for
@@ -20,8 +20,11 @@ a furnace smelts into plastic. The laser drill and its ore base ship with their 
 (`industrialforegoing:laser_drill_ore`): the drill charges the base one bar step per 1,000 FE, the base
 picks a weighted recipe by the biome tags and dimension type at its mining depth (ten of the jar's
 recipes, the ones whose ores vanilla or this package has), six lens slots raise a recipe's weight and
-fifteen output slots hold the ore. The rest of the mod (the generators, conveyors and the other laser
-bases) is not ported yet."""
+fifteen output slots hold the ore. A fluid laser base ships beside it, under its own type
+(`industrialforegoing:laser_drill_fluid`): one lens slot, a 32,000 mB drain-only tank and no FE of its
+own, the first file-order recipe whose catalyst, biome/depth/dimension rarity and nearby-entity gate
+pass filling the tank with lava, a pack's oil or this mod's ether gas (the jar's three files). The rest
+of the mod (the generators, conveyors and the other machines) is not ported yet."""
 authors = ["Buuz135", "AdLf0208"]
 # A native mod: Rust in src/, compiled by the launcher against the game build [native] pins, beside the
 # content this one also carries (assets/industrialforegoing, data/industrialforegoing). The id is the

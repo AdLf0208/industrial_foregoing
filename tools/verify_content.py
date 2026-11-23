@@ -59,6 +59,10 @@ EXTRACTOR_RECIPES = 9
 # Slice 7: the laser drill and its ore base, and the ore recipes of their own type.
 LASER = ["laser_drill", "ore_laser_base"]
 ORE_RECIPES = 10
+# Slice 8: the fluid laser base and the three files of its own recipe type.
+FLUID_LASER = ["fluid_laser_base"]
+FLUID_RECIPES = 3
+FLUID_OUTPUTS = {"minecraft:lava", "industrialforegoing:ether_gas", "pneumaticcraft:oil"}
 BRAND_FLUIDS = {"industrialforegoing:latex", "industrialforegoing:pink_slime",
                 "industrialforegoing:ether_gas"}
 
@@ -369,6 +373,68 @@ def check(files: Files) -> list[str]:
         if "neoforge:conditions" in files.json(name):
             failures.append(f"{name} still carries a NeoForge condition 26.3 does not know")
 
+    # The fluid laser base (slice 8): declared, named, modelled, with a blockstate, a
+    # 26.3 loot table and a shaped recipe naming the package's tags; and its own three
+    # recipe files, each with a real output fluid, a catalyst and a depth band.
+    for machine in FLUID_LASER:
+        item_id = f"{MOD}:{machine}"
+        if item_id not in blocks:
+            failures.append(f"the {machine} is not declared as a block")
+        for name in (
+            f"assets/{MOD}/blockstates/{machine}.json",
+            f"data/{MOD}/loot_table/blocks/{machine}.json",
+            f"data/{MOD}/horizon/block/{machine}.json",
+            f"assets/{MOD}/items/{machine}.json",
+        ):
+            if not files.has(name):
+                failures.append(f"the {machine} has no {name}")
+        loot = f"data/{MOD}/loot_table/blocks/{machine}.json"
+        if files.has(loot):
+            condition = files.json(loot).get("pools", [{}])[0].get("condition", {})
+            if condition.get("type") != "minecraft:survives_explosion":
+                failures.append(f"{loot} does not use the package's 26.3 condition shape")
+        if item_id not in pickaxe_values(files):
+            failures.append(f"the {machine} has requires_tool but no mineable/pickaxe entry")
+        shaped = files.json(f"data/{MOD}/recipe/{machine}.json")
+        keys = set(shaped.get("key", {}).values())
+        for tag in ("#c:plastics", "#c:gears/diamond", f"#{MOD}:machine_frame/advanced"):
+            if tag not in keys:
+                failures.append(f"the {machine} recipe does not name {tag}")
+    fluid_recipes = region(files, f"data/{MOD}/recipe/laser_drill_fluid/")
+    if len(fluid_recipes) != FLUID_RECIPES:
+        failures.append(
+            f"{len(fluid_recipes)} laser_drill_fluid recipes carried, expected {FLUID_RECIPES}"
+        )
+    outputs = set()
+    for name in fluid_recipes:
+        recipe = files.json(name)
+        if recipe.get("type") != f"{MOD}:laser_drill_fluid":
+            failures.append(f"{name} is not a {MOD}:laser_drill_fluid recipe")
+        if "neoforge:conditions" in recipe:
+            failures.append(f"{name} still carries a NeoForge condition 26.3 does not know")
+        output = recipe.get("output", {})
+        fluid = output.get("fluid")
+        if fluid not in FLUID_OUTPUTS:
+            failures.append(f"{name} outputs {fluid!r}, which is not one of the jar's fluids")
+        else:
+            outputs.add(fluid)
+        if not output.get("amount"):
+            failures.append(f"{name} has no output amount")
+        if not recipe.get("catalyst"):
+            failures.append(f"{name} has no catalyst")
+        for rarity in recipe.get("rarity", []):
+            if "depth_min" not in rarity or "weight" not in rarity:
+                failures.append(f"{name} has a rarity without a depth or a weight")
+    if outputs != FLUID_OUTPUTS:
+        failures.append(f"the fluid recipes' outputs are {sorted(outputs)}, expected all three")
+    ether = files.json(f"data/{MOD}/recipe/laser_drill_fluid/ether.json")
+    gate = ether.get("entity_data", {}).get("entity", {}).get("type")
+    if gate != "minecraft:wither":
+        failures.append(f"the ether recipe's entity gate is {gate!r}, not minecraft:wither")
+    for name in region(files, f"data/{MOD}/advancement/laser_drill_fluid/"):
+        if "neoforge:conditions" in files.json(name):
+            failures.append(f"{name} still carries a NeoForge condition 26.3 does not know")
+
     # Every tag value resolves, including the ones this port writes for the
     # convention tags 26.3's base data does not ship.
     for name, values in tag_values.items():
@@ -416,6 +482,17 @@ def selftest() -> int:
         ("an extractor recipe", f"data/{MOD}/recipe/fluid_extractor/oak.json", {}),
         ("the laser's raw-iron tag", "data/c/tags/item/raw_materials/iron.json", {}),
         ("a laser ore recipe", f"data/{MOD}/recipe/laser_drill_ore/coal_ore.json", {}),
+        ("the fluid laser base's ether recipe",
+         f"data/{MOD}/recipe/laser_drill_fluid/ether.json", {}),
+        (
+            "a fluid recipe's NeoForge condition",
+            None,
+            {
+                f"data/{MOD}/recipe/laser_drill_fluid/lava.json":
+                    lambda value: value
+                    | {"neoforge:conditions": [{"type": "neoforge:mod_loaded"}]}
+            },
+        ),
         (
             "an ore advancement's condition",
             None,

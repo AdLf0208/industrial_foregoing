@@ -39,7 +39,10 @@ surface `industrialforegoingsouls` is blocked on — so the family list is the r
 (0.2.6, 2026-11-22) adds the **latex chain** — the Fluid Extractor and the Latex
 Processing Unit with the extractor's own recipe type and its nine log recipes, `dryrubber` and the
 `smelting dryrubber -> plastic` recipe — so `plastic` finally has a source and the fluids slice 5
-declared are produced by a machine. The gap list at the end is the rest of the mod.
+declared are produced by a machine. slice 8 (0.2.8, 2026-11-22) adds the **fluid laser base** and its
+own `industrialforegoing:laser_drill_fluid` recipe type — the tank machine the same drill charges —
+so `industrialforegoing:ether_gas` has a source and only `:pink_slime` remains sourceless. The gap
+list at the end is the rest of the mod.
 
 **Why this mod now:** it is the rank-0 `content`/`machines` core mod
 `precheck-mod.py industrialforegoing` offers (`DISPATCHABLE`, jar licence MIT,
@@ -980,8 +983,10 @@ fail at their own assertions.
 
 19. ~~**The fluids have no source in this package.**~~ **Closed in 0.2.6 (slice 6) for
     `industrialforegoing:latex`**: the Fluid Extractor produces it, and phase AI drains 400 mB of it
-    out of the declared tank. `:pink_slime` and `:ether_gas` still have no source (their machines
-    are later slices) and the fill path has not changed; the original note follows.
+    out of the declared tank. **`:ether_gas` is closed in 0.2.8 (slice 8)**: the fluid laser base's
+    ether recipe fills its tank with it (phase BJ/BK). **`:pink_slime` is the only declared fluid
+    with no source** — its machine is a later slice — and the fill path has not changed; the
+    original note follows.
     **The fluids have no source in this package.** `industrialforegoing:latex`, `:pink_slime` and
     `:ether_gas` are declared fluid keys, and a tank holds them by writing its own `fluids` compound;
     nothing in the port produced them (the latex/plastic machines were a later slice), and
@@ -1386,7 +1391,7 @@ counterfactuals. `check-e2e-logs.py industrialforegoing-e2e --strict` reads **8/
 | the containers' contents on a break | `tested` — BH: the emerald and the echo shard drop as items (the engine's own contents drop) |
 | the augments on either machine | `ported, not exercised in game` — the base refuses Speed (glue), the drill seats both through the shared `use_item_on`; no phase seats one |
 | `entity_data` recipes | `not ported` — deviation 28, none of the carried files uses it |
-| the `fluid_laser_base` and the laser-drill fluid recipes | `not ported` — a later slice (a tank machine and its own fluid type) |
+| the `fluid_laser_base` and the laser-drill fluid recipes | `tested` — slice 8 (phases BI–BM): the tank machine under the same drill, the ether recipe at depth 101 and not 300, 10 mB a bar in the declared tank, the drain through the capability and the chamber's 135 mB premium recipe; the lava recipe is `carried, not exercised` and oil is data (deviation 37) |
 | GUI screens, redstone modes, comparator, config | `not ported` — gaps 1, 2, 7, 8 |
 
 ### The changelog for the 0.2.7 update
@@ -1410,23 +1415,208 @@ counterfactuals. `check-e2e-logs.py industrialforegoing-e2e --strict` reads **8/
 > engine's own contents drop) and its item carries the bar and the depth. `src/runtime.rs` is
 > unchanged, byte for byte; `src/laser.rs` is a fourth pure module.
 
+## Slice 8 — the fluid laser base and `industrialforegoing:laser_drill_fluid` (0.2.8, 2026-11-22)
+
+**The slice: slice 7's own coverage row** — *"the `fluid_laser_base` and the laser-drill fluid
+recipes — `not ported` — a later slice (a tank machine and its own fluid type)"* — together with gap
+9's *"the other laser bases"* and deviation 19's remaining sentence: *"`:pink_slime` and `:ether_gas`
+still have no source (their machines are later slices)"*. Tier **machines** (ledger): one block
+entity, one fluid tank, one lens slot, one recipe type and commands — **no FE of its own**, no
+renderer, no entity work. It closes `:ether_gas`'s source and leaves `:pink_slime` the only declared
+fluid with none.
+
+### Upstream (jar `industrialforegoing-1.21-3.6.39.jar`; source `Buuz135/Industrial-Foregoing`
+### `ce2852db`, read for behaviour, clone deleted)
+
+| upstream | behaviour | what the port carries |
+|---|---|---|
+| `FluidLaserBaseBlock` | `Properties.ofFullCopy(IRON_BLOCK)`, no rotation, `TAB_RESOURCE` | block + item, the state-free blockstate, the iron-block template, the `resource` tab, the pickaxe entry, its loot table |
+| `FluidLaserBaseTile` (`IndustrialMachineTile`) | a **20-tick bar rising**, advanced **only by a laser drill** (the drill's `isValidTarget` is any `ILaserBase`); at the top `onWork()` takes the **first file-order** recipe whose catalyst sits in the lens slot, whose first valid rarity answers depth/biome/dimension and whose optional entity gate passes; `fillForced` adds `output.amount`; **no energy component** (`EnergyStorageComponent(0, 4, 10)`) | the bar, the first-match rule, the tank fill, the shared drill queue |
+| `SidedFluidTankComponent("output", 32000, …, Action.DRAIN)` | every face drains, none fills, the machine fills itself | `ModFluidTanks` — 32,000 mB, drain-only, contents in the block entity's own `fluids` compound |
+| `SidedInventoryComponent("lens", …, 1, 0)` | one catalyst slot, every face mode `NONE` | `ModContainer` — one slot, no face reaches it |
+| `LaserDrillFluidRecipe` (+ `ModuleCore.LASER_DRILL_FLUID_TYPE`/`_SERIALIZER`) | `output` (sized fluid), `catalyst` (Ingredient), optional `entity_data`, `rarity[]` | the recipe type + read-only serializer (API 36, as the chamber's, the extractor's and the ore base's), the jar's three files, the decode in `src/fluidbase.rs` |
+| `LaserDrillRarity.getValidRarity` | the **first** rarity whose depth band holds `miningDepth`, whose dimension-type filter passes and whose biome-tag filter passes | `fluidlaser::FluidRecipe::rarity_for`, reusing slice 7's `laser::Filter` |
+| `entity_data` | a living entity of the named kind with health > **5** in the 3×3×3 box (one below to two above); its `data` must be a subset of the entity's NBT; the match takes **5** health | `EntityGate`, `data_matches`, `level.entities_in` + `host.living` + `entity.hurt(…, "minecraft:generic", 5.0, …)` |
+| configs | `maxProgress` **20**, tank **32,000 mB**, entity minimum health 5, damage 5 | the constants (`the_constants_are_the_jars_own`) |
+
+`FluidLaserBaseConfig`: the bar's 20 ticks and `catalystModifier` do **not** apply here — the fluid
+base has no weighted pick (the ore base's weight is `laser`-side), so the jar's `catalystModifier` is
+not in this machine's tick.
+
+### The brief's assertion, corrected from the artefact
+
+The brief asks for "a biome the **ether** recipe names" and a counterfactual that is "the End's own
+biome". The jar's `laser_drill_fluid/ether.json` names **no biome**: its `biome_filter` whitelist and
+blacklist are both empty (every biome), its depth band is the whole world (−64…256), and its gate is
+`entity_data` on a nearby `minecraft:wither`. The two files that do name a place are **lava** (the
+Nether, depth 5–20) and **oil** (ocean/desert, depth 20–60), and oil's output is
+`pneumaticcraft:oil` — another mod's fluid key, which a standalone package cannot declare, so the
+game keeps the file and this table counts it on the `files` side (`recipes 2/3`).
+
+So the in-game leg is the **same box, same purple lens, same charge**, differing only in the thing
+that decides: **no wither → `recipe none`, tank empty, the drill still pays 1,000 FE** (phase BI); a
+wither → the ether recipe and 10 mB into the declared tank (BJ); and **the depth band** is the
+differential inside BJ — with the wither present, `/depth 300` (outside 256) reads `recipe none` and
+`/depth 101` reads the ether recipe, with no FE spent between the two reads. The biome half of the
+rarity filter is exercised by slice 7's phases BA/BB/BE on the ore base, which shares
+`laser::Filter`; no shipped fluid recipe has a biome whitelist that this package can produce
+(deviations 37–38).
+
+### TDD, in order
+
+1. **Red** (`src/fluidlaser.rs`, `choice`, `Tank::fill`, `Base::advance` and `data_matches` back at
+   `todo!()`; `sdk-test-red-slice8.log`): **142 passed, 6 failed**, each `not yet implemented` —
+   e.g. `fluidlaser::tests::the_first_recipe_whose_catalyst_rarity_and_gate_pass_is_the_one_used …
+   panicked at src/fluidlaser.rs:106:5: not yet implemented`, and
+   `the_tank_adds_its_fluid_up_to_the_capacity … src/fluidlaser.rs:137:9`.
+2. **The rules** (`src/fluidlaser.rs`, a **fifth** pure module — `runtime.rs` stays byte-identical,
+   which `verify-sdk-package.py` checks): `EntityGate`, `FluidRecipe` (`catalyst_matches`,
+   `rarity_for`), `choice` (file order, catalyst, first valid rarity, gate), `Tank` (32,000 mB, the
+   same-fluid clamp), `Base` (20 ticks, `floor(20 × efficiency)`), `data_matches` (the `entity_data`
+   subset). Eight tests.
+3. **The glue** (`src/fluidbase.rs`): the declarations (block entity type, drain-only tank, lens
+   slot, Part), the recipe table decoded once per table identity (as the chamber's and the
+   extractor's), the drill's queued advance, `on_work` (the first match, the entity gate, the 5
+   damage, `fillForced`), the saved compound, item carry/clamp, the readout and the setters. Five
+   glue tests: `the_base_declares_one_lens_slot_reachable_from_no_face`,
+   `the_tank_is_drain_only_and_thirty_two_thousand_mb`,
+   `the_tank_round_trips_through_the_saved_compound`,
+   `a_broken_base_carries_its_tank_and_not_its_lens`,
+   `a_placed_base_clamps_what_its_item_carried`.
+4. **`src/laserdrill.rs`** now targets **either** laser base (`isValidTarget` = any `ILaserBase`):
+   the advance queue is shared, so one drill charges an ore base or a fluid base with the same
+   1,000 FE a step.
+5. **Content** (16 files) with `tools/assemble_fluidlaser.py` (`--check`), and
+   `verify_content.py`'s new family (`the_fluid_laser_base_and_its_fluid_recipes_are_carried`) plus
+   two selftest mutations.
+
+Green: **148 passed, 0 failed** (`sdk-test.log`, `Compiling industrialforegoing v0.2.8`).
+
+### In game, phases BI–BM (`evidence/industrialforegoing-e2e/e2e-launcher.log`)
+
+| phase | what it asserts | the value it read |
+|---|---|---|
+| BI | the fluid base under its own drill, purple lens, depth 101, a charged bar, **no wither in the box** | `target [240, 101, 0]`; `tank empty 0/32000 mB`, `capability empty 0 mB`, `recipe none`, `recipes 2/3`; the drill `9000/10000 FE` (the charge still cost it 1,000) |
+| BJ | a **NoAI wither in the box**, then the **depth band** as the differential, then one completed bar | at depth 300 `recipe none`; at depth 101 `recipe industrialforegoing:laser_drill_fluid/ether`; then `tank industrialforegoing:ether_gas 10/32000 mB`, `capability industrialforegoing:ether_gas 10 mB`, drill `8000/10000 FE` |
+| BK | a second completed bar adds the same amount | `tank … 20/32000 mB`, drill `7000/10000 FE` |
+| BL | the tank drains through the **declared capability** | `/drain 10` → tank 20 → 10, capability 10 |
+| BM | the chamber runs the one carried recipe that names ether gas | `supreme_machine_frame`: 135 mB of `industrialforegoing:ether_gas` + the eight items → `machine_frame_supreme x1`, ether 0, items 0 |
+
+The transcript's own lines:
+
+```
+== BI: the fluid base with no wither answers no recipe, and the charge still costs FE ==
+  Laser Drill at [240, 102, 0]: 9000/10000 FE, progress 43/50, target [240, 101, 0], …, facing up, t=4693
+  Fluid Laser Base at [240, 101, 0]: tank empty 0/32000 mB, capability empty 0 mB, progress 0/20, depth 101, biome minecraft:deep_dark, dimension minecraft:the_end, recipe none, recipes 2/3, lens industrialforegoing:purple_laser_lens, augments speed 1 efficiency 1.00, t=4704
+  2/3 recipes, none without a wither, tank 0 mB, 9000 FE
+== BJ: a wither in the box makes the ether recipe, and one bar fills the tank ==
+  Fluid Laser Base at [240, 101, 0]: tank empty 0/32000 mB, …, depth 300, …, recipe none, recipes 2/3, …, t=4728
+  Fluid Laser Base at [240, 101, 0]: tank empty 0/32000 mB, …, depth 101, …, recipe industrialforegoing:laser_drill_fluid/ether, recipes 2/3, …, t=4734
+  depth 300: no recipe; depth 101: the ether recipe
+  Laser Drill at [240, 102, 0]: 8000/10000 FE, progress 43/50, target [240, 101, 0], …, t=4750
+  Fluid Laser Base at [240, 101, 0]: tank industrialforegoing:ether_gas 10/32000 mB, capability industrialforegoing:ether_gas 10 mB, progress 0/20, depth 101, …, recipe industrialforegoing:laser_drill_fluid/ether, recipes 2/3, lens industrialforegoing:purple_laser_lens, …, t=4755
+  industrialforegoing:laser_drill_fluid/ether: 10 mB, capability 10 mB, 8000 FE
+== BK: a second bar adds ten more mB to the same tank ==
+  tank 20/32000 mB of industrialforegoing:ether_gas      (drill 7000/10000 FE)
+== BL: the tank drains through the declared capability ==
+  drained 10 mB; tank and capability both read 10 mB
+== BM: the chamber runs the one carried recipe that names ether gas ==
+  Dissolution Chamber at [220, 101, 0]: 3550/10000 FE, input industrialforegoing:ether_gas 135/8000 mB, …, recipe industrialforegoing:dissolution_chamber/supreme_machine_frame, items 8, recipes 23/23, capability industrialforegoing:ether_gas 135 mB, …, t=4850
+  … input empty 0/8000 mB, progress 0/0, recipe none, items 0, …, t=4866
+  135 mB of ether gas and eight items -> industrialforegoing:machine_frame_simple x1, machine_frame_advanced x1, machine_frame_supreme x1
+EXIT:0
+```
+
+**Fail-capable, three ways, all `EXIT:1`:** the control leg (the same Nightly, no package) stops at
+its first `give` (`FAIL: the machine item did not register`); `SELFTEST=1` flips phase B
+(`FAIL: the water is 200, expected 201`); and **`SELFTEST=fluid`** — this slice's own — flips BJ's
+ether count (`FAIL: the ether one bar yields is 11, expected 10`) after the whole scenario has run.
+BI is the in-run counterfactual (the same machine and lens with no wither), and BJ's depth 300 read
+is the second (the same box and wither, only `miningDepth` changed). All four logs end with their
+own exit status; `check-e2e-logs.py industrialforegoing-e2e --strict` reads **9/9**.
+
+### Coverage (families this slice adds)
+
+| family | coverage |
+|---|---|
+| `fluid_laser_base` (block + item) | `tested` — BI places it from its item under a drill and reads it back; the item carries the tank on a break (`a_broken_base_carries_its_tank_and_not_its_lens`, clamped) |
+| `industrialforegoing:laser_drill_fluid` (recipe type + serializer) | `tested` — BI reads `recipes 2/3` (three files kept, two decodable) and BJ resolves `…/ether`; the file-count side is asserted |
+| the **ether** recipe (10 mB, purple lens, entity gate) | `tested` — BI (no wither, none) → BJ (wither, 10 mB) |
+| the **lava** recipe (100 mB, orange lens, Nether 5–20) | `carried, not exercised in game` — its dimension is the Nether and its band 5–20; the rules test asserts both (`the_rarity_band_and_dimension_are_the_jars`). A Nether leg is the next slice's first option (deviation 37) |
+| the **oil** recipe (50 mB, black lens, ocean/desert 20–60) | `carried as data, not in the table` — `pneumaticcraft:oil` is another mod's fluid key; the game keeps the file, the decode leaves it out (`recipes 2/3`) |
+| the depth band | `tested` — BJ: depth 300 → `none`, depth 101 → ether, the wither present in both |
+| the biome filter | `ported, not exercised for this type` — the ether file names no biome; the shared `laser::Filter` is exercised by the ore base's BA/BB/BE |
+| the entity gate (`entity_data`, health > 5, 5 damage) | `tested` — BJ/BK (a NoAI wither keeps the recipe valid over two bars); the health threshold and the damage are unit-tested |
+| the 32,000 mB drain-only tank / declared capability | `tested` — BJ reads `10/32000 mB` and `capability … 10 mB`; BL drains 10 out through the capability; SC/`/fill` refusal is the pin's rule (deviation 38) |
+| the one lens slot / no FE of its own | `tested` — BI writes the lens through `/item replace block … container.0`; BD/BJ show the drill pays and the base's `info` has no FE field |
+| the shared drill (one drill, two base kinds) | `tested` — BI's drill targets `[240, 101, 0]` (a fluid base) where slice 7's phases targeted an ore base |
+| the fill path (`/industrialforegoing fluid`) | `tested` — BM writes the chamber's 135 mB of `:ether_gas`; the fluid base's own tank is filled by the machine, not by a command |
+| the augments on the fluid base | `ported, not exercised in game` — it seats through the shared `use_item_on`; `Base::advance` scales with efficiency (unit test), no phase seats one |
+| a GUI screen, redstone modes, comparator, config | `not ported` — gaps 1, 2, 7, 8 |
+
+### Deviations and gaps this slice adds
+
+37. **The fluid type's place filter is proven for depth, not for dimension or biome.** The only
+    standalone recipe of the type is ether, whose band is the whole world with an empty biome
+    whitelist; lava names the Nether (5–20) and oil names ocean/desert (20–60) but oil's output is a
+    foreign fluid key. So the in-game differential is `depth 300` → none against `depth 101` → ether,
+    and the Nether/biome arms are unit-tested (`the_rarity_band_and_dimension_are_the_jars`) and, for
+    the shared `laser::Filter`, exercised in game by the ore base (BA/BB/BE). A Nether leg that runs
+    lava (orange lens, y 5–20) is the honest way to close it.
+38. **The tank is filled by the machine only.** As with every tank at this pin, `native_fluid_insert`
+    takes water and lava only, so a mod fluid cannot be inserted; the machine's own `fillForced` is
+    the fill path and the tank is `Action.DRAIN` on every face, as upstream. `/industrialforegoing
+    fluid` writes a *chamber* or *unit* tank for the e2e, never this one — BL proves the drain side
+    through the declared capability.
+39. **`oil` stays in the package as data.** Its file is the jar's own, the game loads it under this
+    type (`3` files kept), and the decode leaves it out because this package declares no
+    `pneumaticcraft:oil` key — a pack that ships PneumaticCraft gets its file decoded, since the
+    decode asks the game's own fluid registry. The readout counts it on the `files` side.
+40. **The `entity_data` gate damages the entity, and `NoAI` keeps it alive.** The match takes 5
+    health per operation; the e2e's wither is `NoAI`/`Silent`/`PersistenceRequired` so it stays in
+    the box for two bars. `data` is compared as a JSON subset of the entity's saved compound
+    (numbers by value), which is what the jar's `entityData.data` does with an empty object.
+41. **No weighted pick.** The jar's *ore* base weights candidates; the fluid base takes the first
+    file-order match. The port implements the fluid rule and does not reuse the ore base's weights
+    (`the_first_recipe_whose_catalyst_rarity_and_gate_pass_is_the_one_used`).
+
+### The changelog for the 0.2.8 update
+
+> Supersedes the closed 0.2.7 PR of this entry. **New: the Fluid Laser Base and its own recipe type**
+> `industrialforegoing:laser_drill_fluid` (declared with its read-only serializer). It is the tank
+> machine the same laser drill charges: no FE of its own, a 20-tick bar advanced only by the drill
+> (which now targets either laser base), one lens slot, and a 32,000 mB drain-only tank reported
+> through the declared fluid capability. At the top of the bar the first file-order recipe whose
+> catalyst is in the lens slot, whose first valid rarity answers the biome tags, dimension type and
+> mining depth, and whose optional nearby-entity gate passes fills the tank. The jar's three files
+> ship — lava (the Nether, depth 5–20), a pack's oil (ocean/desert, 20–60; kept as data because its
+> fluid key belongs to another mod) and this mod's **ether gas** (every biome and depth, gated on a
+> nearby wither) — which gives `industrialforegoing:ether_gas` a source. Proven in game: with the
+> drill charged above it and no wither the base answers no recipe and leaves the tank empty while
+> the drill still pays 1,000 FE; with a wither in the box it resolves the ether recipe at depth 101
+> and not at 300, one completed bar puts 10 mB into the tank the declared capability reports, a
+> second bar adds ten more, the tank drains through that capability, and the dissolution chamber
+> runs its one carried recipe naming ether gas (the supreme machine frame, 135 mB) to the product.
+> `src/runtime.rs` is unchanged, byte for byte; `src/fluidlaser.rs` is a fifth pure module. Only
+> `:pink_slime` is now a declared fluid with no source.
+
 ## Skills
 
-Skills: superpowers/using-superpowers,brainstorming,writing-plans,test-driven-development,systematic-debugging,verification-before-completion; BeautifulRust/rust-best-practices,rust-review (slice 7: `brainstorming` to choose the laser drill from the gap list and weigh the brief's "the ore the base sits on" against the jar's biome/depth rule, `writing-plans` for SLICE-7-PLAN.md, `test-driven-development` for the 14 red rules and the 9 red glue tests, `systematic-debugging` for the six in-game gates this slice cost — the ingredient-object decode (`recipes 0/10`), the biome zoom, the datapack/tag reload, the placement aim, the message/log window, and the loot condition shape — and `verification-before-completion` before recording; `rust-best-practices` for the new pure module and the glue, `rust-review` for the after-the-fact audit of `src/laserdrill.rs`)
+Skills: superpowers/using-superpowers,brainstorming,writing-plans,test-driven-development,systematic-debugging,verification-before-completion; BeautifulRust/rust-best-practices,rust-review (slice 8: `brainstorming` to choose the fluid laser base from the port's own coverage row and weigh the brief's "a biome the ether recipe names" against the jar's empty whitelist, `writing-plans` for SLICE-8-PLAN.md, `test-driven-development` for the eight red rules and the five red glue tests, `systematic-debugging` for the two in-game gates this slice cost — the launcher's content-hash cache reporting "up to date" and the depth-band differential that replaced a biome counterfactual the artefact does not have — and `verification-before-completion` before recording; `rust-best-practices` for the fifth pure module and the glue, `rust-review` for the after-the-fact audit of `src/fluidbase.rs`; slice 7: `brainstorming` to choose the laser drill from the gap list and weigh the brief's "the ore the base sits on" against the jar's biome/depth rule, `writing-plans` for SLICE-7-PLAN.md, `test-driven-development` for the 14 red rules and the 9 red glue tests, `systematic-debugging` for the six in-game gates this slice cost — the ingredient-object decode (`recipes 0/10`), the biome zoom, the datapack/tag reload, the placement aim, the message/log window, and the loot condition shape — and `verification-before-completion` before recording; `rust-best-practices` for the new pure module and the glue, `rust-review` for the after-the-fact audit of `src/laserdrill.rs`)
 
 `cargo fmt --package industrialforegoing --check`, `cargo clippy --all-targets -- -D warnings` and
-`cargo test` were run before hand-back (slice 7: `FMT-CLEAN`, 0 warnings, **134 passed**).
+`cargo test` were run before hand-back (slice 8: `FMT-CLEAN`, 0 warnings, **148 passed**).
 `#[allow(private_interfaces, reason = "…")]` marks the injected module's own private
 `Game`/`ModBlockEntity` parameters (the same exception `botanypots`, `powah`, `charginggadgets` and
 `mininggadgets` record).
 
 ## Verification
 
-**[`VALIDATION.md`](VALIDATION.md) is the ladder for the delivered 0.2.7 package** at the
-campaign pin `0a875da…` (the red test run, fmt, clippy, 105 tests, two `cmp`-identical builds, `check`,
-both `fits` runs, the content verifier with its selftest, and the in-game legs — green, control and
-five selftests — with their exit statuses). The tables below are the earlier ladders, kept as
-history.
+**[`VALIDATION.md`](VALIDATION.md) is the ladder for the delivered 0.2.8 package** at the
+campaign pin `0a875da…` (the red test run, fmt, clippy, 148 tests, two `cmp`-identical builds,
+`check`, both `fits` runs, the content verifier with its selftest, and the in-game legs — green,
+control and five selftests — with their exit statuses). The tables below are the earlier ladders,
+kept as history.
 
 ### The SDK ladder (2026-11-18, the 0.2.0 migration; historical)
 
@@ -1521,6 +1711,7 @@ The current package (2026-11-21, SDK format) — one file, code and content toge
 
 | File | Size | SHA-256 | Entries |
 |---|---:|---|---:|
+| `industrialforegoing.hmod` (0.2.8) | 286,421 B | `f34f98ee0c57a700595160189162ee80856e962df12218d04f7ab7529fbbbfc9` | 371 |
 | `industrialforegoing.hmod` (0.2.7) | 265,740 B | `68b63343357f9f9847bb5bf9be3cd44348aa0f90c98e449afbfc0af8ce5ec614` | 355 |
 | `industrialforegoing.hmod` (0.2.6) | 225,305 B | `d9dbb2316b701dab2bf7877bf2361772d3f634113dd75291ac9e6e172b4869a4` | 305 |
 | `industrialforegoing.hmod` (0.2.5) | 189,268 B | `0876ea235c4fd196113992cd743c116d513add5e408e723dc2ec7bf34c7b2bad` | 268 |
@@ -1596,8 +1787,11 @@ The `.hnmod` carried the content mod as
    `fluid_extractor`/`latex_processing_unit`, the **dissolution chamber**, conveyors, black-hole units,
    the laser drills, …), the ranges addons, `fertilizer`/`pink_slime`/`straw`, and the patchouli
    book. **Slice 6 took the latex/plastic chain** (`fluid_extractor`, `latex_processing_unit`,
-   `dryrubber`, plastic's own smelting recipe). `industrialforegoingsouls` is still `blocked(missing-parent-recipe-type:
-   industrialforegoing:laser_drill_ore)` and `mifa` still `blocked(industrialforegoing:dissolution_chamber)`.
+   `dryrubber`, plastic's own smelting recipe); **slice 7 the laser drill and its ore base**, and
+   **slice 8 the fluid laser base** with its own fluid recipe type. `industrialforegoingsouls`'s
+   blocker is closed (its one `laser_drill_ore` file loads under this package's type and runs);
+   `mifa` remains `blocked(industrialforegoing:dissolution_chamber)` for the surfaces the chamber
+   does not ship.
 10. **The block declaration's `sounds` names a vanilla *block***, not a sound
     group id: `"sounds": "minecraft:iron"` was rejected at load
     (`industrialforegoing:water_condensator: sounds minecraft:iron is not a

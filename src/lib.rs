@@ -38,7 +38,9 @@
 //! back to the three capacities. An empty machine's item stays plain.
 pub mod chamber;
 pub mod dissolution;
+pub mod fluidbase;
 pub mod fluidchain;
+pub mod fluidlaser;
 pub mod laser;
 pub mod laserdrill;
 pub mod latex;
@@ -176,6 +178,8 @@ impl Hooks for Mod {
         fluidchain::declare(r);
         // The laser drill and its ore base (slice 7), and their own recipe type below.
         laserdrill::declare(r);
+        // The fluid laser base (slice 8): its tank, lens slot and tick.
+        fluidbase::declare(r);
         // Its own recipe type **and** the read-only serializer for it: the game refuses a file
         // whose type has no serializer ("unregistered recipe serializer
         // industrialforegoing:dissolution_chamber", measured in game), and API 36's machine route
@@ -193,6 +197,10 @@ impl Hooks for Mod {
         // serializer, so the base's table can decode every file of the type.
         r.register_recipe_type(laserdrill::RECIPE_TYPE);
         r.register_raw_recipe_serializer("laser_drill_ore", laserdrill::RECIPE_TYPE);
+        // The fluid base's own recipes (slice 8): the type whose three files name lava, a
+        // pack's oil and this mod's ether gas, kept by the same read-only serializer.
+        r.register_recipe_type(fluidbase::RECIPE_TYPE);
+        r.register_raw_recipe_serializer("laser_drill_fluid", fluidbase::RECIPE_TYPE);
         // The fluids its recipes name, as declared fluid keys: 26.3 has no world fluid for them
         // (there is no latex/plastic machine in this port yet), but a declared key is what lets
         // a tank hold one and the readout resolve it.
@@ -279,6 +287,12 @@ impl Hooks for Mod {
                 laserdrill::item(block),
                 laserdrill::carried_patch(block, &saved),
             )
+        } else if block == fluidbase::BLOCK {
+            (
+                fluidbase::has_contents(&saved),
+                fluidbase::item(),
+                fluidbase::carried_patch(&saved),
+            )
         } else {
             return Flow::Continue;
         };
@@ -349,7 +363,9 @@ impl Hooks for Mod {
         }
         // The laser drill and its ore base (slice 7): their own readouts and setters.
         if let Some(block) = current_block(host, pos)
-            && (block == laserdrill::DRILL_BLOCK || block == laserdrill::BASE_BLOCK)
+            && (block == laserdrill::DRILL_BLOCK
+                || block == laserdrill::BASE_BLOCK
+                || block == fluidbase::BLOCK)
         {
             laser_command(host, invocation, pos, &block, sub);
             return Flow::Cancel;
@@ -858,8 +874,11 @@ fn laser_command(
     sub: &str,
 ) {
     let drill = block == laserdrill::DRILL_BLOCK;
+    let fluid = block == fluidbase::BLOCK;
     let label = if drill {
         "Laser Drill"
+    } else if fluid {
+        "Fluid Laser Base"
     } else {
         "Ore Laser Base"
     };
@@ -867,6 +886,8 @@ fn laser_command(
         "info" => {
             let line = if drill {
                 laserdrill::drill_readout(host, pos)
+            } else if fluid {
+                fluidbase::readout(host, pos)
             } else {
                 laserdrill::base_readout(host, pos)
             };
@@ -896,11 +917,17 @@ fn laser_command(
             };
             let (full, key) = if drill {
                 (crate::laser::DRILL_MAX_PROGRESS, KEY_PROGRESS)
+            } else if fluid {
+                (crate::fluidlaser::BASE_MAX_PROGRESS, KEY_PROGRESS)
             } else {
                 (crate::laser::BASE_MAX_PROGRESS, KEY_PROGRESS)
             };
             let value = value.clamp(0, full);
-            let changed = laserdrill::set_int(host, pos, block, key, value);
+            let changed = if fluid {
+                fluidbase::set_int(host, pos, key, value)
+            } else {
+                laserdrill::set_int(host, pos, block, key, value)
+            };
             say(
                 host,
                 &if changed {
@@ -915,7 +942,11 @@ fn laser_command(
                 say(host, &usage(sub));
                 return;
             };
-            let changed = laserdrill::set_depth(host, pos, block, value);
+            let changed = if fluid {
+                fluidbase::set_depth(host, pos, value)
+            } else {
+                laserdrill::set_depth(host, pos, block, value)
+            };
             say(
                 host,
                 &if changed {
@@ -924,6 +955,10 @@ fn laser_command(
                     format!("{pos:?} is not a mod block entity.")
                 },
             );
+        }
+        "drain" if fluid => {
+            let amount = integer(invocation, "amount").unwrap_or(0).max(0);
+            fluidbase::drain(host, pos, amount);
         }
         _ => say(host, &usage(sub)),
     }
@@ -1135,6 +1170,7 @@ fn is_our_entity_kind(host: &dyn Host, entity: BlockEntityRef) -> bool {
         || dissolution::kind() == Some(kind)
         || fluidchain::kind_of(entity, host)
         || laserdrill::kind_of(entity, host)
+        || fluidbase::kind_of(entity, host)
 }
 
 /// The tank's amount, in the declaration's shape: one entry per tank under `fluids`.
@@ -1516,6 +1552,9 @@ mod content {
     /// The laser drill and its ore base (slice 7).
     const LASER: [&str; 2] = ["laser_drill", "ore_laser_base"];
 
+    /// The fluid laser base (slice 8).
+    const FLUID_LASER: [&str; 1] = ["fluid_laser_base"];
+
     /// The port root, which is also the package root.
     fn root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -1647,6 +1686,7 @@ mod content {
                 "latex_processing_unit",
                 "laser_drill",
                 "ore_laser_base",
+                "fluid_laser_base",
                 "speed_addon_tier_1",
                 "speed_addon_tier_2",
                 "efficiency_addon_tier_1",
@@ -1848,6 +1888,8 @@ mod content {
                         "industrialforegoing:ether_gas",
                         // Slice 7's recipe type: a `type` field, not an item.
                         "industrialforegoing:laser_drill_ore",
+                        // Slice 8's recipe type and the fluid its files name.
+                        "industrialforegoing:laser_drill_fluid",
                     ]
                     .contains(&id.as_str())
                     && !id.contains('/')
@@ -2106,6 +2148,132 @@ mod content {
                     recipe.display()
                 );
             }
+        }
+    }
+
+    /// Slice 8: the fluid laser base, its own recipe type and the jar's three fluid recipes,
+    /// as **files**. The base is declared, named, modelled, has a 26.3 loot table and a shaped
+    /// recipe that names the package's tags; the three files name the type, a catalyst, a
+    /// rarity with a depth band, and (ether) the jar's wither gate.
+    #[test]
+    fn the_fluid_laser_base_and_its_fluid_recipes_are_carried() {
+        for name in [
+            "data/industrialforegoing/horizon/block/fluid_laser_base.json",
+            "assets/industrialforegoing/blockstates/fluid_laser_base.json",
+            "assets/industrialforegoing/models/block/fluid_laser_base.json",
+            "assets/industrialforegoing/models/item/fluid_laser_base.json",
+            "assets/industrialforegoing/items/fluid_laser_base.json",
+            "assets/industrialforegoing/textures/block/fluid_laser_base_side.png",
+            "data/industrialforegoing/loot_table/blocks/fluid_laser_base.json",
+            "data/industrialforegoing/recipe/fluid_laser_base.json",
+            "data/industrialforegoing/advancement/recipes/misc/fluid_laser_base.json",
+        ] {
+            assert!(has(name), "slice 8 ships {name}");
+        }
+        let lang = read("assets/industrialforegoing/lang/en_us.json");
+        assert!(lang.contains("block.industrialforegoing.fluid_laser_base"));
+        let shaped = read("data/industrialforegoing/recipe/fluid_laser_base.json");
+        for value in [
+            "#industrialforegoing:machine_frame/advanced",
+            "#c:plastics",
+            "#c:gears/diamond",
+        ] {
+            assert!(
+                shaped.contains(value),
+                "the fluid base recipe lacks {value}"
+            );
+        }
+        let pickaxe = read("data/minecraft/tags/block/mineable/pickaxe.json");
+        for id in FLUID_LASER {
+            assert!(
+                pickaxe.contains(&format!("industrialforegoing:{id}")),
+                "{id} has requires_tool but no mineable/pickaxe entry"
+            );
+            let loot = read(&format!(
+                "data/industrialforegoing/loot_table/blocks/{id}.json"
+            ));
+            assert!(
+                loot.contains("\"type\": \"minecraft:survives_explosion\""),
+                "{id}'s loot table does not use 26.3's condition shape"
+            );
+        }
+
+        let fluids: Vec<_> = recipes()
+            .into_iter()
+            .filter(|path| {
+                path.to_string_lossy()
+                    .contains("/recipe/laser_drill_fluid/")
+            })
+            .collect();
+        assert_eq!(
+            fluids.len(),
+            3,
+            "the jar's lava, oil and ether files are carried"
+        );
+        let mut outputs = Vec::new();
+        for recipe in &fluids {
+            let text = std::fs::read_to_string(recipe).unwrap_or_default();
+            let values = strings(&text);
+            assert!(
+                values.contains(&"industrialforegoing:laser_drill_fluid".to_owned()),
+                "{} is not a laser_drill_fluid recipe",
+                recipe.display()
+            );
+            assert!(
+                !text.contains("neoforge:"),
+                "{} still carries a NeoForge condition 26.3 does not know",
+                recipe.display()
+            );
+            assert!(
+                values.iter().any(|value| value == "catalyst"),
+                "{} has no catalyst",
+                recipe.display()
+            );
+            assert!(
+                values.iter().any(|value| value == "depth_min")
+                    && values.iter().any(|value| value == "weight"),
+                "{} has no depth band or weight",
+                recipe.display()
+            );
+            let output = values
+                .iter()
+                .position(|value| value == "fluid")
+                .and_then(|index| values.get(index + 1))
+                .cloned()
+                .unwrap_or_default();
+            outputs.push(output);
+        }
+        outputs.sort();
+        assert_eq!(
+            outputs,
+            vec![
+                "industrialforegoing:ether_gas",
+                "minecraft:lava",
+                "pneumaticcraft:oil",
+            ],
+            "the three files name the jar's own output fluids"
+        );
+        let ether = read("data/industrialforegoing/recipe/laser_drill_fluid/ether.json");
+        assert!(
+            ether.contains("minecraft:wither"),
+            "the ether recipe's entity gate is the wither the jar names"
+        );
+        let lava = read("data/industrialforegoing/recipe/laser_drill_fluid/lava.json");
+        assert!(
+            lava.contains("minecraft:the_nether") && lava.contains("\"depth_min\": 5"),
+            "the lava recipe is the Nether's 5..20 band"
+        );
+        for name in ["ether.json", "lava.json"] {
+            let advancement =
+                format!("data/industrialforegoing/advancement/laser_drill_fluid/{name}");
+            assert!(
+                has(&advancement),
+                "the {name} unlock advancement is carried"
+            );
+            assert!(
+                !read(&advancement).contains("neoforge:"),
+                "{advancement} still carries a NeoForge condition"
+            );
         }
     }
 

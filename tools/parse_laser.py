@@ -23,6 +23,16 @@ BASE = re.compile(
     r"efficiency (?P<efficiency>[\d.]+), t=(?P<t>-?\d+)$"
 )
 
+FLUID = re.compile(
+    r"^Fluid Laser Base at (?P<pos>\[[^\]]*\]): tank (?P<tank_fluid>\S+) "
+    r"(?P<tank_mb>-?\d+)/(?P<tank_cap>-?\d+) mB, capability (?P<cap_fluid>\S+) "
+    r"(?P<cap_mb>-?\d+) mB, progress (?P<progress>-?\d+)/(?P<max>-?\d+), "
+    r"depth (?P<depth>-?\d+), biome (?P<biome>\S+), dimension (?P<dimension>\S+), "
+    r"recipe (?P<recipe>.*?), recipes (?P<rules>\d+)/(?P<files>\d+), "
+    r"lens (?P<lens>.*?), augments speed (?P<speed>-?\d+) "
+    r"efficiency (?P<efficiency>[\d.]+), t=(?P<t>-?\d+)$"
+)
+
 DRILL = re.compile(
     r"^Laser Drill at (?P<pos>\[[^\]]*\]): (?P<energy>-?\d+)/(?P<capacity>-?\d+) FE, "
     r"progress (?P<progress>-?\d+)/(?P<max>-?\d+), target (?P<target>\[[^\]]*\]|none), "
@@ -57,6 +67,31 @@ def main() -> int:
                 "LA_SPEED": match["speed"],
                 "LA_EFFICIENCY": match["efficiency"],
                 "LA_T": match["t"],
+            }
+        )
+        return 0
+    if match := FLUID.match(line):
+        emit(
+            {
+                "ok": 1,
+                "LF_POS": match["pos"],
+                "LF_TANK_FLUID": match["tank_fluid"],
+                "LF_TANK_MB": match["tank_mb"],
+                "LF_TANK_CAP": match["tank_cap"],
+                "LF_CAP_FLUID": match["cap_fluid"],
+                "LF_CAP_MB": match["cap_mb"],
+                "LF_PROGRESS": match["progress"],
+                "LF_MAX": match["max"],
+                "LF_DEPTH": match["depth"],
+                "LF_BIOME": match["biome"],
+                "LF_DIM": match["dimension"],
+                "LF_RECIPE": match["recipe"],
+                "LF_RULES": match["rules"],
+                "LF_FILES": match["files"],
+                "LF_LENS": match["lens"],
+                "LF_SPEED": match["speed"],
+                "LF_EFFICIENCY": match["efficiency"],
+                "LF_T": match["t"],
             }
         )
         return 0

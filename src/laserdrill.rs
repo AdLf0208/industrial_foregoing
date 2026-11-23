@@ -229,7 +229,7 @@ fn one(host: &dyn Host, id: &str, value: &mod_api::serde_json::Value) -> Option<
 /// the file's own object. The jar writes `{"item": …}` / `{"tag": …}`, and the pin's parser
 /// wants a string for those two shapes (it reads an object only for a NeoForge kind), so they
 /// are flattened here; any other object is passed on as it is, for a custom ingredient type.
-fn ingredient_spec(value: &mod_api::serde_json::Value) -> Option<String> {
+pub(crate) fn ingredient_spec(value: &mod_api::serde_json::Value) -> Option<String> {
     use mod_api::serde_json::Value;
 
     match value {
@@ -251,7 +251,10 @@ fn ingredient_spec(value: &mod_api::serde_json::Value) -> Option<String> {
 }
 
 /// The item ids an ingredient (`{"item": …}`, `{"tag": …}` or a bare id) resolves to.
-fn ingredient(host: &dyn Host, value: &mod_api::serde_json::Value) -> Option<Vec<String>> {
+pub(crate) fn ingredient(
+    host: &dyn Host,
+    value: &mod_api::serde_json::Value,
+) -> Option<Vec<String>> {
     use mod_api::serde_json::Value;
 
     let spec = ingredient_spec(value)?;
@@ -264,7 +267,7 @@ fn ingredient(host: &dyn Host, value: &mod_api::serde_json::Value) -> Option<Vec
 
 /// One `LaserDrillRarity`: `biome_filter`, `dimension_filter`, `depth_min`, `depth_max`,
 /// `weight`.
-fn rarity_of(value: &mod_api::serde_json::Value) -> Option<Rarity> {
+pub(crate) fn rarity_of(value: &mod_api::serde_json::Value) -> Option<Rarity> {
     use mod_api::serde_json::Value;
 
     let number = |key: &str| {
@@ -496,12 +499,16 @@ fn target_base(host: &mut dyn ServerHost, pos: [i32; 3]) -> Option<[i32; 3]> {
     let level = host.level(host.dimension())?;
     let facing = level.block_property(host, pos, FACING)?;
     let (min, max) = working_area(pos, &facing)?;
-    let base = host.block_key(BASE_BLOCK)?;
+    // `LaserDrillTile.isValidTarget` is any `ILaserBase`, so the same drill charges an ore
+    // base or a fluid base.
+    let ore = host.block_key(BASE_BLOCK)?;
+    let fluid = host.block_key(crate::fluidbase::BLOCK);
     for x in min[0]..=max[0] {
         for y in min[1]..=max[1] {
             for z in min[2]..=max[2] {
                 let candidate = [x, y, z];
-                if level.block(host, candidate) == Some(base) {
+                let block = level.block(host, candidate);
+                if block == Some(ore) || (fluid.is_some() && block == fluid) {
                     return Some(candidate);
                 }
             }
@@ -511,14 +518,14 @@ fn target_base(host: &mut dyn ServerHost, pos: [i32; 3]) -> Option<[i32; 3]> {
 }
 
 /// Queue one advance for the base at `pos` (the drill paid for it).
-fn queue_advance(dimension: &'static str, pos: [i32; 3]) {
+pub(crate) fn queue_advance(dimension: &'static str, pos: [i32; 3]) {
     if let Ok(mut advances) = ADVANCES.lock() {
         *advances.entry((pos, dimension)).or_insert(0) += 1;
     }
 }
 
 /// Take every advance queued for the base at `pos`.
-fn take_advances(dimension: &'static str, pos: [i32; 3]) -> i32 {
+pub(crate) fn take_advances(dimension: &'static str, pos: [i32; 3]) -> i32 {
     ADVANCES
         .lock()
         .ok()

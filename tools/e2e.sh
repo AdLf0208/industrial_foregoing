@@ -42,6 +42,7 @@
 # same for leg L: it asserts 5,001 mB come back from the broken machine's item,
 # so the run must fail at that assertion — the contents family's. SELFTEST=core
 # is the Core item set's: leg U asserts the red lens arrived twice.
+# SELFTEST=laser flips BD's charge; SELFTEST=fluid flips BJ's 10 mB of ether.
 set -Eeuo pipefail
 export LC_ALL=C
 [ -z "${IF_DEBUG:-}" ] || set -x
@@ -55,6 +56,10 @@ SOCK=${SOCK:-${E2E_TMP:-/tmp/opencode}/industrialforegoing-e2e.sock}
 SELFTEST=${SELFTEST:-0}
 KEEP=${KEEP:-0}
 WORLD=IndustrialForegoingE2E
+# The add-on's own jar: its `laser_drill_ore` file and biome tag are the surface slice 7
+# unblocks. It is installed in the scratch world **before the run's opening**, because its
+# biome tag table is built at world load.
+SOULS_JAR=$CLONE/ports/_shared/licence-cache/industrial-foregoing-souls-1.21.1-1.10.7.jar
 # Where the machine stands: the End's void, far from the central island.
 X0=200
 SX=$((X0 + 2))
@@ -116,6 +121,10 @@ launch() { # launch [WORLD]
     "$CTL" --socket "$SOCK" launch --game "$GAME" --world "$world" --seed 20261105 --creative \
         --offscreen --wait --resources "$RES" >/dev/null
     ctl wait-ready 120
+    # A reopened world can come back with the pause menu up (`pause_on_lost_focus`); with the
+    # server paused the chat commands queue and no readout arrives (measured 2026-11-22: the
+    # add-on leg's first post-reopen `info` worked, the next never answered).
+    ctl resume >/dev/null 2>&1 || true
     ctl wait 40
 }
 
@@ -215,6 +224,23 @@ attempt() { # attempt SOURCES ENERGY WATER
 
 expect() { # expect NAME ACTUAL WANT
     [ "$2" = "$3" ] || fail "$1 is $2, expected $3"
+}
+
+# Put the player in survival and **wait until the state says so**: a `gamemode` command
+# runs a tick later, and a break that lands before it is a creative break (no drops). A
+# loaded box needed the wait on 2026-11-22: phase L read `drops: {}` because the break
+# raced the mode switch.
+ensure_survival() {
+    local mode attempt
+    for attempt in $(seq 1 20); do
+        ctl command "gamemode survival @s" >/dev/null
+        ctl wait 2 >/dev/null
+        mode=$(ctl state | jq -r '.gamemode // .game_mode // empty')
+        case "$mode" in
+            survival|0) return 0 ;;
+        esac
+    done
+    fail "the player is still in mode '$mode', not survival, before the break"
 }
 
 # Put one machine item in the player's first hotbar slot and select it: `give`
@@ -396,7 +422,35 @@ feed_advanced_frame() {
 }
 
 echo "== launch (The End arena, the one package carries content and code) =="
+# One open creates the scratch world; the add-on's own data pack is then installed and the
+# world reopened, because the level's biome tag table is built at load. This happens once,
+# before the scenario, so no leg has to run across a mid-scenario relaunch (a reopened
+# world on this box stopped answering chat commands, measured 2026-11-22).
 launch
+ctl quit >/dev/null 2>&1 || true
+sleep 1
+WORLD_DIR=$(dirname "$(find "$SCRATCH" -name level.dat -print -quit)")
+[ -n "$WORLD_DIR" ] || fail "the scratch world has no level.dat"
+PACK=$WORLD_DIR/datapacks/if-souls-surface
+mkdir -p "$PACK/data/industrialforegoingsouls/recipe/laser_drill_ore" \
+         "$PACK/data/industrialforegoingsouls/tags/worldgen/biome"
+cat > "$PACK/pack.mcmeta" <<'META'
+{
+  "pack": {
+    "pack_format": 15,
+    "description": "industrialforegoingsouls' own laser_drill_ore surface, as its package ships it",
+    "supported_formats": {"min_inclusive": 1, "max_inclusive": 9999}
+  }
+}
+META
+[ -f "$SOULS_JAR" ] || fail "the add-on's jar is not in the licence cache"
+unzip -p "$SOULS_JAR" data/industrialforegoingsouls/recipe/laser_drill_ore/echo_shard.json \
+    > "$PACK/data/industrialforegoingsouls/recipe/laser_drill_ore/echo_shard.json"
+printf '{"values":["minecraft:deep_dark"]}\n' \
+    > "$PACK/data/industrialforegoingsouls/tags/worldgen/biome/deep_dark.json"
+launch
+# The second open's player is a fresh identity: grant the op the harness setters need.
+ctl command "op @a" >/dev/null 2>&1 || true
 # Peaceful: the survival legs (phase S's break, U's recolours, L and AE) must not race an
 # enderman, and nothing here asserts a mob. A death mid-craft hides the assertion under it.
 ctl command "difficulty peaceful" >/dev/null
@@ -597,7 +651,7 @@ echo "== S: a machine frame breaks and drops itself =="
 # The frame is `Properties.ofFullCopy(IRON_BLOCK)` with `droppingSelf`: in
 # survival, with a pickaxe, it must leave its own item — a loot table that does
 # not resolve drops nothing (the createaddition lesson).
-ctl command "gamemode survival @s" >/dev/null
+ensure_survival
 ctl command "clear @s" >/dev/null
 ctl command "item replace entity @s hotbar.0 with minecraft:iron_pickaxe 1" >/dev/null
 ctl wait 6 >/dev/null
@@ -612,7 +666,7 @@ echo "  break: $(echo "$FRAME_BREAK" | jq -c '{block, drops, picked_up, items_le
 echo "== U: the 16 lens recolours craft from the lens tag and c:dyes, counts before and after =="
 # Survival: the inventory key opens the creative screen in creative mode, which
 # has no 2x2 crafting grid.
-ctl command "gamemode survival @s" >/dev/null
+ensure_survival
 ctl wait 4 >/dev/null
 python3 "$PORT/tools/recolor.py" "$SOCK" "$CTL" \
     $([ "$SELFTEST" = core ] && echo 2) \
@@ -631,7 +685,7 @@ expect "the tank before the break" "$WATER" 5000
 # The drop must be the only copy of the machine: clear the inventory, then break it
 # in survival — a creative break destroys a block without dropping it, and the
 # iron-block template needs a pickaxe for its drops.
-ctl command "gamemode survival @s" >/dev/null
+ensure_survival
 ctl command "clear @s" >/dev/null
 ctl command "item replace entity @s hotbar.0 with minecraft:iron_pickaxe 1" >/dev/null
 ctl wait 6 >/dev/null
@@ -712,9 +766,11 @@ bar() { # bar X Y Z
 # The bar's fall over a window the game itself measures: the readout carries the
 # game time it was read at (`t=`), so the two reads give the rate exactly — the
 # chat round trip cannot skew it. The window stays short so a bar finishing and
-# resetting mid-window (25 ticks at speed 4) cannot be mistaken for a rate.
+# resetting mid-window (25 ticks at speed 4) cannot be mistaken for a rate; the
+# caller names the longest window its own bar can survive (a 100-tick bar at one a
+# tick survives 50, the 80-tick bar at four a tick only 15).
 # Sets BAR_P1, BAR_T1, BAR_FELL and BAR_TICKS.
-rate() { # rate LABEL
+rate() { # rate LABEL [MAX-WINDOW]
     say "industrialforegoing progress $SX 101 0 100"
     ctl wait 2 >/dev/null
     bar "$SX" 101 0
@@ -729,11 +785,12 @@ rate() { # rate LABEL
     BAR_TICKS=$((T - BAR_T1))
     echo "  $1: progress $BAR_P1 -> $PROGRESS over $BAR_TICKS ticks" >&2
     [ "$BAR_TICKS" -gt 0 ] || fail "$1: the two reads carry the same game time"
-    [ "$BAR_TICKS" -lt 15 ] \
+    [ "$BAR_TICKS" -lt "${2:-15}" ] \
         || fail "$1: a $BAR_TICKS-tick window can cross a finished bar and reset it"
 }
 
 held() { ctl inventory | jq -r --arg item "$1" '.counts[$item] // 0'; }
+
 
 # No sources anywhere while the bar's rate is measured: an idle attempt resets a
 # finished bar to 100, and a window shorter than the bar cannot reach zero.
@@ -745,7 +802,7 @@ info "$SX" 101 0
 expect "the speed with an empty slot" "$SPEED" 1
 expect "the efficiency with an empty slot" "$EFFICIENCY" "1.00"
 expect "the bar's maximum" "$PROGRESS_MAX" 100
-rate "empty slot"
+rate "empty slot" 50
 [ "$BAR_FELL" = "$BAR_TICKS" ] \
     || fail "an empty slot fell $BAR_FELL over $BAR_TICKS ticks, expected one a tick"
 
@@ -801,7 +858,7 @@ expect "the speed after the refused second addon" "$SPEED" 4
 expect "the refused addon is still held" "$(held industrialforegoing:speed_addon_tier_1)" 1
 
 echo "== Q: the augments travel on the machine's item =="
-ctl command "gamemode survival @s" >/dev/null
+ensure_survival
 ctl command "clear @s" >/dev/null
 ctl command "item replace entity @s hotbar.0 with minecraft:iron_pickaxe 1" >/dev/null
 ctl wait 6 >/dev/null
@@ -1123,7 +1180,7 @@ ctl wait 6
 cbar
 expect "the tank before the break" "$F_FIN" 1500
 expect "the buffer before the break" "$F_ENERGY" 4000
-ctl command "gamemode survival @s" >/dev/null
+ensure_survival
 ctl command "clear @s" >/dev/null
 ctl command "item replace entity @s hotbar.0 with minecraft:iron_pickaxe 1" >/dev/null
 ctl wait 6
@@ -1319,7 +1376,7 @@ linfo "$LXU" 101 0
 expect "the latex before the break" "$L_LATEX" 1500
 expect "the water before the break" "$L_WATER" 400
 expect "the buffer before the break" "$L_ENERGY" 4000
-ctl command "gamemode survival @s" >/dev/null
+ensure_survival
 ctl command "clear @s" >/dev/null
 ctl command "item replace entity @s hotbar.0 with minecraft:iron_pickaxe 1" >/dev/null
 ctl wait 6
@@ -1350,12 +1407,11 @@ echo "  the unit came back with $L_ENERGY FE, $L_LATEX mB of latex and $L_WATER 
 # ---------------------------------------------------------------------------
 
 DRX=232            # the ore base's column; the drill sits one block above it
+FLX=240            # the fluid laser base's column, east of the ore base's
 BASE_ID=industrialforegoing:ore_laser_base
+FLUID_BASE_ID=industrialforegoing:fluid_laser_base
 DRILL_ID=industrialforegoing:laser_drill
-# The add-on's own jar: its `laser_drill_ore` file and biome tag are the surface this slice
-# unblocks, and its data is what the game loads (the add-on ships no recipe type of its own).
-SOULS_JAR=$CLONE/ports/_shared/licence-cache/industrial-foregoing-souls-1.21.1-1.10.7.jar
-
+PURPLE_LENS=industrialforegoing:purple_laser_lens
 # Its own platform east of the latex chain's: stone at y=100 and air above, in the End's void.
 # Peaceful: the End's mobs would otherwise reach the player during the leg.
 laser_arena() {
@@ -1399,6 +1455,23 @@ place_drill_above() {
         || fail "the drill did not place at $DRX 102 0 (got '$(block_name "$DRX" 102 0)')"
 }
 
+# The drill above an arbitrary laser base, placed the same way (looking down, six-way
+# `facing: up`), for the fluid base's column.
+place_drill_over() { # place_drill_over BASE_X
+    local x=$1
+    ctl command "item replace entity @s hotbar.0 with $DRILL_ID 1" >/dev/null
+    ctl wait 6
+    ctl select 1 >/dev/null
+    ctl command "execute in minecraft:the_end run tp @s $((x + 1)).5 106 0.5" >/dev/null
+    ctl wait 4
+    ctl look-at-block "$x" 101 0 up >/dev/null 2>&1 || fail "cannot aim at the fluid base's top face"
+    ctl wait 2
+    ctl place "$x" 102 0 --item "$DRILL_ID" >/dev/null || fail "the drill did not place above the fluid base"
+    ctl wait 4
+    [ "$(block_name "$x" 102 0)" = "$DRILL_ID" ] \
+        || fail "the drill did not place at $x 102 0 (got '$(block_name "$x" 102 0)')"
+}
+
 # One `/industrialforegoing` command of a laser machine at its position.
 lasay() { # lasay X Y Z SUB [ARGS...]
     local x=$1 y=$2 z=$3 sub=$4
@@ -1409,39 +1482,44 @@ lasay() { # lasay X Y Z SUB [ARGS...]
 # `/industrialforegoing info` of a laser machine, read from the game's own `[CHAT]` log and
 # waiting for a line whose game time differs from the previous read's (the `ctl messages`
 # window can return an earlier readout, as slice 6 measured).
-laser_info() { # laser_info X Y Z base|drill
-    local x=$1 y=$2 z=$3 kind=$4 pattern before now line="" attempt
-    # Two readers, because a relaunch changes which one works: the game's own `[CHAT]` log is
-    # complete within a session but does not carry the new session after the add-on leg
-    # reopens the world (measured 2026-11-22: both a before- and an after-relaunch marker
-    # vanished from `ctl logs`), while the live `ctl messages` window then holds only the new
-    # session's chat. The setters' replies share the opening words, so the info line is
-    # selected by a field only it carries.
+laser_info() { # laser_info X Y Z base|drill|fluid
+    local x=$1 y=$2 z=$3 kind=$4 pattern line="" best="" best_t=-999999 t cand source attempt
+    local before_t=${LASER_T:-0}
     if [ "$kind" = base ]; then
         pattern='Ore Laser Base at .*, biome '
+    elif [ "$kind" = fluid ]; then
+        pattern='Fluid Laser Base at .*, biome '
     else
         pattern='Laser Drill at .*, target '
     fi
-    before=$(ctl logs --lines 400 | grep -c "\[CHAT\] $pattern" || true)
     say "industrialforegoing info $x $y $z"
-    for attempt in $(seq 1 12); do
+    # A reopened world stops growing `ctl logs`' chat (slice 7's measurement) while the live
+    # `ctl messages` window may still hold an older readout. Take the newest line from
+    # **both** sources and require its game time to be past the previous read's, so a stale
+    # line can never be asserted against.
+    for attempt in $(seq 1 20); do
         ctl wait 2 >/dev/null
-        now=$(ctl logs --lines 400 | grep -c "\[CHAT\] $pattern" || true)
-        if [ "$now" -gt "$before" ]; then
-            line=$(ctl logs --lines 400 | grep "\[CHAT\] $pattern" \
-                | tail -1 | sed 's/^.*\[CHAT\] //' || true)
+        for source in logs messages; do
+            if [ "$source" = logs ]; then
+                cand=$(ctl logs --lines 500 | grep "\[CHAT\] $pattern" | tail -1 | sed 's/^.*\[CHAT\] //' || true)
+            else
+                cand=$(ctl messages 80 | jq -r '.chat[]' | grep -E "$pattern" | tail -1 || true)
+            fi
+            [ -n "$cand" ] || continue
+            t=$(sed -n 's/.* t=\(-\?[0-9][0-9]*\)$/\1/p' <<<"$cand")
+            [ -n "$t" ] || continue
+            if [ "$t" -gt "$best_t" ]; then
+                best=$cand
+                best_t=$t
+            fi
+        done
+        if [ -n "$best" ] && [ "$best_t" -gt "$before_t" ]; then
+            line=$best
             break
         fi
     done
-    if [ -z "$line" ]; then
-        for attempt in $(seq 1 10); do
-            say "industrialforegoing info $x $y $z"
-            ctl wait 3 >/dev/null
-            line=$(ctl messages 60 | jq -r '.chat[]' | grep -E "$pattern" | tail -1 || true)
-            [ -n "$line" ] && break
-        done
-    fi
     [ -n "$line" ] || fail "no fresh /industrialforegoing info reply for the laser machine"
+    LASER_T=$best_t
     eval "$(python3 "$PORT/tools/parse_laser.py" "$line")"
     [ "${ok:-0}" = 1 ] || fail "the laser machine's info line did not parse: $line"
     echo "  $line" >&2
@@ -1465,8 +1543,8 @@ laser_info "$DRX" 101 0 base
 expect "the base's depth (its own Y until the GUI changes it)" "$LA_DEPTH" 101
 expect "the dimension the filters read" "$LA_DIM" minecraft:the_end
 expect "the biome the filters read" "$LA_BIOME" minecraft:the_end
-expect "the recipes the base's own type carries" "$LA_RULES" 10
-expect "the recipe files the game kept" "$LA_FILES" 10
+expect "the recipes the base's type carries (ten ours and the add-on's)" "$LA_RULES" 11
+expect "the recipe files the game kept" "$LA_FILES" 11
 expect "the ore in the End's own biome" "$LA_RECIPE" none
 echo "  $LA_RULES/$LA_FILES recipes, no ore in $LA_BIOME; the drill targets $LD_TARGET facing $LD_FACING"
 
@@ -1531,50 +1609,18 @@ expect "the horizontal six-way facing" "$LD_FACING" west
 echo "  placed from the west: facing $LD_FACING"
 
 echo "== BG: the add-on's own laser_drill_ore recipe loads under this package's type =="
-# `industrialforegoingsouls` ships no recipe type: its one file is ours to load, and its biome
-# filter names a tag of its own. Both are **worldgen data**: a pack added with `/reload` adds
-# its recipe but not its biome tag (the level's biome tag table is built at world load, probed
-# 2026-11-22), so the pack is written and the world reopened.
+# `industrialforegoingsouls` ships no recipe type: its one file is ours to load, and it is
+# already in the table (11/11 from the first phase). Its biome filter names its own tag,
+# loaded with the pack at this world's open; the base answers it in the deep dark at depth 0.
 lasay "$DRX" 102 0 progress 50
 lasay "$DRX" 102 0 energy 0
-ctl wait 4
-ctl quit >/dev/null 2>&1 || true
-sleep 1
-WORLD_DIR=$(dirname "$(find "$SCRATCH" -name level.dat -print -quit)")
-[ -n "$WORLD_DIR" ] || fail "the scratch world has no level.dat"
-PACK=$WORLD_DIR/datapacks/if-souls-surface
-mkdir -p "$PACK/data/industrialforegoingsouls/recipe/laser_drill_ore" \
-         "$PACK/data/industrialforegoingsouls/tags/worldgen/biome"
-cat > "$PACK/pack.mcmeta" <<'META'
-{
-  "pack": {
-    "pack_format": 15,
-    "description": "industrialforegoingsouls' own laser_drill_ore surface, as its package ships it",
-    "supported_formats": {"min_inclusive": 1, "max_inclusive": 9999}
-  }
-}
-META
-[ -f "$SOULS_JAR" ] || fail "the add-on's jar is not in the licence cache"
-unzip -p "$SOULS_JAR" data/industrialforegoingsouls/recipe/laser_drill_ore/echo_shard.json \
-    > "$PACK/data/industrialforegoingsouls/recipe/laser_drill_ore/echo_shard.json"
-printf '{"values":["minecraft:deep_dark"]}\n' \
-    > "$PACK/data/industrialforegoingsouls/tags/worldgen/biome/deep_dark.json"
-launch
-ctl command "difficulty peaceful" >/dev/null
-ctl command "execute in minecraft:the_end run tp @s $((DRX - 2)).5 101 0.5" >/dev/null
-for attempt in $(seq 1 30); do
-    ctl wait 5 >/dev/null
-    [ "$(block_name "$DRX" 101 0)" = "$BASE_ID" ] && [ "$(block_name "$DRX" 102 0)" = "$DRILL_ID" ] && break
-done
-[ "$(block_name "$DRX" 101 0)" = "$BASE_ID" ] || fail "the base did not come back after the reopen"
+lasay "$DRX" 101 0 depth 0
+ctl command "execute in minecraft:the_end run fillbiome $((DRX - 8)) 96 -8 $((DRX + 8)) 112 8 minecraft:deep_dark" >/dev/null
+ctl wait 8
 echo "  $(ctl command "datapack list" | jq -r '.chat | join(" / ")')"
 laser_info "$DRX" 101 0 base
 expect "the add-on's recipe in the base's table" "$LA_RULES" 11
 expect "the files the game kept" "$LA_FILES" 11
-ctl command "execute in minecraft:the_end run fillbiome $((DRX - 8)) 96 -8 $((DRX + 8)) 112 8 minecraft:deep_dark" >/dev/null
-lasay "$DRX" 101 0 depth 0
-ctl wait 6
-laser_info "$DRX" 101 0 base
 expect "the biome the add-on's filter names" "$LA_BIOME" minecraft:deep_dark
 expect "the depth it answers" "$LA_DEPTH" 0
 expect "the add-on's recipe, resolved by this package" "$LA_RECIPE" "industrialforegoingsouls:laser_drill_ore/echo_shard"
@@ -1592,7 +1638,7 @@ lasay "$DRX" 102 0 energy 0
 lasay "$DRX" 101 0 progress 40
 lasay "$DRX" 101 0 depth 7
 ctl wait 4
-ctl command "gamemode survival @s" >/dev/null
+ensure_survival
 ctl command "clear @s" >/dev/null
 ctl command "item replace entity @s hotbar.0 with minecraft:iron_pickaxe 1" >/dev/null
 ctl wait 6
@@ -1619,4 +1665,125 @@ expect "the depth the item carried" "$LA_DEPTH" 7
 expect "the output the item carried (none: the slots dropped themselves)" "$LA_OUTPUT" empty
 echo "  the base came back with its bar $LA_PROGRESS/100 and depth $LA_DEPTH; its slots dropped as items"
 
-echo "PASS: a placed machine is empty with no sources and faces its placer; two sources condense 200 mB for exactly 1,000 FE and one condenses nothing; without 1,000 FE two sources give half for free; three and six sources give 300 and 600 mB; a nearly full tank stops at 16,000 mB while still spending the FE; the declared tank drains 400 mB of water through the fluid handler; and left alone the machine keeps condensing on its own 10-tick bar; the Core ids of these slices register and read back, the four frames place and read back, an unregistered item and block id are refused, and a frame broken in survival drops itself; the condensator crafts from the tags (#c:plastics, #c:gears/iron, machine_frame/pity) with the grid empty afterwards while slice 2's stand-ins stay empty, the pity frame and the three gears craft, and all 16 lens recolours craft from the lens tag and c:dyes with the player's counts before and after; a machine broken with 7,000 FE and 5,000 mB comes back with exactly those numbers on the item it dropped; a seated speed augment of 4 makes the bar fall four a tick where an empty slot falls one, a second speed augment is refused and stays in the hand, an efficiency augment of 0.8 shortens the bar to 80 with an 8-tick cooldown at the same 1,000 FE, and both augments travel on the machine's item; the dissolution chamber places and faces its placer, reads its own recipe type from this package's data (23 files), holds its own fluids in a declared tank the capability reports back, runs the white lens recipe in exactly 100 ticks for 9,000 FE and 250 mB of latex, does nothing with an empty tank and starts when 250 mB arrive, empties its output into a hopper and a barrel, runs the simple machine frame's 300 ticks at exactly 90 FE a tick, makes the advanced frame from #c:plastics, the crafted #c:gears/diamond gear and the simple frame, and a broken chamber carries its buffer and latex back on its item; and the latex chain: a fluid extractor works on the oak log behind it, giving 2 mB for free and 6 mB for 500 FE, nothing at all when the block behind it is stone, and — on its eighth hit — consuming the log into a stripped one and bursting 400 mB that drain back out of its declared tank, where a roll over its break chance moves nothing; a latex processing unit takes 1,000 mB of latex through the command path and 1,000 mB of water through the declared capability (which refuses the mod fluid, so no fluid move can fill it), turns 750 mB of latex and 500 mB of water into one dry rubber for 2,000 FE, a hopper feeds that rubber into a furnace which smelts it into one plastic, and a broken unit carries its latex, water and buffer back on its item; and the laser drill: placed above its ore base it faces up and finds it, reads the base's own ten-recipe table, resolves no ore in the End's biome and the emerald recipe at weight 1 in a mountain one, a lime lens raises that weight to 9, one completed base bar yields the recipe's emerald ore for exactly 1,000 FE while the same charge in the End's own biome yields nothing, and — with the add-on's own laser_drill_ore file and biome tag installed as its package ships them — the base's table reads 11/11 and that recipe runs, yielding one echo shard; a broken base carries its output slots back on its item"
+echo "== BI: the fluid base with no wither answers no recipe, and the charge still costs FE =="
+# The jar's ether recipe is the one that names this mod's fluid; its gate is a live wither
+# in the base's box, not a biome (its biome filter is empty, the depth band is the whole
+# world). The counterfactual is therefore the same box with no wither: no recipe, an empty
+# tank, and the drill still pays its 1,000 FE.
+ctl command "execute in minecraft:the_end run setblock $FLX 101 0 minecraft:air" >/dev/null
+ctl command "execute in minecraft:the_end run setblock $FLX 102 0 minecraft:air" >/dev/null
+ctl command "execute in minecraft:the_end run setblock $FLX 103 0 minecraft:air" >/dev/null
+ctl wait 6
+place_any "$FLX" 101 0 "$FLUID_BASE_ID"
+place_drill_over "$FLX"
+ctl command "item replace block $FLX 101 0 container.0 with $PURPLE_LENS 1" >/dev/null
+lasay "$FLX" 101 0 depth 101
+ctl command "execute in minecraft:the_end run kill @e[type=!player]" >/dev/null
+ctl wait 6
+lasay "$FLX" 101 0 progress 19
+lasay "$FLX" 102 0 energy 10000
+lasay "$FLX" 102 0 progress 1
+ctl wait 6
+laser_info "$FLX" 102 0 drill
+laser_info "$FLX" 101 0 fluid
+expect "the drill's target (the fluid base under it)" "$LD_TARGET" "[$FLX, 101, 0]"
+expect "the recipes the fluid type carries in a standalone package" "$LF_RULES" 2
+expect "the recipe files the game kept" "$LF_FILES" 3
+expect "the recipe with no wither in the box" "$LF_RECIPE" none
+expect "the tank the counterfactual leaves" "$LF_TANK_MB" 0
+expect "the capability the counterfactual leaves" "$LF_CAP_MB" 0
+expect "the buffer the charge still took (10,000 - 1,000 FE)" "$LD_ENERGY" 9000
+echo "  $LF_RULES/$LF_FILES recipes, $LF_RECIPE without a wither, tank $LF_TANK_MB mB, $LD_ENERGY FE"
+
+echo "== BJ: a wither in the box makes the ether recipe, and one bar fills the tank =="
+# The jar's gate: a living entity of the named kind with more than 5 health in the box.
+# `NoAI` freezes it (no gravity, no AI); `PersistenceRequired` keeps it past the difficulty
+# change, and the player is creative, so the End's mobs do not reach her.
+ctl command "difficulty easy" >/dev/null
+ctl command "execute in minecraft:the_end run summon minecraft:wither $((FLX + 1)) 102 0 {NoAI:1b,Silent:1b,PersistenceRequired:1b}" >/dev/null
+ctl wait 8
+# The depth band is the other half of the recipe's rarity: the same box and the same wither,
+# only `miningDepth` changes, so the recipe readout is the differential. Ether's band is
+# -64..256, so a depth of 300 is outside it and 101 is inside.
+lasay "$FLX" 101 0 depth 300
+laser_info "$FLX" 101 0 fluid
+expect "the recipe above the ether band's ceiling (depth 300)" "$LF_RECIPE" none
+expect "the depth the readout reports" "$LF_DEPTH" 300
+lasay "$FLX" 101 0 depth 101
+laser_info "$FLX" 101 0 fluid
+expect "the recipe back inside the band (depth 101)" "$LF_RECIPE" "industrialforegoing:laser_drill_fluid/ether"
+echo "  depth 300: no recipe; depth 101: the ether recipe"
+lasay "$FLX" 101 0 progress 19
+lasay "$FLX" 102 0 energy 9000
+lasay "$FLX" 102 0 progress 1
+ctl wait 6
+laser_info "$FLX" 102 0 drill
+laser_info "$FLX" 101 0 fluid
+ETHER_MB=$LF_TANK_MB
+if [ "$SELFTEST" = fluid ]; then
+    echo "(selftest: asserting one mB more than one ether operation gives)"
+    ETHER_MB=$((ETHER_MB + 1))
+fi
+expect "the recipe a wither unlocks" "$LF_RECIPE" "industrialforegoing:laser_drill_fluid/ether"
+expect "the ether one bar yields" "$ETHER_MB" 10
+expect "the tank's fluid" "$LF_TANK_FLUID" "industrialforegoing:ether_gas"
+expect "the fluid the declared capability reports" "$LF_CAP_FLUID" "industrialforegoing:ether_gas"
+expect "the capability's amount" "$LF_CAP_MB" 10
+expect "the buffer after the charge (9,000 - 1,000 FE)" "$LD_ENERGY" 8000
+echo "  $LF_RECIPE: $LF_TANK_MB mB, capability $LF_CAP_MB mB, $LD_ENERGY FE"
+
+echo "== BK: a second bar adds ten more mB to the same tank =="
+lasay "$FLX" 101 0 progress 19
+lasay "$FLX" 102 0 energy 8000
+lasay "$FLX" 102 0 progress 1
+ctl wait 6
+laser_info "$FLX" 101 0 fluid
+laser_info "$FLX" 102 0 drill
+expect "the tank after two operations" "$LF_TANK_MB" 20
+expect "the buffer after two charges" "$LD_ENERGY" 7000
+echo "  tank $LF_TANK_MB/32000 mB of $LF_TANK_FLUID"
+
+echo "== BL: the tank drains through the declared capability =="
+lasay "$FLX" 101 0 drain 10
+ctl wait 6
+laser_info "$FLX" 101 0 fluid
+expect "the tank after the drain (20 - 10 mB)" "$LF_TANK_MB" 10
+expect "the capability after the drain" "$LF_CAP_MB" 10
+echo "  drained 10 mB; tank and capability both read $LF_TANK_MB mB"
+
+echo "== BM: the chamber runs the one carried recipe that names ether gas =="
+# The pin's tank capability takes water and lava only, so a mod fluid does not move between
+# machines; the chamber's own command writes its input tank, as slice 6's unit does. The
+# recipe is the jar's `supreme_machine_frame` (135 mB of ether gas, 300 ticks at 90 FE).
+ctl command "execute in minecraft:the_end run kill @e[type=minecraft:wither]" >/dev/null
+ctl command "difficulty peaceful" >/dev/null
+ctl command "execute in minecraft:the_end run tp @s $((CX - 2)).5 101 0.5" >/dev/null
+ctl wait 8
+empty_inputs
+csay "fluid ether_gas 135"
+csay "progress 0"
+feed 0 industrialforegoing:plastic
+feed 1 industrialforegoing:machine_frame_advanced
+feed 2 industrialforegoing:plastic
+feed 3 minecraft:netherite_ingot
+feed 4 minecraft:netherite_ingot
+feed 5 minecraft:diamond
+feed 6 industrialforegoing:diamond_gear
+feed 7 minecraft:diamond
+cbar
+expect "the fluid the chamber holds" "$F_FLUID" industrialforegoing:ether_gas
+expect "the ether the chamber holds" "$F_FIN" 135
+expect "the recipe the grid matches" "$F_RECIPE" "industrialforegoing:dissolution_chamber/supreme_machine_frame"
+csay "energy 10000"
+csay "progress 299"
+ctl wait 8
+cbar
+expect "the ether the operation consumed" "$F_FIN" 0
+expect "the input slots after the operation" "$F_ITEMS" 0
+case "$(chamber_outputs)" in
+    *"industrialforegoing:machine_frame_supreme x1"*) ;;
+    *) fail "the supreme frame is not in the output: '$(chamber_outputs)'" ;;
+esac
+echo "  135 mB of ether gas and eight items -> $(chamber_outputs)"
+
+echo "PASS: a placed machine is empty with no sources and faces its placer; two sources condense 200 mB for exactly 1,000 FE and one condenses nothing; without 1,000 FE two sources give half for free; three and six sources give 300 and 600 mB; a nearly full tank stops at 16,000 mB while still spending the FE; the declared tank drains 400 mB of water through the fluid handler; and left alone the machine keeps condensing on its own 10-tick bar; the Core ids of these slices register and read back, the four frames place and read back, an unregistered item and block id are refused, and a frame broken in survival drops itself; the condensator crafts from the tags (#c:plastics, #c:gears/iron, machine_frame/pity) with the grid empty afterwards while slice 2's stand-ins stay empty, the pity frame and the three gears craft, and all 16 lens recolours craft from the lens tag and c:dyes with the player's counts before and after; a machine broken with 7,000 FE and 5,000 mB comes back with exactly those numbers on the item it dropped; a seated speed augment of 4 makes the bar fall four a tick where an empty slot falls one, a second speed augment is refused and stays in the hand, an efficiency augment of 0.8 shortens the bar to 80 with an 8-tick cooldown at the same 1,000 FE, and both augments travel on the machine's item; the dissolution chamber places and faces its placer, reads its own recipe type from this package's data (23 files), holds its own fluids in a declared tank the capability reports back, runs the white lens recipe in exactly 100 ticks for 9,000 FE and 250 mB of latex, does nothing with an empty tank and starts when 250 mB arrive, empties its output into a hopper and a barrel, runs the simple machine frame's 300 ticks at exactly 90 FE a tick, makes the advanced frame from #c:plastics, the crafted #c:gears/diamond gear and the simple frame, and a broken chamber carries its buffer and latex back on its item; and the latex chain: a fluid extractor works on the oak log behind it, giving 2 mB for free and 6 mB for 500 FE, nothing at all when the block behind it is stone, and — on its eighth hit — consuming the log into a stripped one and bursting 400 mB that drain back out of its declared tank, where a roll over its break chance moves nothing; a latex processing unit takes 1,000 mB of latex through the command path and 1,000 mB of water through the declared capability (which refuses the mod fluid, so no fluid move can fill it), turns 750 mB of latex and 500 mB of water into one dry rubber for 2,000 FE, a hopper feeds that rubber into a furnace which smelts it into one plastic, and a broken unit carries its latex, water and buffer back on its item; and the laser drill: placed above its ore base it faces up and finds it, reads the base's own ten-recipe table, resolves no ore in the End's biome and the emerald recipe at weight 1 in a mountain one, a lime lens raises that weight to 9, one completed base bar yields the recipe's emerald ore for exactly 1,000 FE while the same charge in the End's own biome yields nothing, and — with the add-on's own laser_drill_ore file and biome tag installed as its package ships them — the base's table reads 11/11 and that recipe runs, yielding one echo shard; a broken base carries its output slots back on its item; and the fluid laser base, under its own drill, answers no recipe without the wither its ether file names and leaves the tank empty while the drill still pays 1,000 FE, then with a wither in its box one completed bar yields 10 mB of industrialforegoing:ether_gas into the tank the declared capability reports, a second bar adds ten more, the tank drains through that capability, and the dissolution chamber runs its one carried recipe naming ether gas (supreme_machine_frame, 135 mB) to the product"

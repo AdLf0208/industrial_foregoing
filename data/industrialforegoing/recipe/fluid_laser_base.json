@@ -1,0 +1,21 @@
+{
+  "category": "misc",
+  "key": {
+    "b": "minecraft:bucket",
+    "f": "minecraft:diamond_pickaxe",
+    "g": "#c:gears/diamond",
+    "m": "#industrialforegoing:machine_frame/advanced",
+    "p": "#c:plastics",
+    "r": "minecraft:redstone"
+  },
+  "pattern": [
+    "pfp",
+    "bmb",
+    "grg"
+  ],
+  "result": {
+    "count": 1,
+    "id": "industrialforegoing:fluid_laser_base"
+  },
+  "type": "minecraft:crafting_shaped"
+}
