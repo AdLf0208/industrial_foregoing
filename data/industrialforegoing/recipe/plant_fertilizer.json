@@ -1,0 +1,21 @@
+{
+  "category": "misc",
+  "key": {
+    "B": "minecraft:glass_bottle",
+    "G": "#c:gears/iron",
+    "L": "minecraft:leather",
+    "M": "#industrialforegoing:machine_frame/simple",
+    "P": "#c:plastics",
+    "R": "minecraft:redstone"
+  },
+  "pattern": [
+    "PBP",
+    "LML",
+    "GRG"
+  ],
+  "result": {
+    "count": 1,
+    "id": "industrialforegoing:plant_fertilizer"
+  },
+  "type": "minecraft:crafting_shaped"
+}

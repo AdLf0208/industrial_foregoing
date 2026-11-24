@@ -50,6 +50,8 @@ pub mod latex;
 pub mod mobcrusher;
 pub mod mobduplicator;
 pub mod mobslaughter;
+pub mod plantfert;
+pub mod plantnet;
 pub mod rancher;
 pub mod runtime;
 pub mod sewage;
@@ -202,6 +204,8 @@ impl Hooks for Mod {
         // The sewage chain (slice 15): the sewer's drain-only tank and the composter's fill-only
         // tank, 12-slot output container, buffers and ticks.
         sewernet::declare(r);
+        // The plant fertilizer (slice 16): its buffer, 18-slot input container and tick.
+        plantnet::declare(r);
         // Its own recipe type **and** the read-only serializer for it: the game refuses a file
         // whose type has no serializer ("unregistered recipe serializer
         // industrialforegoing:dissolution_chamber", measured in game), and API 36's machine route
@@ -345,6 +349,12 @@ impl Hooks for Mod {
                 sewernet::has_contents(block, &saved),
                 sewernet::item(block),
                 sewernet::carried_patch(block, &saved),
+            )
+        } else if block == plantnet::BLOCK {
+            (
+                plantnet::has_contents(&saved),
+                plantnet::item(),
+                plantnet::carried_patch(&saved),
             )
         } else {
             return Flow::Continue;
@@ -515,6 +525,11 @@ impl Hooks for Mod {
             && (block == sewernet::BLOCK || block == sewernet::COMPOSTER_BLOCK)
         {
             sewage_command(host, invocation, pos, &block, sub);
+            return Flow::Cancel;
+        }
+        // The plant fertilizer (slice 16): its own readout and FE/bar setters.
+        if current_block(host, pos).as_deref() == Some(plantnet::BLOCK) {
+            plantfert_command(host, invocation, pos, sub);
             return Flow::Cancel;
         }
         if sub == "fluid" {
@@ -735,13 +750,16 @@ fn water_sources(host: &mut dyn ServerHost, pos: [i32; 3]) -> u32 {
     let Some(level) = host.level(host.dimension()) else {
         return 0;
     };
+    // Compare against the resolved default water state: a flowing neighbour has a different
+    // `level` property, and a solid block that still holds a fluid layer is not a water block.
+    // (The pin's FluidState answer counts fluid in stone cells, so it is not the jar's block test.)
     let Some(water) = host.block_state_id(WATER) else {
         return 0;
     };
     SIDES
         .iter()
         .filter(|[dx, dy, dz]| {
-            level.block_state(host, [pos[0] + dx, pos[1] + dy, pos[2] + dz]) == Some(water)
+            level.block_state(&*host, [pos[0] + dx, pos[1] + dy, pos[2] + dz]) == Some(water)
         })
         .count() as u32
 }
@@ -1319,6 +1337,43 @@ fn sewage_command(
     }
 }
 
+/// The plant fertilizer's own harness commands: its readout and the FE and bar setters that let
+/// the in-game leg force exactly one attempt.
+fn plantfert_command(
+    host: &mut dyn ServerHost,
+    invocation: &CommandInvocation,
+    pos: [i32; 3],
+    sub: &str,
+) {
+    match sub {
+        "info" => {
+            let line = plantnet::readout(host, pos);
+            say(host, &line);
+        }
+        "energy" | "progress" => {
+            let (argument, full, unit, key) = match sub {
+                "energy" => ("amount", crate::plantfert::CAPACITY_FE, "FE", KEY_ENERGY),
+                _ => ("ticks", crate::plantfert::MAX_PROGRESS, "ticks of bar", KEY_PROGRESS),
+            };
+            let Some(value) = integer(invocation, argument) else {
+                say(host, &usage(sub));
+                return;
+            };
+            let value = value.clamp(0, full);
+            let changed = plantnet::set_int(host, pos, key, value);
+            say(
+                host,
+                &if changed {
+                    format!("Plant Fertilizer at {pos:?}: {value}/{full} {unit}.")
+                } else {
+                    format!("{pos:?} is not a plant fertilizer.")
+                },
+            );
+        }
+        _ => say(host, &usage(sub)),
+    }
+}
+
 fn rancher_command(
     host: &mut dyn ServerHost,
     invocation: &CommandInvocation,
@@ -1611,6 +1666,7 @@ fn is_our_entity_kind(host: &dyn Host, entity: BlockEntityRef) -> bool {
         || mobduplicator::kind_of(entity, host)
         || animalrancher::kind_of(entity, host)
         || sewernet::kind_of(entity, host)
+        || plantnet::kind_of(entity, host)
 }
 
 /// The tank's amount, in the declaration's shape: one entry per tank under `fluids`.
@@ -2024,6 +2080,7 @@ mod content {
 
     /// The sewage chain's two machines (slice 15).
     const SEWAGE_BLOCKS: [&str; 2] = ["sewer", "sewage_composter"];
+    const PLANT_BLOCKS: [&str; 1] = ["plant_fertilizer"];
 
     /// The port root, which is also the package root.
     fn root() -> PathBuf {
@@ -2172,6 +2229,7 @@ mod content {
                 "sewer",
                 "sewage_composter",
                 "fertilizer",
+                "plant_fertilizer",
             ]
             .map(|id| format!("industrialforegoing:{id}")),
         );
@@ -2213,6 +2271,7 @@ mod content {
             .chain(SLAUGHTER.iter().copied())
             .chain(ANIMAL.iter().copied())
             .chain(SEWAGE_BLOCKS.iter().copied())
+            .chain(PLANT_BLOCKS.iter().copied())
             .chain(std::iter::once(PINK_BLOCK))
         {
             assert!(
@@ -2257,6 +2316,7 @@ mod content {
             .chain(SLAUGHTER.iter().copied())
             .chain(ANIMAL.iter().copied())
             .chain(SEWAGE_BLOCKS.iter().copied())
+            .chain(PLANT_BLOCKS.iter().copied())
             .chain(std::iter::once(PINK_BLOCK))
         {
             let key = format!("block.industrialforegoing.{block}");
@@ -3048,5 +3108,61 @@ mod content {
         for id in ["sewer", "sewage_composter", "fertilizer"] {
             assert!(tab.contains(&format!("industrialforegoing:{id}")));
         }
+    }
+
+    /// The plant fertilizer (slice 16): its carried jar shape, its IRON_BLOCK/FOUR_WAY
+    /// declaration and the recipe whose three tags this package now actually ships.
+    #[test]
+    fn the_plant_fertilizer_is_carried() {
+        let id = "plant_fertilizer";
+        let declaration = read(&format!("data/industrialforegoing/horizon/block/{id}.json"));
+        assert!(
+            declaration.contains("minecraft:iron_block") && declaration.contains("subfacing"),
+            "{id} is not the jar's IRON_BLOCK template with four subfacing values"
+        );
+        for facing in ["north", "south", "east", "west"] {
+            assert!(
+                read(&format!("assets/industrialforegoing/blockstates/{id}.json"))
+                    .contains(&format!("subfacing={facing}")),
+                "{id}'s blockstate has no subfacing={facing}"
+            );
+        }
+        for texture in ["side", "back"] {
+            assert!(
+                has(&format!("assets/industrialforegoing/textures/block/{id}_{texture}.png")),
+                "{id}'s {texture} texture is missing"
+            );
+        }
+        assert!(
+            read(&format!("data/industrialforegoing/loot_table/blocks/{id}.json"))
+                .contains(&format!("industrialforegoing:{id}")),
+            "{id}'s loot table does not drop it"
+        );
+        let recipe = read(&format!("data/industrialforegoing/recipe/{id}.json"));
+        for ingredient in [
+            "#c:plastics",
+            "#c:gears/iron",
+            "#industrialforegoing:machine_frame/simple",
+            "minecraft:glass_bottle",
+            "minecraft:leather",
+            "minecraft:redstone",
+        ] {
+            assert!(recipe.contains(ingredient), "{id}'s recipe lacks {ingredient}");
+        }
+        assert!(
+            read("data/minecraft/tags/block/mineable/pickaxe.json")
+                .contains(&format!("industrialforegoing:{id}")),
+            "{id} has requires_tool but no pickaxe entry"
+        );
+        assert!(
+            read("data/industrialforegoing/horizon/creative_tab/ag_hus.json")
+                .contains(&format!("industrialforegoing:{id}")),
+            "{id} is not in the Agriculture & Husbandry tab"
+        );
+        assert!(
+            read("assets/industrialforegoing/lang/en_us.json")
+                .contains("\"block.industrialforegoing.plant_fertilizer\": \"Plant Fertilizer\""),
+            "the jar's Plant Fertilizer name is missing"
+        );
     }
 }
