@@ -61,6 +61,19 @@ ticks. An immature crop, a full output or an empty buffer spends nothing and res
 The sludge/ether tanks and the ether-bar replant path are not in this slice. Its shaped recipe is
 carried from the jar and names `#c:plastics`, `#c:gears/gold` and `machine_frame/pity`.
 
+## The Plant Sower (0.2.17)
+
+The **Plant Sower** (`industrialforegoing:plant_sower`) is the planting half of the agriculture
+family: a 9-slot input container, a 10,000 FE buffer and a 40-tick bar. Its artefact's
+`RangeType.TOP_UP` works the cell **two blocks above** the machine, with the soil one above.
+With a seed whose block can live on that soil, one operation plants the seed's default state
+(`minecraft:wheat_seeds` → `minecraft:wheat[age=0]` on farmland), consumes one item and spends
+1,000 FE, resting `floor(40 × 0.2) = 8` ticks. A powered miss still spends
+`powerPerOperation / 50 = 20` FE and rests 16 ticks; an uncharged buffer spends nothing and rests
+the full bar. The 9-slot GUI filter, the sludge/ether tanks and the `SpecialPlantable` branch are
+not in this slice. Its shaped recipe (`PBP/LML/GRG`) is carried from the jar and names
+`#c:plastics`, `#c:gears/iron`, `machine_frame/pity`, a flower pot, two pistons and redstone.
+
 ## Layout
 
 ```

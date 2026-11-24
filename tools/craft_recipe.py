@@ -225,6 +225,19 @@ CASES = [
             ("minecraft:redstone", 1, ["107"]),
         ],
     ),
+    (
+        "the plant sower (PBP/LML/GRG, #c:plastics, a flower pot, pistons, a pity frame, redstone and #c:gears/iron)",
+        "industrialforegoing:plant_sower",
+        1,
+        [
+            ("industrialforegoing:plastic", 2, ["100", "102"]),
+            ("minecraft:flower_pot", 1, ["101"]),
+            ("minecraft:piston", 2, ["103", "105"]),
+            ("industrialforegoing:machine_frame_pity", 1, ["104"]),
+            ("industrialforegoing:iron_gear", 2, ["106", "108"]),
+            ("minecraft:redstone", 1, ["107"]),
+        ],
+    ),
 ]
 
 

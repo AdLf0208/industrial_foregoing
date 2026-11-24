@@ -1,0 +1,21 @@
+{
+  "category": "misc",
+  "key": {
+    "B": "minecraft:flower_pot",
+    "G": "#c:gears/iron",
+    "L": "minecraft:piston",
+    "M": "#industrialforegoing:machine_frame/pity",
+    "P": "#c:plastics",
+    "R": "minecraft:redstone"
+  },
+  "pattern": [
+    "PBP",
+    "LML",
+    "GRG"
+  ],
+  "result": {
+    "count": 1,
+    "id": "industrialforegoing:plant_sower"
+  },
+  "type": "minecraft:crafting_shaped"
+}

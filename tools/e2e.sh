@@ -50,7 +50,8 @@
 # of milk by one (the animal rancher, slice 13); SELFTEST=sewage flips DL's 50 mB of sewage by one
 # (the sewage chain, slice 15); SELFTEST=plantfert flips DN's crop age by one (the plant
 # fertilizer, slice 16); SELFTEST=plantgather flips DO's wheat count by one (the plant
-# gatherer, slice 17).
+# gatherer, slice 17); SELFTEST=plantsower flips DP's planted crop state to an age-1 wheat
+# (the plant sower, slice 18).
 set -Eeuo pipefail
 export LC_ALL=C
 [ -z "${IF_DEBUG:-}" ] || set -x
@@ -3711,4 +3712,137 @@ expect "the FE one harvest spends (PlantGathererConfig.powerPerOperation)" "$PG_
     || fail "the cooldown after a harvest is $PG_PROGRESS, expected 1..12 (floor(40*0.3))"
 echo "  one harvest: wheat x1 and seeds x1 in the output, crop removed, 400 FE, floor(40*0.3) bar"
 
-echo "PASS: a placed machine is empty with no sources and faces its placer; two sources condense 200 mB for exactly 1,000 FE and one condenses nothing; without 1,000 FE two sources give half for free; three and six sources give 300 and 600 mB; a nearly full tank stops at 16,000 mB while still spending the FE; the declared tank drains 400 mB of water through the fluid handler; and left alone the machine keeps condensing on its own 10-tick bar; the Core ids of these slices register and read back, the four frames place and read back, an unregistered item and block id are refused, and a frame broken in survival drops itself; the condensator crafts from the tags (#c:plastics, #c:gears/iron, machine_frame/pity) with the grid empty afterwards while slice 2's stand-ins stay empty, the pity frame and the three gears craft, all 16 lens recolours craft from the lens tag and c:dyes with the player's counts before and after, the mob duplicator crafts from #c:plastics and machine_frame/advanced, and the Mob Imprisonment Tool crafts from plastic and a ghast tear; a machine broken with 7,000 FE and 5,000 mB comes back with exactly those numbers on the item it dropped; a seated speed augment of 4 makes the bar fall four a tick where an empty slot falls one, a second speed augment is refused and stays in the hand, an efficiency augment of 0.8 shortens the bar to 80 with an 8-tick cooldown at the same 1,000 FE, and both augments travel on the machine's item; the dissolution chamber places and faces its placer, reads its own recipe type from this package's data (25 files), holds its own fluids in a declared tank the capability reports back, runs the white lens recipe in exactly 100 ticks for 9,000 FE and 250 mB of latex, does nothing with an empty tank and starts when 250 mB arrive, empties its output into a hopper and a barrel, runs the simple machine frame's 300 ticks at exactly 90 FE a tick, makes the advanced frame from #c:plastics, the crafted #c:gears/diamond gear and the simple frame, and a broken chamber carries its buffer and latex back on its item; and the latex chain: a fluid extractor works on the oak log behind it, giving 2 mB for free and 6 mB for 500 FE, nothing at all when the block behind it is stone, and — on its eighth hit — consuming the log into a stripped one and bursting 400 mB that drain back out of its declared tank, where a roll over its break chance moves nothing; a latex processing unit takes 1,000 mB of latex through the command path and 1,000 mB of water through the declared capability (which refuses the mod fluid, so no fluid move can fill it), turns 750 mB of latex and 500 mB of water into one dry rubber for 2,000 FE, a hopper feeds that rubber into a furnace which smelts it into one plastic, and a broken unit carries its latex, water and buffer back on its item; and the laser drill: placed above its ore base it faces up and finds it, reads the base's own ten-recipe table, resolves no ore in the End's biome and the emerald recipe at weight 1 in a mountain one, a lime lens raises that weight to 9, one completed base bar yields the recipe's emerald ore for exactly 1,000 FE while the same charge in the End's own biome yields nothing, and — with the add-on's own laser_drill_ore file and biome tag installed as its package ships them — the base's table reads 11/11 and that recipe runs, yielding one echo shard; a broken base carries its output slots back on its item; and the fluid laser base, under its own drill, answers no recipe without the wither its ether file names and leaves the tank empty while the drill still pays 1,000 FE, then with a wither in its box one completed bar yields 10 mB of industrialforegoing:ether_gas into the tank the declared capability reports, a second bar adds ten more, the tank drains through that capability, and the dissolution chamber runs its one carried recipe naming ether gas (supreme_machine_frame, 135 mB) to the product; and the mob slaughter factory: placed facing its placer it is empty, a bar with no mob in the working area kills nothing and spends no FE, a cow in the box is killed for 10 mB of meat and 200 mB of pink slime for exactly 400 FE (both tanks reported back by the declared capability), the same box with no FE leaves a villager alive and adds nothing, 5,000 FE then kills the villager for 400 mB of meat and 20 mB of pink slime, both tanks drain through the capability, the factory's own shaped recipe crafts from #c:plastics, #c:gears/gold and machine_frame/pity, the pink slime block crafts from nine pink slime and gives them back shapeless and drops itself, a broken factory carries both tanks and its buffer back on its item, and the dissolution chamber runs the jar's only outputFluid recipe — 300 mB of pink slime and a glass pane for one pink slime ball and 150 mB of minecraft:water in its output tank; and the fluid laser base's dimension-and-depth pair: the lava recipe's band at depth 11 answers no recipe in the End (the dimension filter), in the Nether at depth 0 it answers none and leaves an empty tank, and at depth 11 in the Nether one completed bar of the drill fills the tank with 100 mB of minecraft:lava, reported by the declared capability, for 1,000 FE; and the mob crusher: placed facing its placer it is empty, a bar with no mob spends nothing, a cow in its box is killed for its own experience at 20 mB a point (1-3 points, so 20, 40 or 60 mB) for exactly 50 FE, its loot lands in the machine's 18-slot output instead of the floor and a hopper under it pulls that loot into a barrel, the same box with no FE leaves the cow alive and adds nothing, the crusher's own shaped recipe crafts from #c:plastics, #c:gears/gold and machine_frame/advanced, and a broken crusher carries its essence, its buffer and its last kill's experience back on its item; and the mob duplicator: its tool captures a cow and the machine reads its type and 120 mB cost, one operation with 120 mB in the tank spawns exactly one cow for 5,000 FE, the same box with 0 essence spawns nothing and spends no FE, 33 cows in the working area refuse the attempt while holding both the charge and the essence, the tool releases its cow on a block face and empties itself, and a broken duplicator's item carries its buffer and tank while its tool drops beside it; and the Mob Imprisonment Tool crafts from #c:plastics and a ghast tear; and the animal rancher: placed facing its placer it is empty with its working area the single block behind it, a cow there fills its 8,000 mB tank with 1,000 mB of industrialforegoing:milk and the declared capability reports it, for exactly 400 FE; a red sheep there gives one wool of its colour into the 15-slot output (the pinned nextInt(3) of 0) and is left with Sheared: 1b, so the same box again produces nothing and spends nothing; an empty box spends nothing and rests the bar full; 399 FE refuses a cow it could otherwise milk; a squid's black dye needs a free output slot, four passing draws and 400 FE (a full container and four failing draws each refuse it); the tank drains 1,000 mB of milk through the declared capability; and a broken rancher's item carries its buffer and tank while its output drops beside it; and the Animal Rancher crafts from #c:plastics, a bucket, shears, #c:gears/gold and machine_frame/pity; and the review's four: a broken latex processing unit's item carries its own machine data and no Items while the five dry rubber in its slots drop themselves, a named stack keeps its name and its count when a cow's plain beef arrives (and a named, damaged sword beside it keeps its 17), a full output container puts the cow's reward on the floor instead of losing it, and a fluid laser base at depth 300 runs no recipe and leaves the wither in its box at full health; and the sewage chain: a sewer places facing its placer with an empty tank, an empty pen adds no sewage and spends no FE, one NoAI cow in the block above adds exactly 50 mB of industrialforegoing:sewage (reported by the block entity and the declared capability) for 20 FE, and the composter turns 1,000 mB of sewage into one industrialforegoing:fertilizer in its 12-slot output over 100 ticks for 4,000 FE; and the plant fertilizer: placed facing its placer it points at the single block behind it, an equally powered box with no fertilizer leaves a cocoa crop at age 0 and keeps all 10,000 FE, and one fertilizer grows the crop exactly 0 -> 1 on a 50-tick bar for exactly 1,000 FE, consumes the one input and rests at the floor(50 * 0.25) = 12-tick cooldown; the plant gatherer harvests the mature wheat behind it into its 15-slot output for exactly 400 FE and leaves an immature crop untouched"
+echo "== DP: the plant sower plants one seed two blocks above, for 1000 FE =="
+PS_ID=industrialforegoing:plant_sower
+PSX=340
+PSX2=343
+PS_T=0
+
+ps_arena() {
+    ctl command "difficulty peaceful" >/dev/null
+    ctl command "execute in minecraft:the_end run tp @s $((PSX - 2)).5 104 0.5" >/dev/null
+    local loaded=false
+    for _ in $(seq 1 120); do
+        ctl wait 5 >/dev/null
+        if [ "$(ctl block "$PSX" 100 0 | jq -r '.loaded // false')" = true ]; then
+            loaded=true
+            break
+        fi
+    done
+    [ "$loaded" = true ] || fail "the plant sower arena chunk never loaded"
+    ctl command "execute in minecraft:the_end run fill $((PSX - 4)) 100 -4 $((PSX2 + 4)) 100 4 minecraft:stone" >/dev/null
+    ctl command "execute in minecraft:the_end run fill $((PSX - 4)) 101 -4 $((PSX2 + 4)) 110 4 minecraft:air" >/dev/null
+    ctl command "execute in minecraft:the_end run kill @e[type=!player]" >/dev/null
+    ctl wait 8 >/dev/null
+    ctl command "execute in minecraft:the_end run tp @s $((PSX - 2)).5 101 0.5" >/dev/null
+    ctl wait 16 >/dev/null
+    wait_chat_roundtrip || fail "the chat path never answered after the sower arena transfer"
+    [ "$(block_name "$PSX" 100 0)" = "minecraft:stone" ] || fail "the plant sower arena floor is not stone"
+}
+
+psay() { # psay X Y Z SUB [ARGS...]
+    local x=$1 y=$2 z=$3 sub=$4
+    shift 4
+    say "industrialforegoing $sub $x $y $z${*:+ $*}"
+}
+
+ps_info() { # ps_info X Y Z
+    local x=$1 y=$2 z=$3 pattern='\[CHAT\] Plant Sower at ' line="" best="" best_t=-999999 t cand source attempt
+    for attempt in $(seq 1 30); do
+        say "industrialforegoing info $x $y $z"
+        ctl wait 2 >/dev/null
+        sleep 0.2
+        for source in logs messages; do
+            if [ "$source" = logs ]; then
+                cand=$(ctl logs --lines 600 | grep -E "$pattern" | tail -1 | sed 's/^.*\[CHAT\] //' || true)
+            else
+                cand=$(ctl messages 80 | jq -r '.chat[]' | grep -E "Plant Sower at " | tail -1 || true)
+            fi
+            [ -n "$cand" ] || continue
+            t=$(sed -n 's/.* t=\(-\?[0-9][0-9]*\)$/\1/p' <<<"$cand")
+            [ -n "$t" ] || continue
+            if [ "$t" -gt "$best_t" ]; then
+                best=$cand
+                best_t=$t
+            fi
+        done
+        if [ -n "$best" ] && [ "$best_t" -gt "$PS_T" ]; then
+            line=$best
+            break
+        fi
+    done
+    PS_T=$best_t
+    PS_LINE=$line
+    [ -n "$PS_LINE" ] || fail "no fresh /industrialforegoing info reply for a plant sower"
+    eval "$(python3 "$PORT/tools/parse_plantsower.py" "$PS_LINE")"
+    [ "${ok:-0}" = 1 ] || fail "the plant sower info line did not parse: $PS_LINE"
+    echo "  $PS_LINE" >&2
+}
+
+ps_state() { # ps_state X Y Z
+    ctl block "$1" "$2" "$3" | jq -r '.state // .name // empty'
+}
+
+ps_arena
+place_any "$PSX" 101 0 "$PS_ID"
+place_any "$PSX2" 101 0 "$PS_ID"
+ps_info "$PSX" 101 0
+expect "the plant sower block" "$(block_name "$PSX" 101 0)" "$PS_ID"
+expect "the plant sower facing" "$PS_FACING" west
+# `RangeType.TOP_UP` at range 0: the target is two blocks up, the soil one up.
+expect "the pointed cell" "$PS_PY" "$((101 + 2))"
+ctl command "execute in minecraft:the_end run setblock $PSX 102 0 minecraft:farmland" >/dev/null
+ctl command "execute in minecraft:the_end run setblock $PSX2 102 0 minecraft:farmland" >/dev/null
+ctl wait 4 >/dev/null
+ctl command "item replace block $PSX 101 0 container.0 with minecraft:wheat_seeds 1" >/dev/null
+ctl wait 4 >/dev/null
+expect "the seed before" "$(item_count "$PSX" 101 0 0)" 1
+expect "the cell before planting" "$(ps_state "$PSX" 103 0)" minecraft:air
+expect "the soil before planting" "$(block_name "$PSX" 102 0)" minecraft:farmland
+
+psay "$PSX" 101 0 energy 10000
+psay "$PSX" 101 0 progress 1
+# The plant's cooldown is only floor(40 * 0.2) = 8 ticks, shorter than the slow
+# `ctl block` / `data get` reads that follow: read the exact FE first, with a
+# two-tick wait so only the one forced attempt can have run (the next attempt
+# would be a powered miss and would spend the extra 20 FE).
+ctl wait 2 >/dev/null
+ps_info "$PSX" 101 0
+expect "the FE one sowing spends (PlantSowerConfig.powerPerOperation)" "$PS_ENERGY" 9000
+[ "$PS_PROGRESS" -ge 1 ] && [ "$PS_PROGRESS" -le 8 ] \
+    || fail "the cooldown after a sowing is $PS_PROGRESS, expected 1..8 (floor(40*0.2))"
+expect "the input in the readout" "$PS_INPUT" empty
+WANT_CROP=minecraft:wheat[age=0]
+if [ "$SELFTEST" = plantsower ]; then
+    echo "(selftest: asserting an age-1 wheat was planted, not age-0)"
+    WANT_CROP=minecraft:wheat[age=1]
+fi
+expect "the planted cell state (wheat default state)" "$(ps_state "$PSX" 103 0)" "$WANT_CROP"
+expect "the soil after planting" "$(block_name "$PSX" 102 0)" minecraft:farmland
+expect "the input consumed" "$(python3 "$PORT/tools/parse_plantsower.py" --count "$(ctl command "data get block $PSX 101 0 Items" | jq -r '.chat[0] // empty')" minecraft:wheat_seeds)" 0
+echo "  one seed: wheat[age=0] two blocks up, the seed consumed, 1000 FE, floor(40*0.2) bar"
+
+# The artefact's powered miss: `WorkAction(0.4, powerPerOperation / 50)` spends 20 FE even with
+# an empty input, and leaves the soil and the cell as they were (brief's "FE untouched" applies
+# only to the uncharged-buffer case below).
+psay "$PSX2" 101 0 energy 10000
+psay "$PSX2" 101 0 progress 1
+ctl wait 6 >/dev/null
+expect "the empty input leaves the cell air" "$(ps_state "$PSX2" 103 0)" minecraft:air
+expect "the empty input leaves the soil farmland" "$(block_name "$PSX2" 102 0)" minecraft:farmland
+ps_info "$PSX2" 101 0
+expect "the FE a powered miss spends (powerPerOperation / 50)" "$PS_ENERGY" 9980
+expect "the powered miss input" "$PS_INPUT" empty
+echo "  empty input with power: cell and soil untouched, 20 FE spent, floor(40*0.4) bar"
+
+# The uncharged buffer: `WorkAction(1, 0)` — nothing planted and no FE spent.
+psay "$PSX2" 101 0 energy 0
+psay "$PSX2" 101 0 progress 1
+ctl wait 6 >/dev/null
+expect "the unpowered cell stays air" "$(ps_state "$PSX2" 103 0)" minecraft:air
+expect "the unpowered soil stays farmland" "$(block_name "$PSX2" 102 0)" minecraft:farmland
+ps_info "$PSX2" 101 0
+expect "the uncharged buffer spends nothing" "$PS_ENERGY" 0
+echo "  empty input with no power: farmland and FE untouched"
+
+echo "PASS: a placed machine is empty with no sources and faces its placer; two sources condense 200 mB for exactly 1,000 FE and one condenses nothing; without 1,000 FE two sources give half for free; three and six sources give 300 and 600 mB; a nearly full tank stops at 16,000 mB while still spending the FE; the declared tank drains 400 mB of water through the fluid handler; and left alone the machine keeps condensing on its own 10-tick bar; the Core ids of these slices register and read back, the four frames place and read back, an unregistered item and block id are refused, and a frame broken in survival drops itself; the condensator crafts from the tags (#c:plastics, #c:gears/iron, machine_frame/pity) with the grid empty afterwards while slice 2's stand-ins stay empty, the pity frame and the three gears craft, all 16 lens recolours craft from the lens tag and c:dyes with the player's counts before and after, the mob duplicator crafts from #c:plastics and machine_frame/advanced, and the Mob Imprisonment Tool crafts from plastic and a ghast tear; a machine broken with 7,000 FE and 5,000 mB comes back with exactly those numbers on the item it dropped; a seated speed augment of 4 makes the bar fall four a tick where an empty slot falls one, a second speed augment is refused and stays in the hand, an efficiency augment of 0.8 shortens the bar to 80 with an 8-tick cooldown at the same 1,000 FE, and both augments travel on the machine's item; the dissolution chamber places and faces its placer, reads its own recipe type from this package's data (25 files), holds its own fluids in a declared tank the capability reports back, runs the white lens recipe in exactly 100 ticks for 9,000 FE and 250 mB of latex, does nothing with an empty tank and starts when 250 mB arrive, empties its output into a hopper and a barrel, runs the simple machine frame's 300 ticks at exactly 90 FE a tick, makes the advanced frame from #c:plastics, the crafted #c:gears/diamond gear and the simple frame, and a broken chamber carries its buffer and latex back on its item; and the latex chain: a fluid extractor works on the oak log behind it, giving 2 mB for free and 6 mB for 500 FE, nothing at all when the block behind it is stone, and — on its eighth hit — consuming the log into a stripped one and bursting 400 mB that drain back out of its declared tank, where a roll over its break chance moves nothing; a latex processing unit takes 1,000 mB of latex through the command path and 1,000 mB of water through the declared capability (which refuses the mod fluid, so no fluid move can fill it), turns 750 mB of latex and 500 mB of water into one dry rubber for 2,000 FE, a hopper feeds that rubber into a furnace which smelts it into one plastic, and a broken unit carries its latex, water and buffer back on its item; and the laser drill: placed above its ore base it faces up and finds it, reads the base's own ten-recipe table, resolves no ore in the End's biome and the emerald recipe at weight 1 in a mountain one, a lime lens raises that weight to 9, one completed base bar yields the recipe's emerald ore for exactly 1,000 FE while the same charge in the End's own biome yields nothing, and — with the add-on's own laser_drill_ore file and biome tag installed as its package ships them — the base's table reads 11/11 and that recipe runs, yielding one echo shard; a broken base carries its output slots back on its item; and the fluid laser base, under its own drill, answers no recipe without the wither its ether file names and leaves the tank empty while the drill still pays 1,000 FE, then with a wither in its box one completed bar yields 10 mB of industrialforegoing:ether_gas into the tank the declared capability reports, a second bar adds ten more, the tank drains through that capability, and the dissolution chamber runs its one carried recipe naming ether gas (supreme_machine_frame, 135 mB) to the product; and the mob slaughter factory: placed facing its placer it is empty, a bar with no mob in the working area kills nothing and spends no FE, a cow in the box is killed for 10 mB of meat and 200 mB of pink slime for exactly 400 FE (both tanks reported back by the declared capability), the same box with no FE leaves a villager alive and adds nothing, 5,000 FE then kills the villager for 400 mB of meat and 20 mB of pink slime, both tanks drain through the capability, the factory's own shaped recipe crafts from #c:plastics, #c:gears/gold and machine_frame/pity, the pink slime block crafts from nine pink slime and gives them back shapeless and drops itself, a broken factory carries both tanks and its buffer back on its item, and the dissolution chamber runs the jar's only outputFluid recipe — 300 mB of pink slime and a glass pane for one pink slime ball and 150 mB of minecraft:water in its output tank; and the fluid laser base's dimension-and-depth pair: the lava recipe's band at depth 11 answers no recipe in the End (the dimension filter), in the Nether at depth 0 it answers none and leaves an empty tank, and at depth 11 in the Nether one completed bar of the drill fills the tank with 100 mB of minecraft:lava, reported by the declared capability, for 1,000 FE; and the mob crusher: placed facing its placer it is empty, a bar with no mob spends nothing, a cow in its box is killed for its own experience at 20 mB a point (1-3 points, so 20, 40 or 60 mB) for exactly 50 FE, its loot lands in the machine's 18-slot output instead of the floor and a hopper under it pulls that loot into a barrel, the same box with no FE leaves the cow alive and adds nothing, the crusher's own shaped recipe crafts from #c:plastics, #c:gears/gold and machine_frame/advanced, and a broken crusher carries its essence, its buffer and its last kill's experience back on its item; and the mob duplicator: its tool captures a cow and the machine reads its type and 120 mB cost, one operation with 120 mB in the tank spawns exactly one cow for 5,000 FE, the same box with 0 essence spawns nothing and spends no FE, 33 cows in the working area refuse the attempt while holding both the charge and the essence, the tool releases its cow on a block face and empties itself, and a broken duplicator's item carries its buffer and tank while its tool drops beside it; and the Mob Imprisonment Tool crafts from #c:plastics and a ghast tear; and the animal rancher: placed facing its placer it is empty with its working area the single block behind it, a cow there fills its 8,000 mB tank with 1,000 mB of industrialforegoing:milk and the declared capability reports it, for exactly 400 FE; a red sheep there gives one wool of its colour into the 15-slot output (the pinned nextInt(3) of 0) and is left with Sheared: 1b, so the same box again produces nothing and spends nothing; an empty box spends nothing and rests the bar full; 399 FE refuses a cow it could otherwise milk; a squid's black dye needs a free output slot, four passing draws and 400 FE (a full container and four failing draws each refuse it); the tank drains 1,000 mB of milk through the declared capability; and a broken rancher's item carries its buffer and tank while its output drops beside it; and the Animal Rancher crafts from #c:plastics, a bucket, shears, #c:gears/gold and machine_frame/pity; and the review's four: a broken latex processing unit's item carries its own machine data and no Items while the five dry rubber in its slots drop themselves, a named stack keeps its name and its count when a cow's plain beef arrives (and a named, damaged sword beside it keeps its 17), a full output container puts the cow's reward on the floor instead of losing it, and a fluid laser base at depth 300 runs no recipe and leaves the wither in its box at full health; and the sewage chain: a sewer places facing its placer with an empty tank, an empty pen adds no sewage and spends no FE, one NoAI cow in the block above adds exactly 50 mB of industrialforegoing:sewage (reported by the block entity and the declared capability) for 20 FE, and the composter turns 1,000 mB of sewage into one industrialforegoing:fertilizer in its 12-slot output over 100 ticks for 4,000 FE; and the plant fertilizer: placed facing its placer it points at the single block behind it, an equally powered box with no fertilizer leaves a cocoa crop at age 0 and keeps all 10,000 FE, and one fertilizer grows the crop exactly 0 -> 1 on a 50-tick bar for exactly 1,000 FE, consumes the one input and rests at the floor(50 * 0.25) = 12-tick cooldown; the plant gatherer harvests the mature wheat behind it into its 15-slot output for exactly 400 FE and leaves an immature crop untouched; and the plant sower: its own shaped recipe crafts from #c:plastics, a flower pot, pistons, a pity frame, redstone and #c:gears/iron, it places facing its placer and points two blocks above itself with the soil one above, one wheat seed there plants minecraft:wheat[age=0] for exactly 1,000 FE and consumes the seed, an empty input with power leaves the cell and the farmland as they were but still spends the artefact's 20 FE powered miss, and an uncharged buffer plants nothing and spends nothing"
