@@ -51,6 +51,16 @@ sewage <pos> <mB>` writes the composter's tank (mod fluids have no insert path a
 `info` reads the tank back through the declared capability. The jar's second sewer tank (essence,
 fed by XP orbs and players) is not in this slice.
 
+## The Plant Gatherer (0.2.16)
+
+The **Plant Gatherer** (`industrialforegoing:plant_gatherer`) is an input-free machine with a
+10,000 FE buffer, a 40-tick bar and a 15-slot output container. At range 0 it works the single cell
+behind its `subfacing`: a mature crop is harvested for its own block drops (rolled from the crop's
+loot table), the cell becomes air, and the operation spends 400 FE and rests `floor(40 × 0.3) = 12`
+ticks. An immature crop, a full output or an empty buffer spends nothing and rests the full bar.
+The sludge/ether tanks and the ether-bar replant path are not in this slice. Its shaped recipe is
+carried from the jar and names `#c:plastics`, `#c:gears/gold` and `machine_frame/pity`.
+
 ## Layout
 
 ```

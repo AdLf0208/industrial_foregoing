@@ -51,6 +51,8 @@ pub mod mobcrusher;
 pub mod mobduplicator;
 pub mod mobslaughter;
 pub mod plantfert;
+pub mod plantgather;
+pub mod plantgathernet;
 pub mod plantnet;
 pub mod rancher;
 pub mod runtime;
@@ -206,6 +208,8 @@ impl Hooks for Mod {
         sewernet::declare(r);
         // The plant fertilizer (slice 16): its buffer, 18-slot input container and tick.
         plantnet::declare(r);
+        // The plant gatherer (slice 17): its buffer, 15-slot output container and tick.
+        plantgathernet::declare(r);
         // Its own recipe type **and** the read-only serializer for it: the game refuses a file
         // whose type has no serializer ("unregistered recipe serializer
         // industrialforegoing:dissolution_chamber", measured in game), and API 36's machine route
@@ -355,6 +359,12 @@ impl Hooks for Mod {
                 plantnet::has_contents(&saved),
                 plantnet::item(),
                 plantnet::carried_patch(&saved),
+            )
+        } else if block == plantgathernet::BLOCK {
+            (
+                plantgathernet::has_contents(&saved),
+                plantgathernet::item(),
+                plantgathernet::carried_patch(&saved),
             )
         } else {
             return Flow::Continue;
@@ -530,6 +540,11 @@ impl Hooks for Mod {
         // The plant fertilizer (slice 16): its own readout and FE/bar setters.
         if current_block(host, pos).as_deref() == Some(plantnet::BLOCK) {
             plantfert_command(host, invocation, pos, sub);
+            return Flow::Cancel;
+        }
+        // The plant gatherer (slice 17): its own readout and FE/bar setters.
+        if current_block(host, pos).as_deref() == Some(plantgathernet::BLOCK) {
+            plantgather_command(host, invocation, pos, sub);
             return Flow::Cancel;
         }
         if sub == "fluid" {
@@ -1353,7 +1368,12 @@ fn plantfert_command(
         "energy" | "progress" => {
             let (argument, full, unit, key) = match sub {
                 "energy" => ("amount", crate::plantfert::CAPACITY_FE, "FE", KEY_ENERGY),
-                _ => ("ticks", crate::plantfert::MAX_PROGRESS, "ticks of bar", KEY_PROGRESS),
+                _ => (
+                    "ticks",
+                    crate::plantfert::MAX_PROGRESS,
+                    "ticks of bar",
+                    KEY_PROGRESS,
+                ),
             };
             let Some(value) = integer(invocation, argument) else {
                 say(host, &usage(sub));
@@ -1367,6 +1387,48 @@ fn plantfert_command(
                     format!("Plant Fertilizer at {pos:?}: {value}/{full} {unit}.")
                 } else {
                     format!("{pos:?} is not a plant fertilizer.")
+                },
+            );
+        }
+        _ => say(host, &usage(sub)),
+    }
+}
+
+/// The plant gatherer's own harness commands: its readout and the FE and bar setters that let
+/// the in-game leg force exactly one attempt.
+fn plantgather_command(
+    host: &mut dyn ServerHost,
+    invocation: &CommandInvocation,
+    pos: [i32; 3],
+    sub: &str,
+) {
+    match sub {
+        "info" => {
+            let line = plantgathernet::readout(host, pos);
+            say(host, &line);
+        }
+        "energy" | "progress" => {
+            let (argument, full, unit, key) = match sub {
+                "energy" => ("amount", crate::plantgather::CAPACITY_FE, "FE", KEY_ENERGY),
+                _ => (
+                    "ticks",
+                    crate::plantgather::MAX_PROGRESS,
+                    "ticks of bar",
+                    KEY_PROGRESS,
+                ),
+            };
+            let Some(value) = integer(invocation, argument) else {
+                say(host, &usage(sub));
+                return;
+            };
+            let value = value.clamp(0, full);
+            let changed = plantgathernet::set_int(host, pos, key, value);
+            say(
+                host,
+                &if changed {
+                    format!("Plant Gatherer at {pos:?}: {value}/{full} {unit}.")
+                } else {
+                    format!("{pos:?} is not a plant gatherer.")
                 },
             );
         }
@@ -1667,6 +1729,7 @@ fn is_our_entity_kind(host: &dyn Host, entity: BlockEntityRef) -> bool {
         || animalrancher::kind_of(entity, host)
         || sewernet::kind_of(entity, host)
         || plantnet::kind_of(entity, host)
+        || plantgathernet::kind_of(entity, host)
 }
 
 /// The tank's amount, in the declaration's shape: one entry per tank under `fluids`.
@@ -2080,7 +2143,7 @@ mod content {
 
     /// The sewage chain's two machines (slice 15).
     const SEWAGE_BLOCKS: [&str; 2] = ["sewer", "sewage_composter"];
-    const PLANT_BLOCKS: [&str; 1] = ["plant_fertilizer"];
+    const PLANT_BLOCKS: [&str; 2] = ["plant_fertilizer", "plant_gatherer"];
 
     /// The port root, which is also the package root.
     fn root() -> PathBuf {
@@ -2230,6 +2293,7 @@ mod content {
                 "sewage_composter",
                 "fertilizer",
                 "plant_fertilizer",
+                "plant_gatherer",
             ]
             .map(|id| format!("industrialforegoing:{id}")),
         );
@@ -3129,13 +3193,17 @@ mod content {
         }
         for texture in ["side", "back"] {
             assert!(
-                has(&format!("assets/industrialforegoing/textures/block/{id}_{texture}.png")),
+                has(&format!(
+                    "assets/industrialforegoing/textures/block/{id}_{texture}.png"
+                )),
                 "{id}'s {texture} texture is missing"
             );
         }
         assert!(
-            read(&format!("data/industrialforegoing/loot_table/blocks/{id}.json"))
-                .contains(&format!("industrialforegoing:{id}")),
+            read(&format!(
+                "data/industrialforegoing/loot_table/blocks/{id}.json"
+            ))
+            .contains(&format!("industrialforegoing:{id}")),
             "{id}'s loot table does not drop it"
         );
         let recipe = read(&format!("data/industrialforegoing/recipe/{id}.json"));
@@ -3147,7 +3215,10 @@ mod content {
             "minecraft:leather",
             "minecraft:redstone",
         ] {
-            assert!(recipe.contains(ingredient), "{id}'s recipe lacks {ingredient}");
+            assert!(
+                recipe.contains(ingredient),
+                "{id}'s recipe lacks {ingredient}"
+            );
         }
         assert!(
             read("data/minecraft/tags/block/mineable/pickaxe.json")
@@ -3163,6 +3234,77 @@ mod content {
             read("assets/industrialforegoing/lang/en_us.json")
                 .contains("\"block.industrialforegoing.plant_fertilizer\": \"Plant Fertilizer\""),
             "the jar's Plant Fertilizer name is missing"
+        );
+    }
+
+    /// The plant gatherer (slice 17): its carried jar shape, its IRON_BLOCK/FOUR_WAY declaration,
+    /// the crop-recollector textures its model names and the recipe whose three tags ship here.
+    #[test]
+    fn the_plant_gatherer_is_carried() {
+        let id = "plant_gatherer";
+        let declaration = read(&format!("data/industrialforegoing/horizon/block/{id}.json"));
+        assert!(
+            declaration.contains("minecraft:iron_block") && declaration.contains("subfacing"),
+            "{id} is not the jar's IRON_BLOCK template with four subfacing values"
+        );
+        for facing in ["north", "south", "east", "west"] {
+            assert!(
+                read(&format!("assets/industrialforegoing/blockstates/{id}.json"))
+                    .contains(&format!("subfacing={facing}")),
+                "{id}'s blockstate has no subfacing={facing}"
+            );
+        }
+        let model = read(&format!(
+            "assets/industrialforegoing/models/block/{id}.json"
+        ));
+        for texture in ["crop_recolector_back", "crop_recolector_side"] {
+            assert!(
+                model.contains(texture)
+                    && has(&format!(
+                        "assets/industrialforegoing/textures/block/{texture}.png"
+                    )),
+                "{id}'s model does not name a carried {texture} texture"
+            );
+        }
+        assert!(
+            read(&format!(
+                "data/industrialforegoing/loot_table/blocks/{id}.json"
+            ))
+            .contains(&format!("industrialforegoing:{id}")),
+            "{id}'s loot table does not drop it"
+        );
+        let recipe = read(&format!("data/industrialforegoing/recipe/{id}.json"));
+        for ingredient in [
+            "#c:plastics",
+            "#c:gears/gold",
+            "#industrialforegoing:machine_frame/pity",
+            "minecraft:iron_axe",
+            "minecraft:iron_hoe",
+            "minecraft:redstone",
+        ] {
+            assert!(
+                recipe.contains(ingredient),
+                "{id}'s recipe lacks {ingredient}"
+            );
+        }
+        assert!(
+            !recipe.contains("neoforge:conditions"),
+            "26.3 refuses the recipe's neoforge:item_exists condition"
+        );
+        assert!(
+            read("data/minecraft/tags/block/mineable/pickaxe.json")
+                .contains(&format!("industrialforegoing:{id}")),
+            "{id} has requires_tool but no pickaxe entry"
+        );
+        assert!(
+            read("data/industrialforegoing/horizon/creative_tab/ag_hus.json")
+                .contains(&format!("industrialforegoing:{id}")),
+            "{id} is not in the Agriculture & Husbandry tab"
+        );
+        assert!(
+            read("assets/industrialforegoing/lang/en_us.json")
+                .contains("\"block.industrialforegoing.plant_gatherer\": \"Plant Gatherer\""),
+            "the jar's Plant Gatherer name is missing"
         );
     }
 }

@@ -16,7 +16,7 @@ use mod_api::{
 };
 
 use crate::plantfert::{
-    Attempt, CAPACITY_FE, FERTILIZER, MAX_PROGRESS, PlantFertilizer, POWER_PER_OPERATION, SLOTS,
+    Attempt, CAPACITY_FE, FERTILIZER, MAX_PROGRESS, POWER_PER_OPERATION, PlantFertilizer, SLOTS,
     Step,
 };
 
@@ -160,7 +160,9 @@ impl BlockEntityPart for PlantPart {
 /// The first `industrialforegoing:fertilizer` in the 18 slots (`ItemHandlerUtil.getFirstItem`).
 fn first_fertilizer(host: &dyn Host, items: &[Option<ItemStack>]) -> Option<usize> {
     items.iter().position(|stack| {
-        stack.as_ref().is_some_and(|stack| stack.item().id(host).as_str() == FERTILIZER)
+        stack
+            .as_ref()
+            .is_some_and(|stack| stack.item().id(host).as_str() == FERTILIZER)
     })
 }
 
@@ -202,11 +204,7 @@ fn grow(host: &mut dyn ServerHost, pos: [i32; 3]) -> Option<bool> {
             level
                 .block(&*host, pos)
                 .and_then(|block| host.block_states().definition(block))
-                .and_then(|properties| {
-                    properties
-                        .into_iter()
-                        .find(|property| property.name == AGE)
-                })
+                .and_then(|properties| properties.into_iter().find(|property| property.name == AGE))
                 .and_then(|property| property.values.last().cloned())
                 .and_then(|last| last.parse::<i32>().ok()),
         )
@@ -298,7 +296,9 @@ pub(crate) fn carried_patch(saved: &Compound) -> Compound {
 
 /// Which of this module's block entity types this is, for the augment seat.
 pub(crate) fn kind_of(entity: BlockEntityRef, host: &dyn Host) -> bool {
-    entity.kind(host).is_some_and(|kind| KIND.get() == Some(&kind))
+    entity
+        .kind(host)
+        .is_some_and(|kind| KIND.get() == Some(&kind))
 }
 
 /// The item `block_drops` may write to.
@@ -311,12 +311,7 @@ pub(crate) fn item() -> Option<ItemKey> {
 // ---------------------------------------------------------------------------
 
 /// `/industrialforegoing energy|progress` on this machine: one int of its saved compound.
-pub(crate) fn set_int(
-    host: &mut dyn ServerHost,
-    pos: [i32; 3],
-    key: &str,
-    value: i32,
-) -> bool {
+pub(crate) fn set_int(host: &mut dyn ServerHost, pos: [i32; 3], key: &str, value: i32) -> bool {
     let Some(entity) = crate::our_entity(host, pos, BLOCK) else {
         return false;
     };
@@ -381,7 +376,10 @@ mod tests {
         let container = container();
         assert_eq!(container.slots, 18);
         assert_eq!(container.inputs, (0..18).collect::<Vec<_>>());
-        assert!(container.outputs.is_empty(), "setOutputFilter(stack -> false)");
+        assert!(
+            container.outputs.is_empty(),
+            "setOutputFilter(stack -> false)"
+        );
         assert_eq!(container.faces.len(), 6);
     }
 

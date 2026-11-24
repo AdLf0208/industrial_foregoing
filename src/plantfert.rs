@@ -209,7 +209,10 @@ mod tests {
     #[test]
     fn a_bar_that_has_not_fallen_only_falls() {
         let mut plant = PlantFertilizer::from_saved(10_000, Some(50));
-        assert_eq!(plant.tick(Augments::NONE, Attempt::Grew { still_valid: true }), Step::Working);
+        assert_eq!(
+            plant.tick(Augments::NONE, Attempt::Grew { still_valid: true }),
+            Step::Working
+        );
         assert_eq!(plant.progress, 49, "the bar falls one a tick");
         assert_eq!(plant.energy, 10_000, "no attempt, no FE");
         let mut plant = PlantFertilizer::from_saved(10_000, Some(50));
@@ -264,7 +267,10 @@ mod tests {
     #[test]
     fn no_fertilizer_rests_the_full_bar() {
         let mut plant = ready(10_000);
-        assert_eq!(plant.tick(Augments::NONE, Attempt::NoInput), Step::Idle { cooldown: 50 });
+        assert_eq!(
+            plant.tick(Augments::NONE, Attempt::NoInput),
+            Step::Idle { cooldown: 50 }
+        );
         assert_eq!(plant.energy, 10_000, "no FE spent without an input");
         assert_eq!(plant.progress, 50);
     }
@@ -272,8 +278,14 @@ mod tests {
     #[test]
     fn an_undercharged_buffer_grows_nothing_and_rests_the_full_bar() {
         let mut plant = ready(999);
-        assert_eq!(plant.tick(Augments::NONE, Attempt::NoEnergy), Step::Idle { cooldown: 50 });
-        assert_eq!(plant.energy, 999, "hasEnergy(1000) failed: nothing is spent");
+        assert_eq!(
+            plant.tick(Augments::NONE, Attempt::NoEnergy),
+            Step::Idle { cooldown: 50 }
+        );
+        assert_eq!(
+            plant.energy, 999,
+            "hasEnergy(1000) failed: nothing is spent"
+        );
         assert_eq!(plant.progress, 50);
     }
 

@@ -210,6 +210,21 @@ CASES = [
             ("industrialforegoing:iron_gear", 1, ["107"]),
         ],
     ),
+    (
+        "the plant gatherer (PHP/AMA/GRG, #c:plastics, an iron hoe, iron axes, a pity frame and #c:gears/gold)",
+        "industrialforegoing:plant_gatherer",
+        1,
+        [
+            ("industrialforegoing:plastic", 2, ["100", "102"]),
+            # Tools stack to one, so each cell gets its own `give`.
+            ("minecraft:iron_hoe", 1, ["101"]),
+            ("minecraft:iron_axe", 1, ["103"]),
+            ("minecraft:iron_axe", 1, ["105"]),
+            ("industrialforegoing:machine_frame_pity", 1, ["104"]),
+            ("industrialforegoing:gold_gear", 2, ["106", "108"]),
+            ("minecraft:redstone", 1, ["107"]),
+        ],
+    ),
 ]
 
 
