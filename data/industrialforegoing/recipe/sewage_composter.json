@@ -1,0 +1,21 @@
+{
+  "category": "misc",
+  "key": {
+    "B": "minecraft:brick",
+    "D": "minecraft:piston",
+    "F": "minecraft:furnace",
+    "G": "#c:gears/iron",
+    "M": "#industrialforegoing:machine_frame/pity",
+    "P": "#c:plastics"
+  },
+  "pattern": [
+    "PFP",
+    "DMD",
+    "BGB"
+  ],
+  "result": {
+    "count": 1,
+    "id": "industrialforegoing:sewage_composter"
+  },
+  "type": "minecraft:crafting_shaped"
+}

@@ -1,4 +1,4 @@
-# Industrial Foregoing — Horizon port (the Water Condensator, the Dissolution Chamber and the Core set)
+# Industrial Foregoing — Horizon port (the Water Condensator, the Dissolution Chamber, the Core set and the animal and sewage machines)
 
 A Horizon mod for **Industrial Foregoing 1.21-3.6.39**
 (`Buuz135/Industrial-Foregoing`, **MIT**): the Water Condensator, a machine
@@ -38,6 +38,18 @@ in `notes.md`; the content decisions are in `CONTENT.md`.
 | Chamber tanks | 8,000 mB in, 16,000 mB out, `industrialforegoing:latex`/`:pink_slime`/`:ether_gas` — declared fluid keys; `/industrialforegoing fluid` fills the tank (the pin's fluid insert takes only water and lava) |
 | Chamber recipe | its own type, `industrialforegoing:dissolution_chamber`: 0–8 item ingredients, an input fluid, a `processingTime`, an item output — matched only when the input slots hold **exactly** the recipe's item set |
 | Chamber products | `machine_frame_simple/advanced/supreme`, the 16 lenses, `speed_addon_tier_1/2`, `efficiency_addon_tier_1/2` |
+
+## The sewage chain (0.2.14)
+
+The **Sewer** (`industrialforegoing:sewer`) is a 100-tick `RangeType.TOP` machine: it counts the
+animals in the block above, fills its drain-only 8,000 mB `industrialforegoing:sewage` tank with
+**50 mB an animal**, and spends 10 FE × (animals + 1) from its 10,000 FE buffer (the jar's own
+`++amount`). The **Sewage Composter** (`industrialforegoing:sewage_composter`) takes 1,000 mB of
+sewage in a fill-only 8,000 mB tank and, over a 100-tick bar at 40 FE a tick, inserts one
+`industrialforegoing:fertilizer` into its 12-slot output-only container. `/industrialforegoing
+sewage <pos> <mB>` writes the composter's tank (mod fluids have no insert path at this pin);
+`info` reads the tank back through the declared capability. The jar's second sewer tank (essence,
+fed by XP orbs and players) is not in this slice.
 
 ## Layout
 

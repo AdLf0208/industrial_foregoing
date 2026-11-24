@@ -54,12 +54,15 @@ const KEY_ENERGY: &str = "energy";
 const KEY_PROGRESS: &str = "progress";
 /// The fluids this machine's carried recipes name, declared as fluid keys
 /// (`ModuleCore.LATEX`/`PINK_SLIME`/`ETHER_GAS`/`MEAT`).
-pub const DECLARED_FLUIDS: [&str; 6] = [
+pub const DECLARED_FLUIDS: [&str; 7] = [
     "industrialforegoing:latex",
     "industrialforegoing:pink_slime",
     "industrialforegoing:ether_gas",
     "industrialforegoing:meat",
     "industrialforegoing:essence",
+    // The sewer/composter's fluid (slice 15): declared so a tank can hold it and the capability
+    // can name it back (an undeclared id reads `empty` with "unrecognized live fluid id").
+    "industrialforegoing:sewage",
     // The Animal Rancher's milk (slice 13): 26.3's registry has empty/water/lava only, where the
     // Java pack drains NeoForge's `minecraft:milk`.
     "industrialforegoing:milk",
@@ -864,6 +867,7 @@ mod tests {
                 "industrialforegoing:ether_gas",
                 "industrialforegoing:meat",
                 "industrialforegoing:essence",
+                "industrialforegoing:sewage",
                 "industrialforegoing:milk"
             ]
         );

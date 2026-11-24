@@ -7,7 +7,7 @@
 #
 # Cargo's name and version are not the mod's identity: horizon-mod.toml is.
 name = "industrialforegoing"
-version = "0.2.13"
+version = "0.2.14"
 edition = "2024"
 license = "MIT"
 description = "Industrial Foregoing for Horizon: the Water Condensator, the Dissolution Chamber, the latex chain, the laser drill, the mob slaughter factory, the mob crusher, the mob duplicator, the animal rancher and the Core item set"

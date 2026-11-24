@@ -185,6 +185,31 @@ CASES = [
         9,
         [("industrialforegoing:pink_slime_block", 1, ["100"])],
     ),
+    (
+        "the sewer (PEP/BMB/BGB, #c:plastics, a bucket, brick, a pity frame and #c:gears/iron)",
+        "industrialforegoing:sewer",
+        1,
+        [
+            ("industrialforegoing:plastic", 2, ["100", "102"]),
+            ("minecraft:bucket", 1, ["101"]),
+            ("minecraft:brick", 4, ["103", "105", "106", "108"]),
+            ("industrialforegoing:machine_frame_pity", 1, ["104"]),
+            ("industrialforegoing:iron_gear", 1, ["107"]),
+        ],
+    ),
+    (
+        "the sewage composter (PFP/DMD/BGB, #c:plastics, a furnace, pistons, brick, a pity frame and #c:gears/iron)",
+        "industrialforegoing:sewage_composter",
+        1,
+        [
+            ("industrialforegoing:plastic", 2, ["100", "102"]),
+            ("minecraft:furnace", 1, ["101"]),
+            ("minecraft:piston", 2, ["103", "105"]),
+            ("minecraft:brick", 2, ["106", "108"]),
+            ("industrialforegoing:machine_frame_pity", 1, ["104"]),
+            ("industrialforegoing:iron_gear", 1, ["107"]),
+        ],
+    ),
 ]
 
 

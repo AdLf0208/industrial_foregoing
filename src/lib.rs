@@ -52,6 +52,8 @@ pub mod mobduplicator;
 pub mod mobslaughter;
 pub mod rancher;
 pub mod runtime;
+pub mod sewage;
+pub mod sewernet;
 pub mod slaughter;
 
 use std::array;
@@ -197,6 +199,9 @@ impl Hooks for Mod {
         mobduplicator::declare(r);
         // The animal rancher (slice 13): its tank, its output container, its buffer and its tick.
         animalrancher::declare(r);
+        // The sewage chain (slice 15): the sewer's drain-only tank and the composter's fill-only
+        // tank, 12-slot output container, buffers and ticks.
+        sewernet::declare(r);
         // Its own recipe type **and** the read-only serializer for it: the game refuses a file
         // whose type has no serializer ("unregistered recipe serializer
         // industrialforegoing:dissolution_chamber", measured in game), and API 36's machine route
@@ -335,6 +340,12 @@ impl Hooks for Mod {
                 animalrancher::item(),
                 animalrancher::carried_patch(&saved),
             )
+        } else if block == sewernet::BLOCK || block == sewernet::COMPOSTER_BLOCK {
+            (
+                sewernet::has_contents(block, &saved),
+                sewernet::item(block),
+                sewernet::carried_patch(block, &saved),
+            )
         } else {
             return Flow::Continue;
         };
@@ -434,6 +445,7 @@ impl Hooks for Mod {
             "industrialforegoing essence <pos:block_pos> <amount:integer>",
             "industrialforegoing milk <pos:block_pos> <amount:integer>",
             "industrialforegoing draws <pos:block_pos> <wool:integer> <dye:integer>",
+            "industrialforegoing sewage <pos:block_pos> <amount:integer>",
         ] {
             event.commands.push(Command::op(usage, 2));
         }
@@ -496,6 +508,13 @@ impl Hooks for Mod {
         // The animal rancher (slice 13): its own readout, setters and pinned draws.
         if current_block(host, pos).as_deref() == Some(animalrancher::BLOCK) {
             rancher_command(host, invocation, pos, sub);
+            return Flow::Cancel;
+        }
+        // The sewage chain (slice 15): the sewer and composter readouts and setters.
+        if let Some(block) = current_block(host, pos)
+            && (block == sewernet::BLOCK || block == sewernet::COMPOSTER_BLOCK)
+        {
+            sewage_command(host, invocation, pos, &block, sub);
             return Flow::Cancel;
         }
         if sub == "fluid" {
@@ -1241,6 +1260,65 @@ fn duplicator_command(
 
 /// The harness commands of the animal rancher: its readout, the FE and bar setters, its milk tank,
 /// the drain and the pinned draws (the squid's 1/16 gate cannot be hit deterministically otherwise).
+/// `/industrialforegoing info|energy|progress|sewage|drain` on the sewer and the composter.
+fn sewage_command(
+    host: &mut dyn ServerHost,
+    invocation: &CommandInvocation,
+    pos: [i32; 3],
+    block: &str,
+    sub: &str,
+) {
+    match sub {
+        "info" => {
+            let line = sewernet::readout(host, pos, block);
+            say(host, &line);
+        }
+        "energy" | "progress" | "sewage" => {
+            let (argument, full, unit, key) = match sub {
+                "energy" => ("amount", crate::sewage::CAPACITY_FE, "FE", KEY_ENERGY),
+                "progress" => (
+                    "ticks",
+                    crate::sewage::SEWER_MAX_PROGRESS,
+                    "ticks of bar",
+                    KEY_PROGRESS,
+                ),
+                _ => ("amount", crate::sewage::TANK_MB, "mB of sewage", ""),
+            };
+            let Some(value) = integer(invocation, argument) else {
+                say(host, &usage(sub));
+                return;
+            };
+            let value = value.clamp(0, full);
+            let changed = if sub == "sewage" {
+                sewernet::set_sewage(host, pos, value)
+            } else {
+                sewernet::set_int(host, pos, block, key, value)
+            };
+            let name = if block == sewernet::BLOCK {
+                "Sewer"
+            } else {
+                "Sewage Composter"
+            };
+            say(
+                host,
+                &if changed {
+                    format!("{name} at {pos:?}: {value}/{full} {unit}.")
+                } else {
+                    format!("{pos:?} is not a sewage machine.")
+                },
+            );
+        }
+        "drain" => {
+            let Some(amount) = integer(invocation, "amount") else {
+                say(host, &usage(sub));
+                return;
+            };
+            sewernet::drain(host, pos, block, amount);
+        }
+        _ => say(host, &usage(sub)),
+    }
+}
+
 fn rancher_command(
     host: &mut dyn ServerHost,
     invocation: &CommandInvocation,
@@ -1532,6 +1610,7 @@ fn is_our_entity_kind(host: &dyn Host, entity: BlockEntityRef) -> bool {
         || mobcrusher::kind_of(entity, host)
         || mobduplicator::kind_of(entity, host)
         || animalrancher::kind_of(entity, host)
+        || sewernet::kind_of(entity, host)
 }
 
 /// The tank's amount, in the declaration's shape: one entry per tank under `fluids`.
@@ -1943,6 +2022,9 @@ mod content {
     /// The animal rancher (slice 13).
     const ANIMAL: [&str; 1] = ["animal_rancher"];
 
+    /// The sewage chain's two machines (slice 15).
+    const SEWAGE_BLOCKS: [&str; 2] = ["sewer", "sewage_composter"];
+
     /// The port root, which is also the package root.
     fn root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -2087,6 +2169,9 @@ mod content {
                 "speed_addon_tier_2",
                 "efficiency_addon_tier_1",
                 "efficiency_addon_tier_2",
+                "sewer",
+                "sewage_composter",
+                "fertilizer",
             ]
             .map(|id| format!("industrialforegoing:{id}")),
         );
@@ -2127,6 +2212,7 @@ mod content {
             .chain(LASER.iter().copied())
             .chain(SLAUGHTER.iter().copied())
             .chain(ANIMAL.iter().copied())
+            .chain(SEWAGE_BLOCKS.iter().copied())
             .chain(std::iter::once(PINK_BLOCK))
         {
             assert!(
@@ -2170,6 +2256,7 @@ mod content {
             .chain(LASER.iter().copied())
             .chain(SLAUGHTER.iter().copied())
             .chain(ANIMAL.iter().copied())
+            .chain(SEWAGE_BLOCKS.iter().copied())
             .chain(std::iter::once(PINK_BLOCK))
         {
             let key = format!("block.industrialforegoing.{block}");
@@ -2900,6 +2987,66 @@ mod content {
                 )),
                 "{texture} has no texture file"
             );
+        }
+    }
+
+    /// The sewage chain (slice 15): both machines' carried shape, the fertilizer item, the tag and
+    /// the two recipes — pinned here so a missing file fails a unit test, not just an in-game leg.
+    #[test]
+    fn the_sewage_chain_is_carried() {
+        for id in ["sewer", "sewage_composter"] {
+            let declaration = read(&format!("data/industrialforegoing/horizon/block/{id}.json"));
+            assert!(
+                declaration.contains("minecraft:iron_block")
+                    && declaration.contains("subfacing")
+                    && declaration.contains("north")
+                    && declaration.contains("west"),
+                "{id} is not the jar's IRON_BLOCK template with four subfacing values"
+            );
+            for facing in ["north", "south", "east", "west"] {
+                assert!(
+                    read(&format!("assets/industrialforegoing/blockstates/{id}.json"))
+                        .contains(&format!("subfacing={facing}")),
+                    "{id}'s blockstate has no subfacing={facing}"
+                );
+            }
+            assert!(
+                read(&format!(
+                    "data/industrialforegoing/loot_table/blocks/{id}.json"
+                ))
+                .contains(&format!("industrialforegoing:{id}")),
+                "{id}'s loot table does not drop it"
+            );
+            let recipe = read(&format!("data/industrialforegoing/recipe/{id}.json"));
+            for ingredient in ["#c:plastics", "#industrialforegoing:machine_frame/pity"] {
+                assert!(
+                    recipe.contains(ingredient),
+                    "{id}'s recipe does not name {ingredient}"
+                );
+            }
+            assert!(
+                read("data/minecraft/tags/block/mineable/pickaxe.json")
+                    .contains(&format!("industrialforegoing:{id}")),
+                "{id} has requires_tool but no pickaxe entry"
+            );
+        }
+        assert!(
+            read("data/industrialforegoing/recipe/sewage_composter.json")
+                .contains("minecraft:furnace"),
+            "the composter's recipe is not the jar's PFP/DMD/BGB"
+        );
+        assert!(has(
+            "assets/industrialforegoing/textures/item/fertilizer.png"
+        ));
+        assert!(has("data/industrialforegoing/horizon/item/fertilizer.json"));
+        let tag = read("data/c/tags/item/fertilizers.json");
+        assert!(
+            tag.contains("industrialforegoing:fertilizer") && tag.contains("minecraft:bone_meal"),
+            "the c:fertilizers tag is not the jar's"
+        );
+        let tab = read("data/industrialforegoing/horizon/creative_tab/ag_hus.json");
+        for id in ["sewer", "sewage_composter", "fertilizer"] {
+            assert!(tab.contains(&format!("industrialforegoing:{id}")));
         }
     }
 }

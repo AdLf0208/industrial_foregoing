@@ -53,7 +53,11 @@ fill-only tank, a one-slot tool input and `Host::summon`; the tool captures/rele
 parent item a future add-on can bind to. slice 14 (0.2.13, 2026-11-23) is the **review round two repair** — four accepted blockers (container `Items` in the carried payload, the crusher's reward merge and its world-return, the server work of the two mob machines and the laser's gate order, and the upstream copyright line) with no new content. slice 13 (0.2.12, 2026-11-23) is the **Animal Rancher**, the
 first of the animal machines: a 100-tick bar, a 10,000 FE buffer at 400 FE an operation, an 8,000 mB
 milk tank, a 15-slot output container and a **single-block** working area — a sheep's wool, a cow's or
-goat's milk and a squid's dye. The gap list at the end is the rest of the mod.
+goat's milk and a squid's dye. slice 15 (0.2.14, 2026-11-24) is the **sewage chain**: the Sewer
+(50 mB of `industrialforegoing:sewage` per animal in the block above, 10 FE × (animals + 1), an
+8,000 mB drain-only tank) and the Sewage Composter (1,000 mB → one `industrialforegoing:fertilizer`
+in 12 output slots over 100 ticks at 40 FE a tick), which also finally declares the sewage fluid so
+the capability can read it. The gap list at the end is the rest of the mod.
 
 **Why this mod now:** it is the rank-0 `content`/`machines` core mod
 `precheck-mod.py industrialforegoing` offers (`DISPATCHABLE`, jar licence MIT,
@@ -2789,9 +2793,142 @@ that a re-placed chamber no longer doubles its contents.
 > leaves the wither in its box at 100 health — each of those four failed on the delivered 0.2.12
 > package (`review14-before-*.log`). `src/runtime.rs` is unchanged, byte for byte.
 
+## Slice 15 — the sewage chain: `sewer` + `sewage_composter` (0.2.14, 2026-11-24)
+
+**The slice: gap 9's "the jar's other machines (mycelial, conveyors, laser drills, the refinery,
+**the sewage chain**)"** (`notes.md:1172`, and `fertilizer` named at `notes.md:2982`). It gives the
+already-declared sewage fluid a **source** (as slice 6 did for latex, slice 9 for pink slime and
+slice 11 for essence) and makes `fertilizer` the first item of this family the port can actually
+make. Tier **machines** (ledger): two block entities with tanks, one container, FE buffers, server
+ticks and commands — no renderer, dimension or AI beyond the scan of the pen above.
+
+### The artefact, enumerated (the brief's inferred names were stale)
+
+The brief's `sewage_collector` / `AnimalByproductRecolectorTile` names do not exist at this commit.
+The jar (`industrialforegoing-1.21-3.6.39.jar`, SHA-256
+`abeb6446…4bb`) and the source at `Buuz135/Industrial-Foregoing` **`ce2852db`** (clone read for
+behaviour, deleted) name:
+
+| real id | source of the number | the number |
+|---|---|---|
+| `industrialforegoing:sewer` — `SewerBlock`/`SewerTile`, lang `block.industrialforegoing.sewer = Sewer` (jar `assets/…/lang/en_us.json`) | `SewerTile.work()` line 76; `SewerConfig` | `50 × animals` mB of sewage; `RangeType.TOP` = the single block above; 100-tick bar; **10 FE per operation, charged `× (animals + 1)`** (the `++amount` inside the `if`, documented by `SewerConfig`'s own "Calculated as [VALUE * (amount + 1)]"); 10,000 FE; sewage tank 8,000 mB `Action.DRAIN` |
+| `industrialforegoing:sewage_composter` — `SewageComposterBlock`/`SewageComposterTile`, lang `Sewage Composter` | `SewageComposterTile.canIncrease`/`onFinish`; `SewageComposterConfig` | **1,000 mB** of sewage → **1 fertilizer**; 100-tick rising bar; **40 FE a tick** (4,000 FE/operation); 10,000 FE; 8,000 mB fill-only tank; 12-slot output-only container (`setInputFilter(stack → false)`) |
+| `industrialforegoing:fertilizer` — `FertilizerItem`, `models/item/fertilizer.json`, `textures/item/fertilizer.png` | `data/c/tags/item/fertilizers.json` | `c:fertilizers` = fertilizer + bone meal |
+| `industrialforegoing:sewage` fluid | `data/c/tags/fluid/sewage.json`, `fluid_type.industrialforegoing.sewage` | the fluid the chain produces and consumes |
+
+Both blocks are `Properties.ofFullCopy(IRON_BLOCK)` with `RotationType.FOUR_WAY` (the jar's
+four `subfacing` blockstates, carried unchanged); the jar's shaped recipes are
+`sewer` **PEP/BMB/BGB** (plastic, bucket, brick ×4, pity frame, iron gear) and `sewage_composter`
+**PFP/DMD/BGB** (plastic ×2, furnace, piston ×2, pity frame, brick ×2, iron gear).
+
+**Upstream defect fixed.** `SewerTile.work()` increments `amount` *after* the fill but *inside* the
+`if`, so a successful attempt charges FE for `animals + 1` operations while producing only
+`50 × animals` mB. This is the jar's own documented behaviour (the config comment says so), so it
+is carried as a **deviation**, not "fixed": one cow gives 50 mB and costs 20 FE. The pure rule
+pins it (`one_cow_gives_fifty_mb_and_costs_twenty_fe`) and the in-game leg asserts the same 20 FE.
+
+### TDD, in order
+
+1. **Red** (`src/sewage.rs`, the rules as 15 tests with the two `tick` bodies at `todo!()`;
+   `evidence/industrialforegoing/sdk-test-red-slice15.log`): **244 passed, 9 failed**, every new
+   failure the verbatim `not yet implemented: the sewer's bar and per-animal collection` / `… the
+   composter's rising bar and one fertilizer per 1000 mB` (`src/sewage.rs:105` and `:181`).
+2. **The rules** (`src/sewage.rs`, a ninth pure module — `runtime.rs` stays byte-identical):
+   `Sewer` (bar down, 50 mB/animal, the `(animals + 1)` FE charge, the tank clamp, the empty-pen
+   counterfactual) and `Composter` (bar up, the 1,000 mB and free-slot gates, 40 FE/tick, one
+   fertilizer, the augment timing).
+3. **The glue** (`src/sewernet.rs`): both declarations, the Parts (placement rotation, augment
+   seating, ticks), the tanks and container, the carried payloads, the readouts and the setters.
+   Ten glue tests plus `content::the_sewage_chain_is_carried` pin the carried files.
+4. **In game**, phases DL–DM (below) plus the two recipes added to `craft_recipe.py`'s phase K,
+   `PASS` + `EXIT:0`.
+
+**Two defects found in game and fixed before the green run** (systematic debugging): the glue called
+`fill` a second time on the amount the pure `tick` had already added (100 mB instead of 50 — the
+verbatim failure `FAIL: the sewage one cow gives is 100, expected 50` in the first run's log), and
+`industrialforegoing:sewage` was missing from `dissolution::DECLARED_FLUIDS`, so the capability
+reported `empty 0 mB` and the server logged `An unrecognized live fluid id is unavailable`. Both
+are unit-pinned now (the one-cow rule and `the_declared_fluids_are_the_recipes_own`).
+
+### In game (`evidence/industrialforegoing-e2e/e2e-launcher.log`, phases DL–DM)
+
+```
+== DL: the sewer fills its tank from the animal in the block above ==
+  an empty pen: 0 mB and 0 FE spent
+  Sewer at [320, 101, 0]: 9980/10000 FE, tank industrialforegoing:sewage 50/8000 mB, capability industrialforegoing:sewage 50 mB, animals 1, progress 95/100, facing west, augments speed 1 efficiency 1.00, t=10890
+  one cow: 50/8000 mB, capability industrialforegoing:sewage 50 mB, 20 FE
+== DM: the composter turns 1,000 mB of sewage into one fertilizer ==
+  Sewage Composter at [322, 101, 0]: 6000/10000 FE, tank industrialforegoing:sewage 0/8000 mB, capability industrialforegoing:sewage 0 mB, output 1x industrialforegoing:fertilizer, progress 0/100, facing west, augments speed 1 efficiency 1.00, t=11028
+  138 ticks, 4,000 FE and 1,000 mB for 1x industrialforegoing:fertilizer
+```
+
+Fail-capable: the **control** leg (same Nightly, no package) stops at its first `give`
+(`FAIL: the machine item did not register`) → `EXIT:1`; **`SELFTEST=sewage`** flips DL's 50 mB to
+51 (`FAIL: the sewage one cow gives is 50, expected 51`) → `EXIT:1`; the empty pen is an in-run
+counterfactual (0 mB, 0 FE). `check-e2e-logs.py industrialforegoing-e2e --strict` reads **26/26**
+(the 24 earlier legs plus the two new ones).
+
+### Coverage (families this slice adds)
+
+| family | coverage |
+|---|---|
+| `industrialforegoing:sewer` (block + item) | `tested` — DL places it from its item, reads `facing west`, the block id and the loot's self-drop; `content::the_sewage_chain_is_carried` |
+| the `sewer` shaped recipe | `tested` — phase K crafts it from `#c:plastics`, a bucket, `#c:gears/iron`, brick and a pity frame, with every ingredient consumed |
+| the 8,000 mB sewage tank and the declared capability | `tested` — DL: tank 50/8000 mB and `capability industrialforegoing:sewage 50 mB` after one cow |
+| the 100-tick bar, 50 mB/animal and the `(animals + 1)` FE charge | `tested` — DL: an empty pen gives 0 mB/0 FE; one cow gives exactly 50 mB for 20 FE; the pure rule pins the arithmetic |
+| `RangeType.TOP` single-block scan | `tested` — DL: the NoAI cow is in the block **above**, and `animals 1` is read back |
+| `industrialforegoing:sewage_composter` (block + item) | `tested` — DM places it from its item and reads both tanks and the output through the readout |
+| the `sewage_composter` shaped recipe | `tested` — phase K crafts it from the jar's PFP/DMD/BGB grid and consumes everything |
+| the 1,000 mB → 1 fertilizer operation | `tested` — DM: 138 ticks, 4,000 FE, tank 1,000 → 0, `output 1x industrialforegoing:fertilizer` |
+| the 12-slot output-only container | `tested` — DM reads the product out of it; the empty pen and the gate tests cover "no product" |
+| `industrialforegoing:fertilizer`, `c:fertilizers` | `tested` — DM makes it; the tag is carried (with bone meal) and pinned by `content::the_sewage_chain_is_carried` |
+| the sewer's second tank (`essence`) and the XP-orb/player arms | `not ported` — `industrialforegoing:essence` already has its source (the mob crusher); the pin exposes no XP-orb value / player-XP write with the jar's semantics |
+| a GUI screen, redstone control, a comparator | `not ported` — gaps 1, 2, 7 |
+| the sewage bucket and the sewage fluid block | `not ported` — containers of an already-declared fluid, not part of the machine chain |
+
+### Deviations and gaps this slice adds
+
+73. **The sewer's essence tank is not ported.** Upstream's `SewerTile` has a second 8,000 mB
+    `essence` tank fed by XP orbs (`value × 20` mB) and players (`totalExperience × 20` mB). This
+    slice ports the sewage source and marks the essence arm `not ported`; `industrialforegoing:essence`
+    is already sourced by the Mob Crusher (slice 11), so nothing is sourceless.
+74. **The `(animals + 1)` FE charge is carried, not corrected.** See *Upstream defect fixed* above:
+    the jar's config documents it as the formula, so it is a design choice, not a bug.
+75. **The tank faces are wider than the jar's `Action.DRAIN`/`FILL` at the capability level.** The
+    pin resolves a declared fluid's capability only when the tank is reachable as a resource
+    (measured: an undeclared id reads `empty` with `An unrecognized live fluid id is unavailable`);
+    the drain/fill semantics still hold because the pin's insert/extract only move water and lava.
+
+### The package (0.2.14)
+
+| | |
+|---|---|
+| version | `0.2.14` |
+| pin | `native-mod`, format `native-1/0a875da…/e59da90…`, for 26.3 |
+| size | **422,257 B**, 483 entries (no packed `Cargo.lock`) |
+| SHA-256 | `10e7f0ee53b09d9e3fdb4fb17f50009034d39d38ea18e06592e099107c16faa9` (two clean-lock builds `cmp`-identical) |
+| `check` | `industrialforegoing 0.2.14 (native-mod, format …)`, exit 0 |
+| `fits` | `0a875da  made for`, `0b14f8a  fits`, both exit 0 |
+| gate | `verify-sdk-package.py industrialforegoing` **1/1** |
+| tests | 262 (was 242; +15 pure, +10 glue, +1 content — minus the adjusted list test) |
+| launcher | `Compiling industrialforegoing (1 of 1)`, `native-0a875da-82fd3429c12d`, exported `version = "0.2.14"` |
+
+### The changelog for the 0.2.14 update
+
+> Updates the entry this campaign already has (retaining its open PR). **New: the sewage chain.**
+> The Sewer counts the `Animal`s in the block above (the jar's `RangeType.TOP` at range 0) and fills
+> a drain-only 8,000 mB `industrialforegoing:sewage` tank with 50 mB each at 10 FE × (animals + 1)
+> from a 10,000 FE buffer on a 100-tick bar; an empty pen produces nothing and spends nothing. The
+> Sewage Composter takes 1,000 mB of sewage per 100-tick, 40 FE-a-tick operation and inserts one
+> `industrialforegoing:fertilizer` into a 12-slot output-only container; both machines' jar recipes
+> are carried and crafted in game. `industrialforegoing:sewage` is now a declared fluid key, so the
+> tank is readable through the capability. `src/runtime.rs` is unchanged, byte for byte; the new
+> rules live in `src/sewage.rs`. The sewer's second tank (essence), the utility bucket/block and the
+> GUI are recorded gaps.
+
 ## Skills
 
-Skills: superpowers/using-superpowers,brainstorming,writing-plans,test-driven-development,systematic-debugging,verification-before-completion; BeautifulRust/rust-best-practices,rust-review (slice 14 — the review round two repairs: `test-driven-development` for the ten red tests, eight of them failing on the 0.2.12 tree (`233 passed; 8 failed`) and the two payload tests still red until the allowlists landed; `systematic-debugging` for the harness itself — `ctl container` carries no components, so the merge is read through `data get block … Items[i]`; the crusher's floor helper selected `.position` where the ctl emits `.pos`, which had made phase CO's "nothing on the floor" vacuous and made DJ impossible until it was fixed; and the laser arena is laid over the latex one, so DH places its own unit; `verification-before-completion` before each claim; `rust-best-practices` for the allowlist payloads, the `insert` core and the instance-bound queues; `rust-review` for the audit that found the chamber's payload carrying `Items` under the same `§9m` rule the reviewer named for two machines; slice 13: `brainstorming` to take the animal rancher from gap 9 and weigh the brief's "empty bucket in its input" against the jar's fake-player bucket and tank of milk — the artefact won, and the assertion became the tank's 1,000 mB plus the sheep's wool in the output; `writing-plans` for SLICE-13-PLAN.md; `test-driven-development` for the fifteen red rules and ten red glue tests (`206 passed, 15 failed`, every one `not yet implemented`) and then the in-game assertion before it was trusted; `systematic-debugging` for the two failures this slice cost — the craft harness could not place two non-stackable shears (a per-cell source fixed it), and the pinned draw was spent on the next *tick* instead of the next *attempt* (the sheep gave 3 wool for `draws 0 0`), which also stopped the tick burning the level's random stream — plus the squid that drowns on land; `verification-before-completion` before every claim; `rust-best-practices` for the ninth pure module, the `entity_nbt`/`entity_merge_nbt` sheep write and the attempt-scoped draws; `rust-review` for the after-the-fact audit of `src/rancher.rs` and `src/animalrancher.rs` — it removed the `increase` state (the glue rebuilds the machine each tick, so the speed addon modelled one tick late never worked in game; the bar now falls by the augment, the condensator's model since slice 1), kept `fill_milk` refusing a foreign fluid, and moved the random draws out of the tick; slice 12: `brainstorming` to take the duplicator from gap 9 and weigh the brief's "place it facing its placer" against the jar's state-free block (`MobDuplicatorBlock` has no `getRotationType`; the generated blockstate is `""`), `writing-plans` for SLICE-12-PLAN.md, `test-driven-development` for the twelve red rules and eight red glue tests (`192 passed, 14 failed`, every one `not yet implemented`) and then the in-game assertion before it was trusted, `systematic-debugging` for the four harness gates this slice cost (the 24-entity cramming limit that killed the cap counterfactual's own cows, a broken item picked into the main inventory, `ctl place --item` reaching the wrong stack, and a machine that spent its buffer during the break setup — 4,999 FE keeps it idle), and `verification-before-completion` before every claim; `rust-best-practices` for the eighth pure module, `Host::summon`, the tool's component and the item parts, `rust-review` for the after-the-fact audit of `src/duplicator.rs` and `src/mobduplicator.rs` — it shaped the pure/glue split (the random draw is an input, not a host call in the rules), the `Attempt`/`Step` types, and the no-`unwrap` saved-compound reads; slice 11: `brainstorming` to take the crusher from gap 9 and weigh the brief's per-health essence against the jar's `experience * 20`, `writing-plans` for SLICE-11-PLAN.md, `test-driven-development` for the ten red rules and the red glue/declaration tests (`173 passed, 13 failed`, every one `not yet implemented`) and then the in-game assertion before it was trusted, `systematic-debugging` for the two in-game gates this slice cost (the launcher's build lock held by another port, and the launcher's reuse of a same-version build — four `native-*` tags were removed before the rebuild) and for the creative-mode break flake in phase L, `verification-before-completion` before every claim; `rust-best-practices` for the seventh pure module, the fake-player kill and the two harvest hooks, `rust-review` for the after-the-fact audit of `src/mobcrusher.rs` and `src/crusher.rs` — it weighed clippy's `question_mark` finding on the first run, the `Candidate::blacklisted` field the pure filter correctly ignores, and the `Gain` type's needless `Copy`-by-hash (replaced with an owned dimension string); `rust-review`'s rules also shaped the code: no `unwrap` outside tests, an enum for the two kill paths (`AttackPath`) instead of a bool, and the harvest statics kept behind one module so no other machine can read them; slice 10: `brainstorming` to take the Nether leg from deviation 37 and weigh the brief's depth-0 counterfactual against the dimension arm the recipe actually names, `writing-plans` for SLICE-10-PLAN.md, `test-driven-development` for the in-game assertion written before the package was rebuilt — its red is `SELFTEST=nether`, because the family itself shipped in 0.2.8 — `systematic-debugging` for the harness flakes that cost four runs (`wait-ready` returning while the client still said "Loading terrain...", the game's `[CHAT]` log stopping while `ctl messages` answered, and a `ctl wait` loop exhausting itself before the server ticked), and `verification-before-completion` before recording; `rust-best-practices` loaded and the ladder run, no Rust change: 0.2.10 differs from 0.2.9 only in the version string; `rust-review`: none (no Rust diff); slice 9: `brainstorming` to choose the factory from deviations 19 and 21 and weigh the brief's "FE still spent" against `SlaughterFactoryTile.work()`, `writing-plans` for SLICE-9-PLAN.md, `test-driven-development` for the eight red rules and nine red glue tests (`149 passed, 17 failed`, every one `not yet implemented`), `systematic-debugging` for the chamber that stopped advancing its bar (seven probes in clean worlds, all green; the quirk and the padding fix are recorded in the slice 9 section) and for the two craft-script defects the game found (a stack of two `stacksTo(1)` items leaves the second cell empty; a chamber that has run a recipe is not ticked any more in that world), and `verification-before-completion` before recording; `rust-best-practices` for the sixth pure module and its glue, `rust-review` for the after-the-fact audit of `src/mobslaughter.rs`; slice 8: `brainstorming` to choose the fluid laser base from the port's own coverage row and weigh the brief's "a biome the ether recipe names" against the jar's empty whitelist, `writing-plans` for SLICE-8-PLAN.md, `test-driven-development` for the eight red rules and the five red glue tests, `systematic-debugging` for the two in-game gates this slice cost — the launcher's content-hash cache reporting "up to date" and the depth-band differential that replaced a biome counterfactual the artefact does not have — and `verification-before-completion` before recording; `rust-best-practices` for the fifth pure module and the glue, `rust-review` for the after-the-fact audit of `src/fluidbase.rs`; slice 7: `brainstorming` to choose the laser drill from the gap list and weigh the brief's "the ore the base sits on" against the jar's biome/depth rule, `writing-plans` for SLICE-7-PLAN.md, `test-driven-development` for the 14 red rules and the 9 red glue tests, `systematic-debugging` for the six in-game gates this slice cost — the ingredient-object decode (`recipes 0/10`), the biome zoom, the datapack/tag reload, the placement aim, the message/log window, and the loot condition shape — and `verification-before-completion` before recording; `rust-best-practices` for the new pure module and the glue, `rust-review` for the after-the-fact audit of `src/laserdrill.rs`)
+Skills: superpowers/using-superpowers,brainstorming,writing-plans,test-driven-development,systematic-debugging,verification-before-completion; BeautifulRust/rust-best-practices,rust-review (slice 15 — the sewage chain: `brainstorming` to take the family from gap 9 against the artefact (the brief's `AnimalByproductRecolectorTile` / `sewage_collector` names were stale — the jar has `SewerTile` / `sewer`); `writing-plans` for SLICE-15-PLAN.md; `test-driven-development` for the nine red pure rules (`244 passed; 9 failed`, every new failure `not yet implemented`) and the glue/content tests before the in-game assertion; `systematic-debugging` for the two defects the green run cost — the double `fill` that gave 100 mB and the missing `DECLARED_FLUIDS` entry that made the capability read `empty` with `An unrecognized live fluid id is unavailable` — each fixed at its root and unit-pinned; `verification-before-completion` before every claim; `rust-best-practices` for the pure rules, the tanks and the saved-compound allowlists; slice 14 — the review round two repairs: `test-driven-development` for the ten red tests, eight of them failing on the 0.2.12 tree (`233 passed; 8 failed`) and the two payload tests still red until the allowlists landed; `systematic-debugging` for the harness itself — `ctl container` carries no components, so the merge is read through `data get block … Items[i]`; the crusher's floor helper selected `.position` where the ctl emits `.pos`, which had made phase CO's "nothing on the floor" vacuous and made DJ impossible until it was fixed; and the laser arena is laid over the latex one, so DH places its own unit; `verification-before-completion` before each claim; `rust-best-practices` for the allowlist payloads, the `insert` core and the instance-bound queues; `rust-review` for the audit that found the chamber's payload carrying `Items` under the same `§9m` rule the reviewer named for two machines; slice 13: `brainstorming` to take the animal rancher from gap 9 and weigh the brief's "empty bucket in its input" against the jar's fake-player bucket and tank of milk — the artefact won, and the assertion became the tank's 1,000 mB plus the sheep's wool in the output; `writing-plans` for SLICE-13-PLAN.md; `test-driven-development` for the fifteen red rules and ten red glue tests (`206 passed, 15 failed`, every one `not yet implemented`) and then the in-game assertion before it was trusted; `systematic-debugging` for the two failures this slice cost — the craft harness could not place two non-stackable shears (a per-cell source fixed it), and the pinned draw was spent on the next *tick* instead of the next *attempt* (the sheep gave 3 wool for `draws 0 0`), which also stopped the tick burning the level's random stream — plus the squid that drowns on land; `verification-before-completion` before every claim; `rust-best-practices` for the ninth pure module, the `entity_nbt`/`entity_merge_nbt` sheep write and the attempt-scoped draws; `rust-review` for the after-the-fact audit of `src/rancher.rs` and `src/animalrancher.rs` — it removed the `increase` state (the glue rebuilds the machine each tick, so the speed addon modelled one tick late never worked in game; the bar now falls by the augment, the condensator's model since slice 1), kept `fill_milk` refusing a foreign fluid, and moved the random draws out of the tick; slice 12: `brainstorming` to take the duplicator from gap 9 and weigh the brief's "place it facing its placer" against the jar's state-free block (`MobDuplicatorBlock` has no `getRotationType`; the generated blockstate is `""`), `writing-plans` for SLICE-12-PLAN.md, `test-driven-development` for the twelve red rules and eight red glue tests (`192 passed, 14 failed`, every one `not yet implemented`) and then the in-game assertion before it was trusted, `systematic-debugging` for the four harness gates this slice cost (the 24-entity cramming limit that killed the cap counterfactual's own cows, a broken item picked into the main inventory, `ctl place --item` reaching the wrong stack, and a machine that spent its buffer during the break setup — 4,999 FE keeps it idle), and `verification-before-completion` before every claim; `rust-best-practices` for the eighth pure module, `Host::summon`, the tool's component and the item parts, `rust-review` for the after-the-fact audit of `src/duplicator.rs` and `src/mobduplicator.rs` — it shaped the pure/glue split (the random draw is an input, not a host call in the rules), the `Attempt`/`Step` types, and the no-`unwrap` saved-compound reads; slice 11: `brainstorming` to take the crusher from gap 9 and weigh the brief's per-health essence against the jar's `experience * 20`, `writing-plans` for SLICE-11-PLAN.md, `test-driven-development` for the ten red rules and the red glue/declaration tests (`173 passed, 13 failed`, every one `not yet implemented`) and then the in-game assertion before it was trusted, `systematic-debugging` for the two in-game gates this slice cost (the launcher's build lock held by another port, and the launcher's reuse of a same-version build — four `native-*` tags were removed before the rebuild) and for the creative-mode break flake in phase L, `verification-before-completion` before every claim; `rust-best-practices` for the seventh pure module, the fake-player kill and the two harvest hooks, `rust-review` for the after-the-fact audit of `src/mobcrusher.rs` and `src/crusher.rs` — it weighed clippy's `question_mark` finding on the first run, the `Candidate::blacklisted` field the pure filter correctly ignores, and the `Gain` type's needless `Copy`-by-hash (replaced with an owned dimension string); `rust-review`'s rules also shaped the code: no `unwrap` outside tests, an enum for the two kill paths (`AttackPath`) instead of a bool, and the harvest statics kept behind one module so no other machine can read them; slice 10: `brainstorming` to take the Nether leg from deviation 37 and weigh the brief's depth-0 counterfactual against the dimension arm the recipe actually names, `writing-plans` for SLICE-10-PLAN.md, `test-driven-development` for the in-game assertion written before the package was rebuilt — its red is `SELFTEST=nether`, because the family itself shipped in 0.2.8 — `systematic-debugging` for the harness flakes that cost four runs (`wait-ready` returning while the client still said "Loading terrain...", the game's `[CHAT]` log stopping while `ctl messages` answered, and a `ctl wait` loop exhausting itself before the server ticked), and `verification-before-completion` before recording; `rust-best-practices` loaded and the ladder run, no Rust change: 0.2.10 differs from 0.2.9 only in the version string; `rust-review`: none (no Rust diff); slice 9: `brainstorming` to choose the factory from deviations 19 and 21 and weigh the brief's "FE still spent" against `SlaughterFactoryTile.work()`, `writing-plans` for SLICE-9-PLAN.md, `test-driven-development` for the eight red rules and nine red glue tests (`149 passed, 17 failed`, every one `not yet implemented`), `systematic-debugging` for the chamber that stopped advancing its bar (seven probes in clean worlds, all green; the quirk and the padding fix are recorded in the slice 9 section) and for the two craft-script defects the game found (a stack of two `stacksTo(1)` items leaves the second cell empty; a chamber that has run a recipe is not ticked any more in that world), and `verification-before-completion` before recording; `rust-best-practices` for the sixth pure module and its glue, `rust-review` for the after-the-fact audit of `src/mobslaughter.rs`; slice 8: `brainstorming` to choose the fluid laser base from the port's own coverage row and weigh the brief's "a biome the ether recipe names" against the jar's empty whitelist, `writing-plans` for SLICE-8-PLAN.md, `test-driven-development` for the eight red rules and the five red glue tests, `systematic-debugging` for the two in-game gates this slice cost — the launcher's content-hash cache reporting "up to date" and the depth-band differential that replaced a biome counterfactual the artefact does not have — and `verification-before-completion` before recording; `rust-best-practices` for the fifth pure module and the glue, `rust-review` for the after-the-fact audit of `src/fluidbase.rs`; slice 7: `brainstorming` to choose the laser drill from the gap list and weigh the brief's "the ore the base sits on" against the jar's biome/depth rule, `writing-plans` for SLICE-7-PLAN.md, `test-driven-development` for the 14 red rules and the 9 red glue tests, `systematic-debugging` for the six in-game gates this slice cost — the ingredient-object decode (`recipes 0/10`), the biome zoom, the datapack/tag reload, the placement aim, the message/log window, and the loot condition shape — and `verification-before-completion` before recording; `rust-best-practices` for the new pure module and the glue, `rust-review` for the after-the-fact audit of `src/laserdrill.rs`)
 
 `cargo fmt --package industrialforegoing --check`, `cargo clippy --all-targets -- -D warnings` and
 `cargo test` were run before hand-back (slice 9: `FMT-CLEAN`, 0 warnings, **166 passed**).

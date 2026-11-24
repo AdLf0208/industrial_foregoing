@@ -2,10 +2,13 @@
   "icon": "industrialforegoing:mob_slaughter_factory",
   "items": [
     "industrialforegoing:animal_rancher",
+    "industrialforegoing:fertilizer",
     "industrialforegoing:mob_crusher",
     "industrialforegoing:mob_duplicator",
     "industrialforegoing:mob_imprisonment_tool",
-    "industrialforegoing:mob_slaughter_factory"
+    "industrialforegoing:mob_slaughter_factory",
+    "industrialforegoing:sewage_composter",
+    "industrialforegoing:sewer"
   ],
   "title": "itemGroup.industrialforegoing_ag_hus"
 }

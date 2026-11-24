@@ -1,0 +1,20 @@
+{
+  "category": "misc",
+  "key": {
+    "B": "minecraft:brick",
+    "E": "minecraft:bucket",
+    "G": "#c:gears/iron",
+    "M": "#industrialforegoing:machine_frame/pity",
+    "P": "#c:plastics"
+  },
+  "pattern": [
+    "PEP",
+    "BMB",
+    "BGB"
+  ],
+  "result": {
+    "count": 1,
+    "id": "industrialforegoing:sewer"
+  },
+  "type": "minecraft:crafting_shaped"
+}
